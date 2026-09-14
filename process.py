@@ -263,25 +263,48 @@ def cmd_convert(args: argparse.Namespace) -> None:
     else:
         print(".")
 
-    if args.upload and converted:
-        _do_upload(converted, args.verbose)
+    _do_uploads(converted, args)
 
 
-def _do_upload(dngs: list[Path], verbose: bool) -> None:
+def _do_uploads(dngs: list[Path], args: argparse.Namespace) -> None:
+    if not dngs:
+        return
+    if getattr(args, "upload_google", False):
+        _upload_google(dngs, args.verbose)
+    if getattr(args, "upload_amazon", False):
+        _upload_amazon(dngs, args.verbose)
+
+
+def _upload_google(dngs: list[Path], verbose: bool) -> None:
     try:
         from uploader import upload_to_google_photos
     except ImportError:
-        print("uploader.py not found — skipping Google Photos upload.", file=sys.stderr)
+        print("uploader.py not found.", file=sys.stderr)
         return
-
     print(f"\nUploading {len(dngs)} DNG(s) to Google Photos...")
     try:
         n = upload_to_google_photos(dngs, verbose=verbose)
         print(f"Uploaded {n} file(s) to Google Photos.")
     except FileNotFoundError:
-        pass  # uploader already printed setup instructions
+        pass
     except Exception as exc:
-        print(f"Upload failed: {exc}", file=sys.stderr)
+        print(f"Google Photos upload failed: {exc}", file=sys.stderr)
+
+
+def _upload_amazon(dngs: list[Path], verbose: bool) -> None:
+    try:
+        from uploader import upload_to_amazon_photos
+    except ImportError:
+        print("uploader.py not found.", file=sys.stderr)
+        return
+    print(f"\nUploading {len(dngs)} DNG(s) to Amazon Photos...")
+    try:
+        n = upload_to_amazon_photos(dngs, verbose=verbose)
+        print(f"Uploaded {n} file(s) to Amazon Photos.")
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        print(f"Amazon Photos upload failed: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -328,8 +351,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
                 dng = process_file(path, output, args.date_folders, args.skip_existing, args.verbose)
                 if dng:
                     print(f"Done → {dng}")
-                    if args.upload:
-                        _do_upload([dng], args.verbose)
+                    _do_uploads([dng], args)
             except Exception as exc:
                 print(f"ERROR: {exc}", file=sys.stderr)
 
@@ -364,11 +386,15 @@ def main():
         epilog=(
             "Examples:\n"
             "  python process.py convert ~/Pictures/shoot/ -o ~/Pictures/dng/ --date-folders\n"
-            "  python process.py convert IMG_0001.CR2 --upload --verbose\n"
-            "  python process.py watch ~/Pictures/import/ -o ~/Pictures/dng/ --upload\n"
+            "  python process.py convert IMG_0001.CR2 --upload-google --upload-amazon -v\n"
+            "  python process.py watch ~/Pictures/import/ -o ~/Pictures/dng/ --upload-google --upload-amazon\n"
         ),
     )
     subs = parser.add_subparsers(dest="cmd")
+
+    def _add_upload_flags(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--upload-google", action="store_true", help="Upload DNGs to Google Photos")
+        p.add_argument("--upload-amazon", action="store_true", help="Upload DNGs to Amazon Photos")
 
     # -- convert --
     conv = subs.add_parser("convert", help="Convert CR2 file(s) or folder(s) to DNG")
@@ -377,8 +403,8 @@ def main():
     conv.add_argument("--date-folders", action="store_true", help="Organize into YYYY/MM/DD subfolders")
     conv.add_argument("--skip-existing", action="store_true", default=True, help="Skip already-converted files (default: on)")
     conv.add_argument("--no-skip", dest="skip_existing", action="store_false", help="Re-convert even if DNG exists")
-    conv.add_argument("--upload", action="store_true", help="Upload DNGs to Google Photos after conversion")
     conv.add_argument("-v", "--verbose", action="store_true", help="Print adjustment values per file")
+    _add_upload_flags(conv)
 
     # -- watch --
     watch = subs.add_parser("watch", help="Watch a folder and auto-convert new CR2 files")
@@ -386,8 +412,8 @@ def main():
     watch.add_argument("-o", "--output", help="Output directory for DNGs")
     watch.add_argument("--date-folders", action="store_true", help="Organize into YYYY/MM/DD subfolders")
     watch.add_argument("--skip-existing", action="store_true", default=True)
-    watch.add_argument("--upload", action="store_true", help="Upload to Google Photos after each conversion")
     watch.add_argument("-v", "--verbose", action="store_true")
+    _add_upload_flags(watch)
 
     args = parser.parse_args()
 
