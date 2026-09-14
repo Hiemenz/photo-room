@@ -10,7 +10,11 @@ requires-python = "^3.10"
 dependencies = [
     "rawpy (>=0.27.1,<0.28.0) ; python_version >= \"3.12\" and python_version < \"4.0\"",
     "numpy (>=2.5.3,<3.0.0) ; python_version >= \"3.12\" and python_version < \"4.0\"",
-    "pillow (>=12.3.0,<13.0.0) ; python_version >= \"3.12\" and python_version < \"4.0\""
+    "pillow (>=12.3.0,<13.0.0) ; python_version >= \"3.12\" and python_version < \"4.0\"",
+    "tqdm (>=4.70.1,<5.0.0)",
+    "watchdog (>=6.0.0,<7.0.0)",
+    "google-auth-oauthlib (>=1.4.1,<2.0.0)",
+    "requests (>=2.34.2,<3.0.0)"
 ]
 
 
