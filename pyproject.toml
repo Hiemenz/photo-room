@@ -1,0 +1,19 @@
+[project]
+name = "photo-room"
+version = "0.1.0"
+description = "CR2 to DNG converter with auto adjustments"
+authors = [
+    {name = "Kevin Hiemenz",email = "47609755+Hiemenz@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = "^3.10"
+dependencies = [
+    "rawpy (>=0.27.1,<0.28.0) ; python_version >= \"3.12\" and python_version < \"4.0\"",
+    "numpy (>=2.5.3,<3.0.0) ; python_version >= \"3.12\" and python_version < \"4.0\"",
+    "pillow (>=12.3.0,<13.0.0) ; python_version >= \"3.12\" and python_version < \"4.0\""
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
