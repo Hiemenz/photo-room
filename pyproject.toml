@@ -6,7 +6,7 @@ authors = [
     {name = "Kevin Hiemenz",email = "47609755+Hiemenz@users.noreply.github.com"}
 ]
 readme = "README.md"
-requires-python = "^3.10"
+requires-python = ">=3.10"
 dependencies = [
     "rawpy (>=0.27.1,<0.28.0) ; python_version >= \"3.12\" and python_version < \"4.0\"",
     "numpy (>=2.5.3,<3.0.0) ; python_version >= \"3.12\" and python_version < \"4.0\"",
@@ -18,6 +18,9 @@ dependencies = [
 ]
 
 
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
+["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.uv]
+# Scripts, not an installable package.
+package = false

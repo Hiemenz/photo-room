@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/tmp/claude-1000/-home-pi-git-api-discovery/90846629-030f-439e-8725-7125ae767fbd/scratchpad/poetry2uv.py", line 12, in <module>
+    poetry = data["tool"]["poetry"]
+             ~~~~^^^^^^^^
+KeyError: 'tool'
