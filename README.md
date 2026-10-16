@@ -485,6 +485,26 @@ ubuntu and macOS. The image-math tests assert
 direction and invariants rather than exact pixel values, since the preview
 approximates Camera Raw rather than reproducing it.
 
+### Browser tests
+
+`tests/ui/` drives the editor in a real Chromium through Playwright: page
+load with no console errors, every slider, the tone curve canvas, the HSL
+tabs and colour wheels, revert, and the crop overlay. They are marked `ui`
+and skipped by the default `pytest` run, which stays fast.
+
+```bash
+uv sync
+uv run playwright install chromium     # once; add --with-deps on a bare Linux box
+uv run pytest -m ui
+```
+
+The tests start the Flask editor on a free port against a tiny synthetic
+library (rawpy and exiftool are faked in-process, as in the unit suite), so
+no photos or exiftool are needed. If Chromium is not installed they skip
+rather than fail. Screenshots of the editor land in `tests/ui/artifacts/`
+(git-ignored); CI runs these in a separate `ui` job and uploads them as the
+`ui-screenshots` artifact.
+
 ## Large libraries
 
 Tested against a 665-photograph library on an external drive: the file

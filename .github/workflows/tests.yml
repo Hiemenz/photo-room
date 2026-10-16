@@ -41,3 +41,36 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  # Real-browser tests of the editor UI. Separate from the fast job above so
+  # a slow or flaky browser never blocks the unit suite, and so it is the
+  # one place that needs Chromium.
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Install Chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Run UI tests
+        run: uv run pytest -m ui
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: tests/ui/artifacts/
+          if-no-files-found: ignore
