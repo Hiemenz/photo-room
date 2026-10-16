@@ -43,6 +43,7 @@ move the sliders.
 | Noise reduction | 0–100 | Seeded from the photograph's ISO on conversion. Not shown in the preview — see below |
 | Edit strength | 0–150% | Scales the whole edit; 0% is the untouched photo, above 100% exaggerates it |
 | Black & white | toggle | Applied after the colour sliders, so they act as a channel mixer |
+| Color mixer, Color grading | see below | HSL by hue band, B&W mixer, shadow / midtone / highlight / global wheels |
 
 A histogram sits above the controls with per-channel curves and a clipping
 readout — the shadow and highlight percentages turn red past 1%.
@@ -54,6 +55,37 @@ Noise reduction is written to the file but deliberately not shown in the
 preview. The preview is a half-size render, and downsampling already hides
 the noise this removes, so previewing it there would misrepresent the
 full-resolution result in both directions.
+
+### Colour mixer and colour grading
+
+Both panels sit under the main sliders in the editor.
+
+**Color mixer (HSL).** Eight hue bands -- red, orange, yellow, green, aqua,
+blue, purple, magenta -- each with Hue, Saturation and Luminance sliders
+(-100..100, shown as three tabs). A pixel is weighted by how close its hue
+is to each band using raised-cosine overlaps, so the weights always sum to 1
+and there are no hard edges between bands. Grey and near-grey pixels are
+left alone (their hue is meaningless). Hue moves up to 30 degrees at +-100.
+With **Black & white** on, the tabs are replaced by the **B&W mixer**: the
+same eight bands, each brightening or darkening that colour's grey.
+
+**Color grading.** Shadows, midtones, highlights and global wheels. Click or
+drag the wheel (angle = hue, distance = saturation) or use the sliders, plus
+a luminance slider per wheel. **Blending** (0..100, default 50) sets how far
+the three tonal ranges overlap; **Balance** (-100..100) moves the shadow /
+highlight pivot, positive favouring highlights. Tints are luma-neutral, so a
+colour wheel changes colour without changing brightness; luminance is the
+separate slider. Grading also applies to black & white photos (split toning).
+
+All of these are plain keys in the adjustments (`hue_red`, `sat_red`,
+`lum_red`, `gray_red`, `grade_shadow_hue`, ... `grade_blending`,
+`grade_balance`), so presets, copy/paste and batch apply carry them, and
+zero is an exact no-op. They are written to Camera Raw XMP as
+`crs:HueAdjustmentRed`, `SaturationAdjustment*`, `LuminanceAdjustment*`,
+`GrayMixer*`, `ColorGrade{Shadow,Midtone,Highlight,Global}{Hue,Sat,Lum}`,
+`ColorGradeBlending` and `ColorGradeBalance`, and read back on open. Edit
+strength scales saturation / luminance values but not hues, blending or
+balance. The maths lives in `colormix.py`.
 
 ### Tone curve
 

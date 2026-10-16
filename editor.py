@@ -26,6 +26,7 @@ import rawpy
 from flask import Flask, Response, jsonify, render_template, request
 from PIL import Image, ImageFilter
 
+import colormix
 import quality
 import style
 import thumbs
@@ -159,6 +160,10 @@ GLOBAL_CONTROLS = [
 ]
 
 HISTOGRAM_BINS = 64
+
+# HSL / B&W mixer and colour grading sliders (see colormix.py). Kept apart from
+# CONTROLS so the main slider list stays short; the UI builds its own panel.
+COLOR_CONTROLS = colormix.COLOR_CONTROLS
 
 # Reloaded after each save so a new edit influences the next photo you open.
 _style_model = None
@@ -466,6 +471,14 @@ def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.nda
 
     img = np.clip(img, 0.0, 1.0)
 
+    # --- Colour mixer / grading ---
+    # In black & white the HSL sliders give way to the B&W mixer, which
+    # brightens or darkens each hue band ahead of the grey conversion.
+    mono = bool(adj.get("monochrome"))
+    img = colormix.apply_gray_mixer(img, adj) if mono else colormix.apply_hsl(img, adj)
+    if not mono:
+        img = colormix.apply_grading(img, adj)
+
     # --- Detail ---
     img = _apply_detail(img, adj)
 
@@ -486,6 +499,8 @@ def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.nda
         # as a boolean. Blending it produced a half-desaturated preview of a
         # photograph that was saved fully black and white.
         img = np.repeat(_luminance(img)[:, :, None], 3, axis=2)
+        # Colour grading still applies to a monochrome image (split toning).
+        img = colormix.apply_grading(img, adj)
 
     return np.clip(img, 0.0, 1.0)
 
@@ -580,6 +595,9 @@ def effective_adjustments(adj: dict) -> dict:
         else:
             anchor = neutral[key]
         out[key] = anchor + (float(adj[key]) - anchor) * strength
+    for key, default in colormix.COLOR_DEFAULTS.items():
+        if key in adj and key not in colormix.UNSCALED_KEYS:
+            out[key] = default + (float(adj[key]) - default) * strength
     return out
 
 
@@ -690,7 +708,7 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
         f"-XMP-crs:CropBottom={float((adj.get('crop') or {}).get('bottom', 1.0)):.5f}",
         f"-XMP-crs:LuminanceSmoothing={int(adj.get('luminance_nr', 0))}",
         f"-XMP-crs:ConvertToGrayscale={'True' if adj.get('monochrome') else 'False'}",
-    ] + tonecurve.xmp_arguments(adj.get("tone_curve"))
+    ] + colormix.xmp_arguments(adj) + tonecurve.xmp_arguments(adj.get("tone_curve"))
 
 
 def _process_version_for(path: Path) -> str:
@@ -861,6 +879,8 @@ def _read_adjustments_from(path: Path) -> dict | None:
     curve = _read_tone_curve(path)
     if curve:
         out["tone_curve"] = curve
+    if out:
+        out.update(_read_color_adjustments(path))
     return out or None
 
 
@@ -870,6 +890,14 @@ def _read_tone_curve(path: Path) -> dict | None:
     # Not stripped: an empty line is a tag with no value, and dropping
     # leading ones would shift every later tag up.
     return tonecurve.parse_xmp(result.stdout.split("\n"))
+
+
+def _read_color_adjustments(path: Path) -> dict:
+    """HSL, B&W mixer and colour grading values stored in the file (non-default only)."""
+    args = [f"-XMP-crs:{t}" for t in colormix.XMP_TAGS.values()] + ["-s3", "-f", str(path)]
+    result = subprocess.run(["exiftool"] + args, capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT)
+    return colormix.parse_xmp_values(result.stdout.strip().split("\n"))
+
 
 
 # ---------------------------------------------------------------------------
@@ -995,6 +1023,7 @@ def index():
         "editor.html",
         controls=CONTROLS,
         global_controls=GLOBAL_CONTROLS,
+        color_controls=COLOR_CONTROLS,
         curve_presets=tonecurve.PRESETS,
         curve_parametric=[{"key": k, "label": k.capitalize()} for k in ("highlights", "lights", "darks", "shadows")],
         root=str(LIBRARY_ROOT),
@@ -1038,6 +1067,7 @@ def api_open():
 
         adj.setdefault("color_temp", baseline_temp)
         merged = {c["key"]: adj.get(c["key"], c["default"]) for c in CONTROLS + GLOBAL_CONTROLS}
+        merged.update({k: adj.get(k, d) for k, d in colormix.COLOR_DEFAULTS.items()})
         merged["monochrome"] = bool(adj.get("monochrome", False))
         merged["crop"] = adj.get("crop")
         merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
@@ -1404,6 +1434,7 @@ def api_reset():
         strip_xmp_adjustments(path)
         _, baseline_temp = _load_base_render(path)
         neutral = {c["key"]: c["default"] for c in CONTROLS + GLOBAL_CONTROLS}
+        neutral.update(colormix.COLOR_DEFAULTS)
         neutral["color_temp"] = baseline_temp
         neutral["monochrome"] = False
         neutral["crop"] = None
