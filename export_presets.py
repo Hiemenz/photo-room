@@ -63,10 +63,6 @@ BUILTINS: dict[str, dict] = {
     },
 }
 
-_SETTING_KEYS = ("dest", "template", "format", "quality", "bit_depth", "colorspace",
-                 "long_edge", "keep_metadata", "sharpen", "watermark")
-
-
 def options_from_payload(payload: dict) -> ExportOptions:
     """Build validated ExportOptions from dialog/preset JSON. Raises ValueError."""
     long_edge = payload.get("long_edge")

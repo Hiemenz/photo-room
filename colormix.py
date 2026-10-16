@@ -119,11 +119,6 @@ def parse_xmp_values(values: list[str]) -> dict:
     return out
 
 
-def has_color_settings(adj: dict) -> bool:
-    return any(float(adj.get(k, d)) != d for k, d in COLOR_DEFAULTS.items()
-               if k not in ("grade_blending", "grade_balance"))
-
-
 # ---------------------------------------------------------------------------
 # Colour space helpers
 # ---------------------------------------------------------------------------

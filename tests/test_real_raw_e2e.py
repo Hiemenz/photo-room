@@ -140,6 +140,19 @@ def test_edit_and_export_a_real_raw_keeps_every_tag(raw, tmp_path, fmt, depth):
         sharpen={"for": "screen", "amount": "standard"},
         watermark={"type": "text", "text": "test", "size": 3}))
 
+    # Pixel geometry, not just tags: the file must be framed exactly like the
+    # preview (straighten 1.5 trims to the inscribed rectangle ONCE).
+    import numpy as np
+    from PIL import Image
+    with Image.open(dest) as exported:
+        ew, eh = exported.size
+    full_w, full_h = 3906, 2602                   # rawpy's full sensor area for this CR2
+    scale = 1200 / max(full_w, full_h)
+    scaled = (max(1, round(full_h * scale)), max(1, round(full_w * scale)), 3)
+    expected = editor.apply_geometry(np.zeros(scaled, np.float32), {"straighten": 1.5}).shape
+    assert (eh, ew) == expected[:2], f"export {(ew, eh)} != preview geometry {(expected[1], expected[0])}"
+    assert max(ew, eh) < 1200, "straighten must have trimmed the corners"
+
     src, out = tags(raw), tags(dest)
     # Develop settings are baked into the pixels; the sidecar's crs block must not travel.
     src = {k: v for k, v in src.items() if not k.startswith("XMP:") or k.split(":")[1] in

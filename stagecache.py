@@ -43,7 +43,7 @@ STAGE_FIELDS: dict[int, frozenset] = {
                      | {f"grade_{r}_{c}" for r in _RANGES for c in ("hue", "sat", "lum")}),
 }
 # Settings that never reach a preview pixel (noise reduction is not previewed).
-IGNORED = frozenset({"noise_reduction"})
+IGNORED = frozenset({"luminance_nr"})
 
 
 def _dumps(obj) -> str:

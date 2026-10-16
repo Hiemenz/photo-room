@@ -120,6 +120,21 @@ def get_iso(cr2_path: Path) -> int:
 ANALYSIS_STRIDE = 4
 
 
+def baseline_temp_from_wb(camera_whitebalance) -> tuple[int, np.ndarray]:
+    """(baseline temp in K, normalised wb multipliers) from rawpy's camera WB."""
+    cam_mul = np.array(camera_whitebalance[:4], dtype=float)
+    cam_mul /= cam_mul[1]
+    # R/B ratio -> color temperature (empirical mapping)
+    rb_ratio = cam_mul[0] / cam_mul[2] if cam_mul[2] > 0 else 1.0
+    return int(np.clip(5500 / rb_ratio, 2500, 10000)), cam_mul
+
+
+def camera_baseline_temp(cr2_path: Path) -> int:
+    """The camera white balance as a temperature, from the header only."""
+    with rawpy.imread(str(cr2_path)) as raw:
+        return baseline_temp_from_wb(raw.camera_whitebalance)[0]
+
+
 def decode_for_analysis(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
     """
     Decode a raw file once, returning (8-bit RGB, baseline temp in K, wb multipliers).
@@ -129,12 +144,7 @@ def decode_for_analysis(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
     the result around rather than opening the file twice.
     """
     with rawpy.imread(str(cr2_path)) as raw:
-        cam_mul = np.array(raw.camera_whitebalance[:4], dtype=float)
-        cam_mul /= cam_mul[1]
-
-        # R/B ratio → color temperature (empirical mapping)
-        rb_ratio = cam_mul[0] / cam_mul[2] if cam_mul[2] > 0 else 1.0
-        baseline_temp = int(np.clip(5500 / rb_ratio, 2500, 10000))
+        baseline_temp, cam_mul = baseline_temp_from_wb(raw.camera_whitebalance)
 
         rgb = raw.postprocess(
             use_camera_wb=True,

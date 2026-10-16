@@ -195,10 +195,6 @@ def has_effect(mask: dict) -> bool:
     return any(float(mask.get("adj", {}).get(k, 0) or 0) != 0 for k in LOCAL_LIMITS)
 
 
-def has_masks(adj: dict) -> bool:
-    return any(has_effect(m) for m in normalise_masks(adj.get("masks")))
-
-
 def scale_for_strength(masks, strength: float) -> list[dict]:
     """Scale every local slider by the edit-strength factor (see editor.effective_adjustments)."""
     out = normalise_masks(masks)

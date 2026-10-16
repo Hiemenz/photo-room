@@ -155,10 +155,12 @@ def _scaled(img: Image.Image, long_edge: int | None) -> Image.Image:
     return img.resize(size, Image.LANCZOS)
 
 
-def _saved_adjustments(path: Path) -> dict:
+def _saved_adjustments(path: Path, source_size: tuple[int, int] | None = None) -> dict:
+    """Saved edits in canonical coordinates (crop relative to the straightened
+    preview, see geometry.py); ``source_size`` is the untransformed frame."""
     import editor  # deferred: imports Flask and the preview caches
 
-    saved = editor.read_saved_adjustments(path)
+    saved = editor.read_saved_adjustments(path, source_size=source_size)
     return dict(saved) if saved else {}
 
 
@@ -184,7 +186,7 @@ def _render_array(path: Path, opts: ExportOptions,
     """
     import editor
 
-    adj = dict(adjustments) if adjustments is not None else _saved_adjustments(path)
+    adj = dict(adjustments) if adjustments is not None else None
     deep = opts.bit_depth == 16
 
     if path.suffix.lower() in RAW_SUFFIXES:
@@ -194,12 +196,11 @@ def _render_array(path: Path, opts: ExportOptions,
         color = {"srgb": rawpy.ColorSpace.sRGB, "adobergb": rawpy.ColorSpace.Adobe,
                  "prophoto": rawpy.ColorSpace.ProPhoto}[space]
         with rawpy.imread(str(path)) as raw:
-            cam_mul = np.array(raw.camera_whitebalance[:4], dtype=float)
-            cam_mul /= cam_mul[1]
-            rb = cam_mul[0] / cam_mul[2] if cam_mul[2] > 0 else 1.0
-            baseline = int(np.clip(5500 / rb, 2500, 10000))
+            from process import baseline_temp_from_wb
+            baseline = baseline_temp_from_wb(raw.camera_whitebalance)[0]
             rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True,
                                   output_bps=16 if deep else 8, output_color=color)
+        src_size = (rgb.shape[1], rgb.shape[0])
         icc = icc_profile_for(space)
         if deep:
             base = np.asarray(rgb, dtype=np.float32) / 65535.0
@@ -210,6 +211,7 @@ def _render_array(path: Path, opts: ExportOptions,
             src = ImageOps.exif_transpose(src)
             source_icc = src.info.get("icc_profile")
             img = src.convert("RGB")
+        src_size = img.size
         baseline = 5500
         if opts.colorspace and source_icc is None and opts.colorspace != "srgb":
             raise ValueError("source has no colour profile to convert from")
@@ -231,6 +233,8 @@ def _render_array(path: Path, opts: ExportOptions,
     else:
         base = np.asarray(_scaled(img, opts.long_edge), dtype=np.float32) / 255.0
 
+    if adj is None:
+        adj = _saved_adjustments(path, src_size)
     adj.setdefault("color_temp", baseline)
     adj["_baseline_temp"] = baseline
     adj = editor.effective_adjustments(adj)

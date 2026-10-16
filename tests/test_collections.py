@@ -225,7 +225,7 @@ def test_export_names_and_renders_the_copy_separately(tmp_path, monkeypatch):
     from PIL import Image
     src = tmp_path / "IMG_0001.jpg"
     Image.new("RGB", (64, 48), (120, 120, 120)).save(src)
-    monkeypatch.setattr(exporter, "_saved_adjustments", lambda p: {"exposure": 0.0})
+    monkeypatch.setattr(exporter, "_saved_adjustments", lambda p, *a: {"exposure": 0.0})
     v = catalog.create_virtual(tmp_path, "IMG_0001.jpg", {"exposure": 2.0})
     opts = ExportOptions(format="png", keep_metadata=False)
     original = exporter.export_photo(src, tmp_path / "out", opts)
@@ -241,7 +241,7 @@ def test_export_copy_numbers_do_not_collide(tmp_path, monkeypatch):
     from PIL import Image
     src = tmp_path / "IMG_0002.jpg"
     Image.new("RGB", (32, 32), (90, 90, 90)).save(src)
-    monkeypatch.setattr(exporter, "_saved_adjustments", lambda p: {})
+    monkeypatch.setattr(exporter, "_saved_adjustments", lambda p, *a: {})
     v1 = catalog.create_virtual(tmp_path, "IMG_0002.jpg", {})
     v2 = catalog.create_virtual(tmp_path, "IMG_0002.jpg", {})
     opts = ExportOptions(format="jpeg", keep_metadata=False, template="{name}_{seq:02d}")
@@ -400,3 +400,24 @@ def test_cross_origin_collection_write_refused(lib):
     r = lib.post("/api/collections/create", json={"name": "x"},
                  headers={"Origin": "http://evil.example"})
     assert r.status_code == 403
+
+
+def test_every_path_taking_endpoint_accepts_a_virtual_copy_id(lib):
+    """Overlay, upright, spot suggestion and recover resolve a copy to its raw;
+    batch apply writes a copy's settings to the catalog, not the raw's XMP."""
+    v = lib.post("/api/virtual/create", json={"path": "a.dng", "adjustments": {"exposure": 1.0}}
+                 ).get_json()["virtual"]["id"]
+    bodies = {
+        "/api/mask_overlay": {"path": v, "mask": {"type": "radial", "x": .5, "y": .5, "rx": .2, "ry": .2}},
+        "/api/upright": {"path": v, "mode": "auto"},
+        "/api/spot/suggest": {"path": v, "x": 0.5, "y": 0.5},
+    }
+    for url, body in bodies.items():
+        r = lib.post(url, json=body)
+        assert "No such file" not in str(r.get_json()), (url, r.get_json())
+    writes_before = len(lib.tool.writes)
+    r = lib.post("/api/batch_apply", json={"paths": [v, "b.dng"], "adjustments": {"contrast": 9}})
+    body = r.get_json()
+    assert v in body["applied"], body
+    assert catalog.get_virtual(lib.root, v)["adjustments"]["contrast"] == 9
+    assert all(Path(w[-1]).name != "a.dng" for w in lib.tool.writes[writes_before:])

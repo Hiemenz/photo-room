@@ -23,6 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
+import geometry
+
 try:
     import duckdb
 except ImportError:  # pragma: no cover - exercised only without the dependency
@@ -224,9 +226,9 @@ def clear_history(db_path: Path | None = None) -> int:
 # Presets
 # ---------------------------------------------------------------------------
 
-# Framing belongs to one photograph, so a preset never carries it: pasting
-# someone else's crop onto a different frame is almost always wrong.
-PRESET_EXCLUDED = {"crop", "straighten", "_baseline_temp", "spots", "_frame", "_lens_meta"}
+# Framing, perspective, spots and masks belong to one photograph, so a preset
+# never carries them (geometry.PHOTO_SPECIFIC_KEYS, shared with batch apply).
+PRESET_EXCLUDED = geometry.PHOTO_SPECIFIC_KEYS
 
 
 def save_preset(name: str, adjustments: dict, db_path: Path | None = None) -> None:
@@ -235,7 +237,7 @@ def save_preset(name: str, adjustments: dict, db_path: Path | None = None) -> No
     if not name:
         raise ValueError("A preset needs a name")
 
-    stored = {k: v for k, v in adjustments.items() if k not in PRESET_EXCLUDED}
+    stored = geometry.without_photo_specific(adjustments, drop_private=True)
 
     # Temperature is kept as a ratio of the source photo's own white balance
     # so the preset means the same thing under different light.
@@ -281,7 +283,8 @@ def get_preset(name: str, baseline_temp: float = 5500, db_path: Path | None = No
     if not row:
         return None
 
-    adjustments = json.loads(row[0])
+    # Presets saved before geometry/masks were excluded may still carry them.
+    adjustments = geometry.without_photo_specific(json.loads(row[0]), drop_private=True)
     ratio = adjustments.pop("temp_ratio", None)
     if ratio is not None:
         adjustments["color_temp"] = int(round(float(baseline_temp) * float(ratio)))

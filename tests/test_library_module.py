@@ -155,7 +155,7 @@ def test_flag_store_crud(tmp_path):
 
 def test_corrupt_store_reads_as_empty(tmp_path):
     (tmp_path / library.STORE_NAME).write_text("{not json")
-    assert library.load_store(tmp_path) == {"flags": {}}
+    assert library.load_store(tmp_path) == {"flags": {}, "pre_reject": {}}
 
 
 # ------------------------------------------------------------- API + exiftool
@@ -279,10 +279,23 @@ def test_flag_reject_is_rating_minus_one_and_exclusive_with_pick(lib):
     assert it["path"] == "a.dng" and it["flag"] == "reject"
     assert get(lib, flag="pick")["total"] == 0
     post(lib, "/api/flag", {"path": "a.dng", "flag": "pick"})
-    assert lib.tool.meta["a.dng"]["Rating"] == 0
+    assert lib.tool.meta["a.dng"]["Rating"] == 4      # the stars it had before the reject
     assert get(lib, flag="pick")["items"][0]["path"] == "a.dng"
     post(lib, "/api/flag", {"path": "a.dng", "flag": "none"})
     assert get(lib, flag="unflagged")["total"] == 3
+
+
+def test_unrejecting_restores_the_previous_star_rating(lib):
+    assert get(lib, q="a.dng")["items"][0]["rating"] == 4
+    for _ in range(2):                                   # X twice by accident
+        post(lib, "/api/flag", {"path": "a.dng", "flag": "reject"})
+        assert lib.tool.meta["a.dng"]["Rating"] == -1
+        post(lib, "/api/flag", {"path": "a.dng", "flag": "none"})
+        assert lib.tool.meta["a.dng"]["Rating"] == 4
+    # a photo that had no stars goes back to none, not to a stale value
+    post(lib, "/api/flag", {"path": "b.dng", "flag": "reject"})
+    post(lib, "/api/flag", {"path": "b.dng", "flag": "none"})
+    assert lib.tool.meta["b.dng"].get("Rating", 0) == 0
 
 
 def test_flag_validation(lib):

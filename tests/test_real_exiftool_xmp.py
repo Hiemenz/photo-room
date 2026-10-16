@@ -292,7 +292,7 @@ def test_straighten_writes_crop_angle_and_the_inscribed_crop(raw):
     crs = read_crs(sidecar)
     assert crs["CropAngle"] == 5.0 and str(crs["HasCrop"]) in ("True", "true")
     assert 0 < crs["CropLeft"] < crs["CropRight"] < 1 and 0 < crs["CropTop"] < crs["CropBottom"] < 1
-    assert editor.read_saved_adjustments(raw)["straighten"] == 5.0
+    assert editor.read_saved_adjustments(raw, source_size=(6000, 4000))["straighten"] == 5.0
 
 
 def test_masks_are_lightroom_structs_and_read_back(saved, raw):
@@ -388,3 +388,44 @@ def test_library_writes_for_a_raw_go_to_the_sidecar_not_the_raw(raw):
 def test_library_reads_the_rating_the_editor_wrote_to_the_sidecar(raw):
     editor.write_rating(raw, 3)
     assert library.read_metadata([raw])[str(raw)]["rating"] == 3
+
+
+# ---------------------------------------------------------------------------
+# A failed read must never look like "no settings" (data-loss guard)
+# ---------------------------------------------------------------------------
+
+def _fail_exiftool_reads(monkeypatch, how):
+    """Make every read-only exiftool call (no write tag) fail, like a transient timeout."""
+    real = subprocess.run
+
+    def flaky(cmd, *a, **kw):
+        if isinstance(cmd, list) and cmd and cmd[0] == "exiftool" and not any(
+                "=" in c and c.startswith("-") for c in cmd) and "-overwrite_original" not in cmd:
+            if how == "timeout":
+                raise subprocess.TimeoutExpired(cmd, 1)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="Error: boom")
+        return real(cmd, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", flaky)
+
+
+@pytest.mark.parametrize("how", ["timeout", "exit"])
+def test_a_failed_read_raises_instead_of_returning_no_settings(raw, monkeypatch, how):
+    editor.save_adjustments(raw, {**FULL, "xf_vertical": 40.0, "xf_rotate": 2.5,
+                                  "lens_distortion": 20.0, "masks": MASKS[:1]},
+                            frame_size=(600, 400), source_size=(6000, 4000))
+    _fail_exiftool_reads(monkeypatch, how)
+    with pytest.raises(RuntimeError):
+        editor.read_saved_adjustments(raw)
+    with pytest.raises(RuntimeError):
+        editor.read_saved_adjustments(raw, prefer_sidecar=False)
+
+
+def test_a_failed_version_probe_stops_the_save_and_keeps_the_old_sidecar(raw, monkeypatch):
+    editor.save_adjustments(raw, {**FULL, "xf_vertical": 40.0}, source_size=(6000, 4000))
+    sidecar = raw.with_suffix(".xmp")
+    before = sidecar.read_bytes()
+    _fail_exiftool_reads(monkeypatch, "timeout")
+    with pytest.raises(RuntimeError):
+        editor.save_adjustments(raw, {"color_temp": 5500}, source_size=(6000, 4000))
+    assert sidecar.read_bytes() == before, "a failed save must leave the previous sidecar alone"

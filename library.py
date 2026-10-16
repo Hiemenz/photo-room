@@ -157,9 +157,11 @@ def load_store(root: Path) -> dict:
     try:
         data = json.loads(_store_path(root).read_text())
         flags = data.get("flags", {})
-        return {"flags": flags if isinstance(flags, dict) else {}}
+        pre = data.get("pre_reject", {})
+        return {"flags": flags if isinstance(flags, dict) else {},
+                "pre_reject": pre if isinstance(pre, dict) else {}}
     except (OSError, ValueError, AttributeError):
-        return {"flags": {}}
+        return {"flags": {}, "pre_reject": {}}
 
 
 def _save_store(root: Path, store: dict) -> None:
@@ -179,6 +181,35 @@ def _save_store(root: Path, store: dict) -> None:
 
 def get_pick(root: Path, rel: str) -> bool:
     return load_store(root)["flags"].get(rel) == "pick"
+
+
+def remember_pre_reject(root: Path, ratings: dict[str, int]) -> None:
+    """Keep each photo's star rating from before it was rejected (-1 erases it
+    in XMP), so un-rejecting can put it back."""
+    if not ratings:
+        return
+    with _lock:
+        store = load_store(root)
+        for rel, stars in ratings.items():
+            if stars and int(stars) > 0:
+                store["pre_reject"][rel] = int(stars)
+            else:
+                store["pre_reject"].pop(rel, None)
+        _save_store(root, store)
+
+
+def take_pre_reject(root: Path, rels: list[str]) -> dict[str, int]:
+    """The stars remembered by ``remember_pre_reject`` (0 if none), forgotten."""
+    with _lock:
+        store = load_store(root)
+        out = {}
+        for rel in rels:
+            try:
+                out[rel] = max(0, min(5, int(store["pre_reject"].pop(rel, 0))))
+            except (TypeError, ValueError):
+                out[rel] = 0
+        _save_store(root, store)
+        return out
 
 
 def set_picks(root: Path, rels: list[str], picked: bool) -> None:

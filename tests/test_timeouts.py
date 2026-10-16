@@ -68,13 +68,19 @@ def test_a_converter_hang_fails_one_file_not_the_batch(tmp_path, monkeypatch):
         process.convert_cr2_to_dng(tmp_path / "IMG_0001.CR2", tmp_path)
 
 
-@pytest.mark.parametrize("module", ["process", "editor", "ingest", "thumbs", "uploader"])
+ROOT = Path(__file__).resolve().parent.parent
+# Every top-level module that is not itself under test, found rather than listed,
+# so a new module that shells out cannot silently escape the check.
+MODULES = sorted(p.stem for p in ROOT.glob("*.py"))
+
+
+@pytest.mark.parametrize("module", MODULES)
 def test_every_subprocess_call_is_bounded(module):
     """
     A single unbounded call is enough to hang an unattended ingest, so this
     is checked structurally rather than case by case.
     """
-    source = Path(f"{module}.py").read_text()
+    source = (ROOT / f"{module}.py").read_text()
     unbounded = []
 
     for node in ast.walk(ast.parse(source)):

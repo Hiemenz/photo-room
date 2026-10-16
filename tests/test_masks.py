@@ -380,10 +380,12 @@ def test_real_exiftool_round_trip_keeps_full_fidelity(tmp_path):
 
 # --- presets, history, endpoints ---------------------------------------------
 
-def test_presets_and_history_carry_masks(tmp_path):
+def test_history_carries_masks_but_presets_do_not(tmp_path):
+    """Masks are drawn on one frame: history (same photo) keeps them, presets do not."""
     m = [linear(name="Sky")]
     style.save_preset("sky", {"exposure": 0.2, "masks": m})
-    assert style.get_preset("sky")["masks"] == m
+    got = style.get_preset("sky")
+    assert got["exposure"] == 0.2 and "masks" not in got
     photo = tmp_path / "a.dng"
     photo.write_bytes(b"x")
     data, _ = history.record(photo, "Add mask", {"exposure": 0.2, "masks": m})

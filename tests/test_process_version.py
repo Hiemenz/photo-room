@@ -71,12 +71,14 @@ def test_the_same_version_is_left_alone(photo, declaring):
     assert _process_version_for(photo) == DEFAULT_PROCESS_VERSION
 
 
-def test_an_unreadable_file_falls_back(photo, monkeypatch):
+def test_an_unreadable_file_stops_the_save_instead_of_guessing(photo, monkeypatch):
+    """Falling back to 11.0 would silently downgrade a file declaring a newer version."""
     def boom(*a, **k):
         raise OSError("exiftool missing")
 
     monkeypatch.setattr(editor.subprocess, "run", boom)
-    assert _process_version_for(photo) == DEFAULT_PROCESS_VERSION
+    with pytest.raises(RuntimeError):
+        _process_version_for(photo)
 
 
 def test_saving_preserves_a_newer_version(photo, declaring, monkeypatch):

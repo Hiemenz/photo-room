@@ -437,12 +437,14 @@ def test_save_writes_m8_tags(client, fake_rawpy, fake_exiftool):
     assert "AutoLateralCA=1" in cmd and "RetouchAreas=[{SpotType=heal" in cmd
 
 
-def test_presets_carry_transform_and_lens_but_not_spots(tmp_path):
+def test_presets_carry_lens_but_not_perspective_or_spots(tmp_path):
+    """Perspective (an Upright result) and spots describe one frame, not a look."""
     db = tmp_path / "p.duckdb"
-    style.save_preset("m8", {"xf_vertical": 10, "lens_distortion": 5, "ca_remove": True,
-                             "spots": [spot()]}, db_path=db)
+    style.save_preset("m8", {"xf_vertical": 10, "xf_rotate": 2.0, "lens_distortion": 5,
+                             "ca_remove": True, "spots": [spot()]}, db_path=db)
     got = style.get_preset("m8", db_path=db)
-    assert got["xf_vertical"] == 10 and got["ca_remove"] is True and "spots" not in got
+    assert got["lens_distortion"] == 5 and got["ca_remove"] is True
+    assert not {"xf_vertical", "xf_rotate", "spots"} & set(got)
 
 
 def test_reset_restores_m8_defaults(client, fake_rawpy, fake_exiftool):

@@ -18,10 +18,6 @@ CONTROLS = transform.CONTROLS + lens.CONTROLS          # sliders
 TOGGLES = lens.TOGGLES                                  # checkboxes
 DEFAULTS = {**transform.DEFAULTS, **lens.DEFAULTS, "spots": []}
 
-# Keys that describe one photograph's content rather than a look, so a
-# preset never carries them (pasting spot positions onto another frame
-# would paint blotches).
-PRESET_EXCLUDED = {"spots"}
 
 
 def complete(adj: dict) -> dict:
@@ -101,20 +97,26 @@ def parse_values(lines: list[str]) -> dict:
 
 
 def read_from_file(path: Path, timeout: float) -> dict:
-    """M8 settings stored in ``path`` (non-default only). Never raises."""
+    """M8 settings stored in ``path`` (non-default only).
+
+    Raises ``RuntimeError`` if exiftool cannot read the file: "unreadable"
+    must never look like "no settings", or the next save writes defaults over
+    the real values.
+    """
+    def run(args: list[str]) -> str:
+        try:
+            res = subprocess.run(["exiftool"] + args, capture_output=True,
+                                 text=True, timeout=timeout)
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise RuntimeError(f"Could not read metadata ({exc.__class__.__name__}): {exc}") from exc
+        if res.returncode != 0:
+            raise RuntimeError(f"exiftool failed reading metadata: {res.stderr.strip() or res.returncode}")
+        return res.stdout
+
     out: dict = {}
-    try:
-        args = [f"-XMP-crs:{t}" for t in read_tags()] + ["-s3", "-f", str(path)]
-        res = subprocess.run(["exiftool"] + args, capture_output=True, text=True, timeout=timeout)
-        out.update(parse_values(res.stdout.strip().split("\n")))
-    except Exception:
-        pass
-    try:
-        res = subprocess.run(["exiftool"] + spots.read_arguments() + [str(path)],
-                             capture_output=True, text=True, timeout=timeout)
-        found = spots.parse_xmp(res.stdout)
-        if found:
-            out["spots"] = found
-    except Exception:
-        pass
+    out.update(parse_values(
+        run([f"-XMP-crs:{t}" for t in read_tags()] + ["-s3", "-f", str(path)]).strip().split("\n")))
+    found = spots.parse_xmp(run(spots.read_arguments() + [str(path)]))
+    if found:
+        out["spots"] = found
     return out

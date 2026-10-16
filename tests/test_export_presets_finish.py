@@ -322,6 +322,16 @@ def wait(client, job_id, timeout=90):
     raise AssertionError("export did not finish")
 
 
+def wait_for(predicate, timeout=30, what="condition"):
+    """Poll until ``predicate()`` is truthy; fail loudly instead of hanging."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
 def test_defaults_advertise_sharpen_and_watermark_options(client):
     d = client.get("/api/export/defaults").get_json()
     assert d["sharpen"] == {"for": ["screen", "matte", "glossy"], "amount": ["low", "standard", "high"]}
@@ -378,14 +388,19 @@ def test_queue_runs_batches_in_order_with_per_photo_results(client, tmp_path, mo
     gate = {"open": False}
 
     def slow(*a, **k):
-        while not gate["open"]:
-            time.sleep(0.01)
+        wait_for(lambda: gate["open"], what="the test to open the gate")
         if a[0].name == "IMG_0002.CR2":
             raise RuntimeError("disk on fire")
         return real(*a, **k)
 
     monkeypatch.setattr(exporter, "export_photo", slow)
     first = start(client, tmp_path / "a", scope="folder").get_json()
+    # The worker thread moves the first batch queued -> running asynchronously.
+    # Until it has, the first batch itself still occupies queue position 1 and
+    # the second would legitimately be position 2 (that was the flake), so wait
+    # for the state the assertion below is about.
+    wait_for(lambda: client.get(f"/api/export/status/{first['id']}").get_json()["state"] == "running",
+             what="first batch to start running")
     second = start(client, tmp_path / "b").get_json()
     assert second["state"] == "queued" and second["queue_position"] == 1
     gate["open"] = True
@@ -410,8 +425,7 @@ def test_cancel_a_running_batch_keeps_finished_photos(client, tmp_path, monkeypa
 
     monkeypatch.setattr(exporter, "export_photo", one)
     job = start(client, tmp_path / "o", scope="folder").get_json()
-    while not seen:
-        time.sleep(0.01)
+    wait_for(lambda: seen, what="the export worker to start the first photo")
     assert client.post(f"/api/export/cancel/{job['id']}").status_code == 200
     ready.set()
     s = wait(client, job["id"])
@@ -452,10 +466,7 @@ def test_interrupted_batch_resumes_after_an_editor_restart(client, tmp_path, mon
 
     monkeypatch.setattr(exporter, "export_photo", crash_after_one)
     job = start(client, tmp_path / "o", scope="folder").get_json()
-    end = time.time() + 60
-    while len(calls) < 2 and time.time() < end:
-        time.sleep(0.02)
-    time.sleep(0.2)
+    wait_for(lambda: len(calls) >= 2, 60, "the second export call")
     saved = json.loads(export_api.queue_file().read_text())["jobs"][0]
     assert saved["state"] == "running" and [i["status"] for i in saved["items"]] == ["ok", "pending", "pending"]
 

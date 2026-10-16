@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import editor
+import geometry
 
 
 @pytest.fixture
@@ -79,10 +80,10 @@ def test_one_failure_does_not_abandon_the_rest(client, fake_rawpy, fake_exiftool
     """A single unwritable photo must not cost the whole shoot."""
     real_save = editor.save_adjustments
 
-    def flaky(path, adj):
+    def flaky(path, adj, **kw):
         if path.name == "b.dng":
             raise RuntimeError("file is read-only")
-        return real_save(path, adj)
+        return real_save(path, adj, **kw)
 
     monkeypatch.setattr(editor, "save_adjustments", flaky)
 
@@ -117,9 +118,9 @@ def test_temperature_is_reanchored_to_each_target(client, library, fake_rawpy, f
     seen = {}
     real_save = editor.save_adjustments
 
-    def capture(path, adj):
+    def capture(path, adj, **kw):
         seen[path.name] = adj.get("color_temp")
-        return real_save(path, adj)
+        return real_save(path, adj, **kw)
 
     monkeypatch.setattr(editor, "save_adjustments", capture)
     # Each target reports a different camera white balance.
@@ -252,3 +253,38 @@ def test_default_job_count_is_sane():
     import process
 
     assert 1 <= process.DEFAULT_JOBS <= 12
+
+
+CROP = {"left": 0.1, "top": 0.15, "right": 0.9, "bottom": 0.8}
+
+
+def test_batch_with_geometry_uses_the_same_frames_as_a_single_save(
+        client, library, fake_rawpy, fake_exiftool, monkeypatch):
+    calls = []
+    real = editor.save_adjustments
+
+    def spy(path, adj, **kw):
+        calls.append((path.name, kw.get("frame_size"), kw.get("source_size")))
+        return real(path, adj, **kw)
+
+    monkeypatch.setattr(editor, "save_adjustments", spy)
+    adj = {"exposure": 0.5, "straighten": 8.0, "crop": CROP}
+    assert client.post("/api/save", json={"path": "a.dng", "adjustments": adj}).status_code == 200
+    r = client.post("/api/batch_apply", json={"paths": ["a.dng"], "adjustments": adj,
+                                              "include_geometry": True}).get_json()
+    assert r["applied"] == ["a.dng"]
+    single, batch = calls
+    assert single[1:] == batch[1:] and single[1] is not None
+
+
+def test_batch_without_geometry_does_not_copy_crop_straighten_perspective_or_masks(
+        client, library, fake_rawpy, fake_exiftool, monkeypatch):
+    seen = {}
+    real = editor.save_adjustments
+    monkeypatch.setattr(editor, "save_adjustments",
+                        lambda p, a, **kw: (seen.update(a), real(p, a, **kw))[1])
+    client.post("/api/batch_apply", json={"paths": ["a.dng"], "adjustments": {
+        "exposure": 0.5, "straighten": 8.0, "crop": CROP, "xf_vertical": 20,
+        "masks": [{"type": "linear"}], "spots": [{}]}})
+    assert seen.get("exposure") == 0.5
+    assert not set(seen) & geometry.PHOTO_SPECIFIC_KEYS

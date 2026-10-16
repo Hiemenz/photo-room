@@ -85,7 +85,7 @@ def test_baseline_temperature_is_part_of_every_key():
 
 def test_noise_reduction_is_ignored_because_the_preview_never_shows_it():
     a = stage_keys(BASE_ADJ, 5500)
-    b = stage_keys({**BASE_ADJ, "noise_reduction": 40}, 5500)
+    b = stage_keys({**BASE_ADJ, "luminance_nr": 40}, 5500)
     assert a == b
 
 

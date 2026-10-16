@@ -27,9 +27,10 @@ def test_a_bytes_payload_is_unwrapped():
     assert "Input/output error" in message
 
 
-def test_a_decode_failure_explains_itself():
+def test_an_io_error_from_the_decoder_mentions_a_corrupt_file():
+    """The user-facing hint, as opposed to the bytes-unwrapping test above."""
     message = describe_error(Exception("b'Input/output error'"))
-    assert "truncated or corrupt" in message
+    assert "truncated or corrupt" in message and not message.startswith("b'")
 
 
 def test_a_truncation_error_explains_itself():
@@ -102,10 +103,14 @@ def test_a_damaged_file_does_not_break_the_next_good_one(client, failing_decoder
 def test_a_damaged_file_is_not_left_in_the_cache(client, failing_decoder, fake_exiftool):
     """A failed decode must not poison the cache with a half-built entry."""
     fake_exiftool.stdout_lines = ["-"] * 21
-    client.post("/api/open", json={"path": "garbage.dng"})
+    before = editor.cache_stats()
+    res = client.post("/api/open", json={"path": "garbage.dng"})
 
-    stats = editor.cache_stats()
-    assert stats["previews"] == stats["decodes"]
+    assert res.status_code == 500                   # the failure really happened...
+    stats = editor.cache_stats()                    # ...and left nothing behind
+    assert stats["previews"] == before["previews"]
+    assert stats["decodes"] == before["decodes"]
+    assert str((editor.LIBRARY_ROOT / "garbage.dng").resolve()) not in editor._base_cache
 
 
 def test_previewing_a_damaged_file_fails_cleanly(client, failing_decoder):

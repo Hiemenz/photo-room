@@ -35,6 +35,7 @@ except ImportError:        # pragma: no cover
 
 import catalog
 import colormix
+import geometry
 import masks
 import library
 import history
@@ -45,6 +46,7 @@ import style
 import stagecache
 import thumbs
 import tonecurve
+from geometry import largest_inscribed_rect as _largest_inscribed_rect
 from tonecurve import apply_tone_curve
 from process import (
     EXIFTOOL_TIMEOUT,
@@ -54,6 +56,7 @@ from process import (
     has_sidecar,
     list_photos,
     decode_for_analysis,
+    camera_baseline_temp,
     photo_features,
     verify_xmp_written,
     extract_original_raw,
@@ -311,36 +314,6 @@ def _blur(plane: np.ndarray, radius: float) -> np.ndarray:
         img = img.filter(ImageFilter.GaussianBlur(radius))
 
     return np.asarray(img, dtype=np.float32) / 255.0
-
-
-def _largest_inscribed_rect(w: float, h: float, angle_rad: float) -> tuple[float, float]:
-    """
-    Biggest axis-aligned rectangle of the original proportions that fits
-    inside a rotated w x h rectangle.
-
-    Straightening otherwise leaves wedge-shaped gaps at the corners, so the
-    result is cropped to this rather than showing them.
-    """
-    if w <= 0 or h <= 0:
-        return 0.0, 0.0
-
-    angle = abs(angle_rad) % np.pi
-    if angle > np.pi / 2:
-        angle = np.pi - angle
-
-    sin_a, cos_a = abs(np.sin(angle)), abs(np.cos(angle))
-    short, long_ = (w, h) if w < h else (h, w)
-
-    if short <= 2.0 * sin_a * cos_a * long_ or abs(sin_a - cos_a) < 1e-10:
-        # The limit is a single corner; the rectangle is half the short side.
-        x = 0.5 * short
-        wr, hr = (x / sin_a, x / cos_a) if w >= h else (x / cos_a, x / sin_a)
-    else:
-        cos_2a = cos_a * cos_a - sin_a * sin_a
-        wr = (w * cos_a - h * sin_a) / cos_2a
-        hr = (h * cos_a - w * sin_a) / cos_2a
-
-    return max(0.0, wr), max(0.0, hr)
 
 
 def apply_geometry(img: np.ndarray, adj: dict) -> np.ndarray:
@@ -689,11 +662,6 @@ def compute_histogram(img: np.ndarray) -> dict:
     return out
 
 
-def render_preview(path: Path, adj: dict, quality: int = 82) -> str:
-    """Render the adjusted preview and return it as a base64 data URI."""
-    return render_with_histogram(path, adj, quality)["preview"]
-
-
 # While a slider is moving the preview renders from a smaller copy of the
 # photo (about a third of the pixels) and a sharp render follows when it
 # settles, as Lightroom does. Spots and lens corrections work on the original
@@ -798,37 +766,8 @@ def effective_adjustments(adj: dict) -> dict:
 def crop_in_full_frame(
     crop: dict | None, angle: float, width: float, height: float
 ) -> dict:
-    """
-    Convert a crop expressed against the straightened preview into fractions
-    of the whole straightened frame, which is what Camera Raw reads.
-
-    The preview shows the largest rectangle that fits inside the rotation,
-    so a crop dragged on screen is relative to that inset region. Writing
-    those fractions unchanged selected a different part of the photograph —
-    on a 300x200 frame straightened 10 degrees, a right edge dragged to 0.25
-    meant 81px on screen and 75px in the file.
-
-    With no crop at all this returns the inscribed rectangle itself, so a
-    straighten-only edit trims the empty corners in Camera Raw exactly as
-    the preview does, instead of writing a full 0..1 rect that shows them.
-    """
-    crop = crop or {"left": 0.0, "top": 0.0, "right": 1.0, "bottom": 1.0}
-    if not angle or width <= 0 or height <= 0:
-        return dict(crop)
-
-    keep_w, keep_h = _largest_inscribed_rect(width, height, np.deg2rad(angle))
-    if keep_w <= 0 or keep_h <= 0:
-        return dict(crop)
-
-    x0 = (width - keep_w) / 2.0
-    y0 = (height - keep_h) / 2.0
-
-    return {
-        "left": (x0 + float(crop.get("left", 0.0)) * keep_w) / width,
-        "right": (x0 + float(crop.get("right", 1.0)) * keep_w) / width,
-        "top": (y0 + float(crop.get("top", 0.0)) * keep_h) / height,
-        "bottom": (y0 + float(crop.get("bottom", 1.0)) * keep_h) / height,
-    }
+    """Canonical crop -> Camera Raw's full-frame fractions (see ``geometry``)."""
+    return geometry.ui_to_xmp_crop(crop, angle, width, height)
 
 
 def _has_crop(adj: dict) -> bool:
@@ -862,17 +801,33 @@ def _version_tuple(value: str) -> tuple[int, ...]:
         return ()
 
 
+class MetadataReadError(RuntimeError):
+    """exiftool could not read a file's metadata (as opposed to finding none).
+
+    Reads that fail must never be mistaken for "no settings stored": the next
+    save would then write defaults over the real edits.
+    """
+
+
+def _exiftool_read(args: list[str]) -> str:
+    """stdout of a read-only exiftool call; any failure raises MetadataReadError."""
+    try:
+        result = subprocess.run(["exiftool"] + args, capture_output=True,
+                                text=True, timeout=EXIFTOOL_TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise MetadataReadError(f"Could not read metadata ({exc.__class__.__name__}): {exc}") from exc
+    if result.returncode != 0:
+        raise MetadataReadError(f"exiftool failed reading metadata: {result.stderr.strip() or result.returncode}")
+    return result.stdout
+
+
 def existing_process_version(path: Path) -> str | None:
     """The process version already declared in a file, if any."""
     target = edit_target(path)
     if target != path and not target.exists():
         return None
     path = target
-    result = subprocess.run(
-        ["exiftool", "-XMP-crs:ProcessVersion", "-s3", "-f", str(path)],
-        capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
-    )
-    raw = result.stdout.strip()
+    raw = _exiftool_read(["-XMP-crs:ProcessVersion", "-s3", "-f", str(path)]).strip()
     return None if raw in ("-", "") else raw
 
 
@@ -930,10 +885,9 @@ def _process_version_for(path: Path) -> str:
     an existing photograph looks — a downgrade from Process Version 6 to 5,
     not just a metadata edit.
     """
-    try:
-        existing = existing_process_version(path)
-    except Exception:
-        return DEFAULT_PROCESS_VERSION
+    # A failed read must stop the save: guessing 11.0 here would silently
+    # downgrade a file that declares a newer process version.
+    existing = existing_process_version(path)
 
     if existing and _version_tuple(existing) > _version_tuple(DEFAULT_PROCESS_VERSION):
         return existing
@@ -1052,25 +1006,42 @@ def _save_mask_sidecar(path: Path, masks_full) -> None:
         masks.save_sidecar(path, masks_full)
 
 
-def read_saved_adjustments(path: Path, prefer_sidecar: bool = True) -> dict | None:
-    """Develop settings stored for this photo, with its local-adjustment masks."""
+def read_saved_adjustments(
+    path: Path,
+    prefer_sidecar: bool = True,
+    source_size: tuple[float, float] | None = None,
+) -> dict | None:
+    """
+    Develop settings stored for this photo, with its local-adjustment masks.
+
+    Returned in the canonical coordinates (see ``geometry``): the XMP crop is
+    inverted back to a crop of the straightened preview. That needs the
+    frame's proportions when the photo is straightened; ``source_size`` is the
+    untransformed frame's size, or None to take it from the decoded preview.
+    Raises ``MetadataReadError`` if the metadata cannot be read.
+    """
     values, source = _read_saved_values(path, prefer_sidecar)
     found = _read_masks(path, source) if source is not None else []
     if found:
         values = dict(values or {})
         values["masks"] = found
+    if values and values.get("crop") and float(values.get("straighten") or 0):
+        if source_size is None:
+            base, _ = _load_base_render(path)
+            source_size = (base.shape[1], base.shape[0])
+        frame = retouch.frame_after_transform(*source_size, values)
+        values = dict(values)
+        values["crop"] = geometry.xmp_to_ui_crop(
+            values["crop"], float(values["straighten"]), *frame)
     return values
 
 
 def _read_masks(photo: Path, source: Path) -> list[dict]:
     """Masks from the XMP in ``source``, or the richer JSON sidecar if it still agrees."""
-    try:
-        result = subprocess.run(
-            ["exiftool"] + masks.xmp_read_args() + [str(source)],
-            capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT)
-        from_xmp = masks.parse_exiftool_json(result.stdout)
-    except Exception:
-        from_xmp = []
+    # A failed read raises: treating it as "no masks" would let the next save
+    # erase them. Only a successful read that finds none returns [].
+    from_xmp = masks.parse_exiftool_json(
+        _exiftool_read(masks.xmp_read_args() + [str(source)]))
     return masks.reconcile(masks.load_sidecar(photo), from_xmp)
 
 
@@ -1100,7 +1071,7 @@ def _read_saved_values(path: Path, prefer_sidecar: bool = True) -> tuple[dict | 
 def _read_adjustments_from(path: Path) -> dict | None:
     """Return slider values already stored in the file, or None if it has none."""
     out = _read_basic_adjustments_from(path)
-    extra = retouch.read_from_file(path, EXIFTOOL_TIMEOUT)
+    extra = retouch.read_from_file(path, EXIFTOOL_TIMEOUT)   # raises on a failed read
     if extra:
         out = dict(out or {})
         out.update(extra)
@@ -1117,8 +1088,7 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
         "CropAngle", "HasCrop", "CropLeft", "CropTop", "CropRight", "CropBottom",
     ]
     args = [f"-XMP-crs:{t}" for t in tags] + ["-s3", "-f", str(path)]
-    result = subprocess.run(["exiftool"] + args, capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT)
-    values = result.stdout.strip().split("\n")
+    values = _exiftool_read(args).strip().split("\n")
     if len(values) < len(tags) or all(v.strip() in ("-", "") for v in values):
         # No develop settings, but a curve alone is still an edit.
         curve = _read_tone_curve(path)
@@ -1171,17 +1141,15 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
 
 def _read_tone_curve(path: Path) -> dict | None:
     args = ["-sep", "|"] + [f"-XMP-crs:{t}" for t in tonecurve.xmp_read_tags()] + ["-s3", "-f", str(path)]
-    result = subprocess.run(["exiftool"] + args, capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT)
     # Not stripped: an empty line is a tag with no value, and dropping
     # leading ones would shift every later tag up.
-    return tonecurve.parse_xmp(result.stdout.split("\n"))
+    return tonecurve.parse_xmp(_exiftool_read(args).split("\n"))
 
 
 def _read_color_adjustments(path: Path) -> dict:
     """HSL, B&W mixer and colour grading values stored in the file (non-default only)."""
     args = [f"-XMP-crs:{t}" for t in colormix.XMP_TAGS.values()] + ["-s3", "-f", str(path)]
-    result = subprocess.run(["exiftool"] + args, capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT)
-    return colormix.parse_xmp_values(result.stdout.strip().split("\n"))
+    return colormix.parse_xmp_values(_exiftool_read(args).strip().split("\n"))
 
 
 
@@ -1344,6 +1312,17 @@ def _virtual(raw_id) -> tuple[Path, dict] | None:
     except KeyError as exc:
         raise ValueError(exc.args[0]) from None
     return _safe_path(entry["source"]), entry
+
+
+def _resolve_photo(raw_id) -> Path:
+    """The raw file behind a photo id: a virtual copy's id resolves to its source.
+
+    For routes that only read or analyse the raw (overlay, upright, spot
+    suggestion, recover); routes that also need the copy's own settings use
+    ``_virtual`` directly.
+    """
+    vc = _virtual(raw_id)
+    return vc[0] if vc else _safe_path(raw_id)
 
 
 def _history_key(source: Path, entry: dict) -> Path:
@@ -1551,7 +1530,7 @@ def api_preview():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        path = _resolve_photo(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
 @app.route("/api/mask_overlay", methods=["POST"])
@@ -1562,7 +1541,7 @@ def api_mask_overlay():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        path = _resolve_photo(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
     try:
@@ -1590,7 +1569,7 @@ def api_upright():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        path = _resolve_photo(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
     mode = payload.get("mode", "auto")
@@ -1621,7 +1600,7 @@ def api_spot_suggest():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        path = _resolve_photo(payload["path"])
         x, y = float(payload["x"]), float(payload["y"])
         r = float(payload.get("r", 0.02))
     except (ValueError, KeyError, TypeError) as exc:
@@ -1633,6 +1612,21 @@ def api_spot_suggest():
         return jsonify({"ok": True, "sx": sx, "sy": sy})
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
+
+
+def _save_frames(path: Path, chosen: dict):
+    """(frame_size, source_size) save_adjustments needs for ``chosen`` on ``path``.
+
+    Used by every writer (single save, batch apply) so they cannot disagree.
+    """
+    needs_frame = (float(chosen.get("straighten", 0) or 0) or chosen.get("masks")
+                   or chosen.get("spots") or not retouch.transform.is_identity(chosen))
+    if not needs_frame:
+        return None, None
+    base, _ = _load_base_render(path)
+    source_size = (base.shape[1], base.shape[0])
+    # Straighten and Crop act on the transformed frame.
+    return retouch.frame_after_transform(*source_size, chosen), source_size
 
 
 @app.route("/api/save", methods=["POST"])
@@ -1658,15 +1652,7 @@ def api_save():
     try:
         chosen = payload.get("adjustments", {})
 
-        frame_size = None
-        source_size = None
-        needs_frame = (float(chosen.get("straighten", 0) or 0) or chosen.get("masks")
-                       or chosen.get("spots") or not retouch.transform.is_identity(chosen))
-        if needs_frame:
-            base, _ = _load_base_render(path)
-            source_size = (base.shape[1], base.shape[0])
-            # Straighten and Crop act on the transformed frame.
-            frame_size = retouch.frame_after_transform(*source_size, chosen)
+        frame_size, source_size = _save_frames(path, chosen)
 
         save_adjustments(path, chosen, frame_size=frame_size, sidecar=WRITE_SIDECARS,
                          source_size=source_size)
@@ -1709,7 +1695,7 @@ def _baseline_temp_of(path: Path) -> int:
         cached = _decode_cache.get(key)
     if cached is not None:
         return cached[1]
-    return decode_for_analysis(path)[1]
+    return camera_baseline_temp(path)
 
 
 def _record_for_learning(path: Path, chosen: dict) -> dict | None:
@@ -1868,9 +1854,17 @@ def api_flag():
         for vid in vids:
             entry = catalog.get_virtual(LIBRARY_ROOT, vid)
             rating = entry.get("rating", 0)
+            if flag == "reject":
+                if rating != REJECTED:
+                    library.remember_pre_reject(LIBRARY_ROOT, {vid: rating})
+                new_rating = REJECTED
+            elif rating == REJECTED:
+                new_rating = library.take_pre_reject(LIBRARY_ROOT, [vid])[vid]
+            else:
+                new_rating = rating
             catalog.update_virtual(
                 LIBRARY_ROOT, vid, flag="pick" if flag == "pick" else "none",
-                rating=REJECTED if flag == "reject" else (0 if rating == REJECTED else rating))
+                rating=new_rating)
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc.args[0] if isinstance(exc, KeyError) else exc)}), 400
     try:
@@ -1878,11 +1872,16 @@ def api_flag():
         for p in paths:
             was_rejected = current.get(str(p), {}).get("rating") == REJECTED
             if flag == "reject" and not was_rejected:
+                # Rejecting writes -1 over the stars; remember them first so
+                # un-rejecting (or an accidental double X) gets them back.
+                library.remember_pre_reject(
+                    LIBRARY_ROOT, {_rel(p): current.get(str(p), {}).get("rating", 0)})
                 write_rating(p, REJECTED)
                 library.update_cached(p, rating=REJECTED)
             elif flag != "reject" and was_rejected:
-                write_rating(p, 0)
-                library.update_cached(p, rating=0)
+                restored = library.take_pre_reject(LIBRARY_ROOT, [_rel(p)])[_rel(p)]
+                write_rating(p, restored)
+                library.update_cached(p, rating=restored)
         if paths:
             library.set_picks(LIBRARY_ROOT, [_rel(p) for p in paths], flag == "pick")
         n = len(paths) + len(vids)
@@ -2301,15 +2300,17 @@ def api_batch_apply():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     adjustments = payload.get("adjustments", {})
+    vids = _split_virtual(payload)
     raw_paths = payload.get("paths", [])
 
-    if not raw_paths:
+    if not raw_paths and not vids:
         return jsonify({"error": "No files selected"}), 400
 
     applied: list[str] = []
     failed: list[dict] = []
     skipped: list[dict] = []
     allow_foreign = bool(payload.get("overwrite_foreign", False))
+    include_geometry = bool(payload.get("include_geometry", False))
 
     # How much warmer or cooler than its own camera the source photo was set.
     source_baseline = payload.get("baseline_temp")
@@ -2323,6 +2324,19 @@ def api_batch_apply():
     # Writing the same file twice is wasted work and inflates the count.
     seen: set[str] = set()
     raw_paths = [p for p in raw_paths if not (p in seen or seen.add(p))]
+
+    # A virtual copy keeps its settings in the catalog (canonical coordinates,
+    # same photograph), never in the raw's XMP.
+    for vid in vids:
+        try:
+            entry = catalog.get_virtual(LIBRARY_ROOT, vid)
+            incoming = (dict(adjustments) if include_geometry
+                        else geometry.without_photo_specific(adjustments))
+            catalog.update_virtual(LIBRARY_ROOT, vid,
+                                   adjustments={**(entry.get("adjustments") or {}), **incoming})
+            applied.append(vid)
+        except Exception as exc:
+            failed.append({"path": vid, "error": str(exc.args[0] if isinstance(exc, KeyError) else exc)})
 
     for raw in raw_paths:
         try:
@@ -2340,9 +2354,12 @@ def api_batch_apply():
                     skipped.append({"path": raw, "editor": who})
                     continue
 
-            per_file = dict(adjustments)
-            # Spot positions are specific to the photo they were placed on.
-            per_file.pop("spots", None)
+            # Framing, perspective, spots and masks belong to the photo they
+            # were made on; only the look travels (geometry.PHOTO_SPECIFIC_KEYS)
+            # unless the caller explicitly asks for geometry too. Then each
+            # target gets the same coordinate conversion as a single save.
+            per_file = (dict(adjustments) if include_geometry
+                        else geometry.without_photo_specific(adjustments))
 
             # Temperature is camera-relative, so copying an absolute Kelvin
             # value onto a frame shot under different light shifts its colour.
@@ -2357,7 +2374,8 @@ def api_batch_apply():
                 per_file["color_temp"] = int(round(target_baseline * temp_ratio))
                 per_file.pop("_baseline_temp", None)
 
-            save_adjustments(path, per_file)
+            frame_size, source_size = _save_frames(path, per_file)
+            save_adjustments(path, per_file, frame_size=frame_size, source_size=source_size)
             applied.append(str(path.relative_to(LIBRARY_ROOT.resolve())))
         except Exception as exc:
             failed.append({"path": raw, "error": str(exc)})
@@ -2557,7 +2575,7 @@ def api_recover():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        path = _resolve_photo(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
 
