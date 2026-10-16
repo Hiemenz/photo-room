@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageCms, ImageOps
 
+import export_finish
 import process
 from process import EXIFTOOL_TIMEOUT, RAW_SUFFIXES, run_tool
 
@@ -54,6 +55,8 @@ class ExportOptions:
     template: str = "{name}"
     keep_metadata: bool = True
     bit_depth: int = 8  # 16 is PNG only
+    sharpen: dict | None = None     # {"for": screen|matte|glossy, "amount": low|standard|high}
+    watermark: dict | None = None   # see export_finish.DEFAULT_WATERMARK
 
     def validate(self) -> "ExportOptions":
         fmt = self.format.lower()
@@ -74,6 +77,8 @@ class ExportOptions:
             if cs not in COLOR_SPACES:
                 raise ValueError(f"colour space must be one of {', '.join(COLOR_SPACES)}")
             self.colorspace = cs
+        self.sharpen = export_finish.normalize_sharpen(self.sharpen)
+        self.watermark = export_finish.normalize_watermark(self.watermark)
         return self
 
 
@@ -353,13 +358,12 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
     """
     opts = opts.validate()
     adjustments = virtual["adjustments"] if virtual else None
-    if opts.bit_depth == 16:
-        arr, icc = _render_array(source, opts, adjustments=adjustments)
-        size = (arr.shape[1], arr.shape[0])
-        img = None
-    else:
-        img, icc = render(source, opts, adjustments=adjustments)
-        size = img.size
+    arr, icc = _render_array(source, opts, adjustments=adjustments)
+    if opts.sharpen or opts.watermark:
+        # After the resize, at export only: sharpen for the medium, then mark.
+        arr = export_finish.finish(arr, opts.sharpen, opts.watermark)
+    size = (arr.shape[1], arr.shape[0])
+    img = None if opts.bit_depth == 16 else Image.fromarray((arr * 255.0 + 0.5).astype(np.uint8))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     ext = FORMATS[opts.format]

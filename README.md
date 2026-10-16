@@ -573,7 +573,46 @@ installed the dialog says so and how to install it (it is needed to read the
 saved edits as well as to copy metadata).
 
 Endpoints: `GET /api/export/defaults`, `POST /api/export/preview`,
-`POST /api/export` (returns 202 and a job id), `GET /api/export/status/<id>`.
+`POST /api/export` (returns 202 and a job id), `GET /api/export/status/<id>`,
+plus the preset and queue endpoints below.
+
+**Presets.** The dialog's Preset menu stores every setting (destination, file
+name, format, quality, bit depth, colour space, resize, metadata, sharpening,
+watermark) under a name. Four built-ins ship read-only: *Web 2048px JPEG q80
+sRGB*, *Full-res JPEG q92*, *Full-res 16-bit PNG* and *Print AdobeRGB*. Your own
+presets are saved in `~/.photo-room/export_presets.json` (set
+`PHOTO_ROOM_CONFIG_DIR` to move it); names are case-insensitive and built-in
+names are reserved. `GET /api/export/presets`, `POST /api/export/presets`
+(`{"name", "settings"}`), `POST /api/export/presets/delete` (`{"name"}`).
+
+**Output sharpening.** *Sharpen for* Screen, Matte paper or Glossy paper at
+Low, Standard or High. It is an unsharp mask on luminance only (no colour
+fringes) applied **after** the resize, with a radius scaled to the output size
+(matte uses a wider, stronger halo, glossy less, screen a fine one). Request
+field: `"sharpen": {"for": "screen|matte|glossy", "amount": "low|standard|high"}`.
+
+**Watermark.** Text (font name or path, size as a percentage of the long edge,
+colour, opacity, one of nine positions, margin as a percentage) or an image
+file (PNG with transparency works; width as a percentage of the long edge).
+It is drawn onto the exported pixels only, after sharpening, so the preview,
+the saved edits and the original never change. Request field:
+`"watermark": {"type": "text|image", "text", "font", "size", "color", "image",
+"scale", "opacity", "position": "tl|tc|tr|ml|c|mr|bl|bc|br", "margin"}`.
+Fonts are found in the system font folders; an unknown font falls back to
+DejaVu Sans or Pillow's built-in font. Sharpening and watermarking never touch
+metadata: the tests compare every EXIF/GPS/IPTC/XMP tag before and after for
+presets, sharpening and both watermark types.
+
+**Batch queue.** A second export started while one is running is queued (up
+to 10 waiting) and runs when the first finishes. The dialog lists each batch
+with a result row per photo (written, failed with the reason, or cancelled)
+and a Cancel button; cancelling a running batch stops after the photo being
+rendered and keeps what was written. The queue is saved to
+`~/.photo-room/export_queue.json` after every photo; if the editor restarts
+mid-batch, that batch shows as *interrupted* and **Resume** re-queues only the
+photos not yet done (a photo that was mid-render may leave a partial file,
+and the retry then gets a `-1` name). `GET /api/export/jobs`,
+`POST /api/export/cancel/<id>`, `POST /api/export/resume/<id>`.
 
 **16-bit PNG.** `--bit-depth 16` on the CLI, or the dialog's PNG bit depth.
 Raw files are decoded by LibRaw at 16 bits and the edit stack runs in

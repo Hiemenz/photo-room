@@ -3,18 +3,25 @@ HTTP side of the editor's Export dialog.
 
 Thin on purpose: every pixel and tag goes through exporter.py, the same code
 `process.py export` runs, so the dialog and the command line cannot drift.
-Batches run on a background thread and are polled for progress, because a
-full-resolution raw render takes seconds per photo.
+Batches run on one background worker and are polled for progress, because a
+full-resolution raw render takes seconds per photo. Exports are a queue: a
+second batch started while one runs waits its turn, any batch can be
+cancelled, every photo gets a result row (written file or error), and the
+queue is saved to disk after each photo so a batch interrupted by an editor
+restart can be resumed.
 """
 
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
 
+import export_finish
+import export_presets
 import exporter
 from exporter import ExportOptions
 
@@ -22,6 +29,7 @@ bp = Blueprint("export_api", __name__)
 
 SCOPES = ("current", "selected", "folder")
 MAX_JOBS_KEPT = 20
+MAX_QUEUED = 10
 
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
@@ -39,20 +47,7 @@ def default_destination() -> str:
 
 
 def _options(payload: dict) -> ExportOptions:
-    long_edge = payload.get("long_edge")
-    try:
-        long_edge = int(long_edge) if long_edge not in (None, "", 0, "0") else None
-        return ExportOptions(
-            format=str(payload.get("format", "jpeg")),
-            quality=int(payload.get("quality", 92)),
-            long_edge=long_edge,
-            colorspace=payload.get("colorspace") or None,
-            template=str(payload.get("template") or "{name}"),
-            keep_metadata=bool(payload.get("keep_metadata", True)),
-            bit_depth=int(payload.get("bit_depth", 8)),
-        ).validate()
-    except (TypeError, ValueError) as exc:
-        raise ValueError(str(exc)) from None
+    return export_presets.options_from_payload(payload)
 
 
 def _sources(payload: dict) -> list[tuple[Path, dict | None]]:
@@ -156,6 +151,9 @@ def api_export_defaults():
         "exiftool": exporter.exiftool_available(),
         "colorspaces": list(exporter.COLOR_SPACES),
         "bit_depths": [8, 16],
+        "sharpen": {"for": list(export_finish.MEDIA), "amount": list(export_finish.AMOUNTS)},
+        "watermark_positions": list(export_finish.POSITIONS),
+        "fonts": export_finish.list_fonts(),
         "tokens": ["{name}", "{date}", "{seq}", "{seq:04d}", "{width}", "{height}"],
     })
 
@@ -186,22 +184,132 @@ def api_export_preview():
     })
 
 
-def _run(job: dict, sources: list[tuple[Path, dict | None]], dest: Path, opts: ExportOptions) -> None:
-    for seq, (src, virt) in enumerate(sources, start=1):
-        with _lock:
-            job["current"] = src.name
+def queue_file() -> Path:
+    return export_presets.config_dir() / "export_queue.json"
+
+
+_PRIVATE = ("_cancel",)
+_loaded_for: Path | None = None
+_worker: threading.Thread | None = None
+
+
+def _persist() -> None:
+    """Save the queue (call with ``_lock`` held). Never lets a disk error break an export."""
+    try:
+        jobs = [{k: v for k, v in j.items() if k not in _PRIVATE}
+                for j in _jobs.values() if "items" in j]
+        export_presets.atomic_write_json(queue_file(), {"jobs": jobs})
+    except OSError:
+        pass
+
+
+def _ensure_loaded() -> None:
+    """Load jobs saved by an earlier run. Ones that were queued or running are
+    marked ``interrupted`` (their thread died with the editor) and can be resumed."""
+    global _loaded_for
+    path = queue_file()
+    with _lock:
+        if _loaded_for == path:
+            return
+        _loaded_for = path
         try:
-            written = exporter.export_photo(src, dest, opts, seq=seq, virtual=virt)
+            data = json.loads(path.read_text())
+            saved = data.get("jobs", []) if isinstance(data, dict) else []
+        except (OSError, ValueError):
+            return
+        for job in saved:
+            if not isinstance(job, dict) or "id" not in job or "items" not in job or job["id"] in _jobs:
+                continue
+            if job.get("state") in ("queued", "running"):
+                job["state"] = "interrupted"
+                job["current"] = None
+            _jobs[job["id"]] = job
+        if saved:
+            _persist()
+
+
+def _public(job: dict) -> dict:
+    out = {k: job[k] for k in ("id", "state", "total", "done", "current", "dest",
+                               "written", "failed")}
+    out["items"] = [dict(i) for i in job.get("items", [])]
+    out["queue_position"] = _queue_position(job)
+    return out
+
+
+def _queue_position(job: dict) -> int | None:
+    if job.get("state") != "queued":
+        return None
+    waiting = [j["id"] for j in _jobs.values() if j.get("state") == "queued"]
+    return waiting.index(job["id"]) + 1 if job["id"] in waiting else None
+
+
+def _run_job(job: dict) -> None:
+    opts = export_presets.options_from_payload(job["options"])
+    dest = Path(job["dest"])
+    for item in job["items"]:
+        with _lock:
+            if job.get("_cancel"):
+                break
+            if item["status"] != "pending":
+                continue
+            job["current"] = Path(item["source"]).name
+        try:
+            written = exporter.export_photo(Path(item["source"]), dest, opts,
+                                            seq=item["seq"], virtual=item["virtual"])
             with _lock:
+                item.update(status="ok", output=str(written), error=None)
                 job["written"].append(str(written))
         except Exception as exc:
+            msg = ed_error(exc)
             with _lock:
-                job["failed"].append({"source": src.name, "error": ed_error(exc)})
+                item.update(status="error", error=msg)
+                job["failed"].append({"source": item["name"], "error": msg})
         with _lock:
             job["done"] += 1
+            _persist()
     with _lock:
-        job["state"] = "done"
+        if job.get("_cancel"):
+            for item in job["items"]:
+                if item["status"] == "pending":
+                    item["status"] = "cancelled"
+            job["state"] = "cancelled"
+        else:
+            job["state"] = "done"
         job["current"] = None
+        _persist()
+
+
+def _work() -> None:
+    global _worker
+    while True:
+        with _lock:
+            job = next((j for j in _jobs.values() if j.get("state") == "queued" and "items" in j), None)
+            if job is None:
+                _worker = None
+                return
+            job["state"] = "running"
+            _persist()
+        try:
+            _run_job(job)
+        except Exception as exc:  # e.g. options no longer valid: fail the batch, keep the queue moving
+            with _lock:
+                job["state"] = "done"
+                job["current"] = None
+                for item in job["items"]:
+                    if item["status"] == "pending":
+                        item.update(status="error", error=ed_error(exc))
+                        job["failed"].append({"source": item["name"], "error": item["error"]})
+                        job["done"] += 1
+                _persist()
+
+
+def _ensure_worker() -> None:
+    global _worker
+    with _lock:
+        if _worker is not None and _worker.is_alive():
+            return
+        _worker = threading.Thread(target=_work, daemon=True)
+        _worker.start()
 
 
 def ed_error(exc: Exception) -> str:
@@ -210,14 +318,10 @@ def ed_error(exc: Exception) -> str:
     return _ed().describe_error(exc)
 
 
-def _public(job: dict) -> dict:
-    return {k: job[k] for k in ("id", "state", "total", "done", "current",
-                                "dest", "written", "failed")}
-
-
 @bp.route("/api/export", methods=["POST"])
 def api_export():
     ed = _ed()
+    _ensure_loaded()
     try:
         payload = ed._json_body()
     except ValueError as exc:
@@ -241,23 +345,123 @@ def api_export():
     except OSError as exc:
         return jsonify({"error": f"Cannot create {dest}: {exc.strerror or exc}"}), 400
 
+    settings = export_presets.clean_settings(payload)
+    settings.pop("dest", None)
+    items = [{"source": str(src), "name": src.name,
+              "virtual": virt, "seq": seq, "status": "pending", "output": None, "error": None}
+             for seq, (src, virt) in enumerate(sources, start=1)]
     with _lock:
-        if any(j["state"] == "running" for j in _jobs.values()):
-            return jsonify({"error": "An export is already running"}), 409
-        job = {"id": uuid.uuid4().hex, "state": "running", "total": len(sources),
-               "done": 0, "current": None, "dest": str(dest), "written": [], "failed": []}
+        if sum(1 for j in _jobs.values() if j.get("state") == "queued") >= MAX_QUEUED:
+            return jsonify({"error": "The export queue is full; wait for a batch to finish"}), 409
+        busy = any(j.get("state") == "running" for j in _jobs.values())
+        job = {"id": uuid.uuid4().hex, "state": "queued", "total": len(items),
+               "done": 0, "current": None, "dest": str(dest), "written": [], "failed": [],
+               "items": items, "options": settings, "queued_behind_running": busy}
         _jobs[job["id"]] = job
         while len(_jobs) > MAX_JOBS_KEPT:
-            _jobs.pop(next(iter(_jobs)))
-    threading.Thread(target=_run, args=(job, sources, dest, opts), daemon=True).start()
-    return jsonify(_public(job)), 202
+            old = next((k for k, j in _jobs.items() if j.get("state") not in ("queued", "running")), None)
+            if old is None:
+                break
+            _jobs.pop(old)
+        _persist()
+        body = _public(job)
+    _ensure_worker()
+    return jsonify(body), 202
 
 
 @bp.route("/api/export/status/<job_id>")
 def api_export_status(job_id: str):
+    _ensure_loaded()
     with _lock:
         job = _jobs.get(job_id)
         if job is None:
             return jsonify({"error": "Unknown export"}), 404
-        return jsonify(_public(job) | {"written": list(job["written"]),
-                                       "failed": list(job["failed"])})
+        return jsonify(_public(job))
+
+
+@bp.route("/api/export/jobs")
+def api_export_jobs():
+    """Every batch in the queue and recent history, oldest first."""
+    _ensure_loaded()
+    with _lock:
+        return jsonify({"jobs": [_public(j) for j in _jobs.values() if "items" in j]})
+
+
+@bp.route("/api/export/cancel/<job_id>", methods=["POST"])
+def api_export_cancel(job_id: str):
+    _ensure_loaded()
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return jsonify({"error": "Unknown export"}), 404
+        state = job.get("state")
+        if state in ("queued", "interrupted"):
+            for item in job["items"]:
+                if item["status"] == "pending":
+                    item["status"] = "cancelled"
+            job["state"] = "cancelled"
+            _persist()
+        elif state == "running":
+            job["_cancel"] = True  # stops after the photo being rendered
+        else:
+            return jsonify({"error": f"This export is already {state}"}), 409
+        return jsonify(_public(job))
+
+
+@bp.route("/api/export/resume/<job_id>", methods=["POST"])
+def api_export_resume(job_id: str):
+    """Re-queue the photos an interrupted export had not finished."""
+    _ensure_loaded()
+    try:
+        _require_exiftool()
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc), "code": "exiftool_missing"}), 424
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return jsonify({"error": "Unknown export"}), 404
+        if job.get("state") != "interrupted":
+            return jsonify({"error": "Only an interrupted export can be resumed"}), 409
+        job["state"] = "queued"
+        job.pop("_cancel", None)
+        _persist()
+        body = _public(job)
+    _ensure_worker()
+    return jsonify(body), 202
+
+
+# -- presets ---------------------------------------------------------------
+
+@bp.route("/api/export/presets")
+def api_export_presets():
+    return jsonify({"presets": export_presets.list_presets()})
+
+
+@bp.route("/api/export/presets", methods=["POST"])
+def api_export_preset_save():
+    try:
+        payload = _ed()._json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        name = export_presets.save_preset(payload.get("name"), payload.get("settings") or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except OSError as exc:
+        return jsonify({"error": f"Could not save the preset: {exc.strerror or exc}"}), 500
+    return jsonify({"ok": True, "name": name, "presets": export_presets.list_presets()})
+
+
+@bp.route("/api/export/presets/delete", methods=["POST"])
+def api_export_preset_delete():
+    try:
+        payload = _ed()._json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        found = export_presets.delete_preset(str(payload.get("name") or ""))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not found:
+        return jsonify({"error": "No such preset"}), 404
+    return jsonify({"ok": True, "presets": export_presets.list_presets()})

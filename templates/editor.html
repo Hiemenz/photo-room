@@ -428,6 +428,8 @@
   #export-dialog .body { padding: 12px 18px; display: grid; gap: 9px; max-height: 70vh; overflow: auto; }
   #export-dialog label.row { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 8px; font-size: 12px; }
   #export-dialog input[type=text], #export-dialog input[type=number], #export-dialog select { font: inherit; font-size: 12px; padding: 4px 6px; border-radius: 4px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); min-width: 0; }
+  #export-dialog [hidden] { display: none !important; }
+  #ex-wm-opts { display: grid; gap: 9px; }
   #export-dialog .hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
   #export-dialog .hint.err, #ex-msg.err { color: var(--danger); }
   #ex-preview { font-family: ui-monospace, monospace; color: var(--text); word-break: break-all; }
@@ -653,6 +655,11 @@
 <dialog id="export-dialog">
   <h2>Export</h2>
   <div class="body">
+    <label class="row">Preset
+      <span style="display:flex;gap:6px;align-items:center">
+        <select id="ex-preset" style="flex:1"><option value="">(custom)</option></select>
+        <button id="ex-preset-save" type="button" title="Save these settings as a preset">Save…</button>
+        <button id="ex-preset-del" type="button" title="Delete this preset" disabled>Delete</button></span></label>
     <label class="row">Export
       <select id="ex-scope">
         <option value="current">Current photo</option>
@@ -681,6 +688,29 @@
       <span style="display:flex;gap:8px;align-items:center">
         <select id="ex-resize"><option value="none">Original size</option><option value="edge">Long edge</option></select>
         <input type="number" id="ex-edge" min="16" step="1" value="2048" style="width:90px" disabled> px</span></label>
+    <label class="row">Sharpen for
+      <span style="display:flex;gap:8px;align-items:center">
+        <select id="ex-sharp"><option value="">No sharpening</option><option value="screen">Screen</option><option value="matte">Matte paper</option><option value="glossy">Glossy paper</option></select>
+        <select id="ex-sharp-amt"><option value="low">Low</option><option value="standard" selected>Standard</option><option value="high">High</option></select></span></label>
+    <label class="row">Watermark
+      <select id="ex-wm"><option value="">None</option><option value="text">Text</option><option value="image">Image</option></select></label>
+    <div id="ex-wm-opts" hidden>
+      <label class="row" id="ex-wm-text-row">Text <input type="text" id="ex-wm-text" value="(c) " spellcheck="false"></label>
+      <label class="row" id="ex-wm-font-row">Font <input type="text" id="ex-wm-font" list="ex-fonts" placeholder="DejaVuSans" spellcheck="false"></label>
+      <datalist id="ex-fonts"></datalist>
+      <label class="row" id="ex-wm-size-row">Size (% of long edge) <input type="number" id="ex-wm-size" min="0.5" max="50" step="0.5" value="3"></label>
+      <label class="row" id="ex-wm-color-row">Colour <input type="color" id="ex-wm-color" value="#ffffff"></label>
+      <label class="row" id="ex-wm-image-row">Image file <input type="text" id="ex-wm-image" placeholder="/path/to/logo.png" spellcheck="false"></label>
+      <label class="row" id="ex-wm-scale-row">Width (% of long edge) <input type="number" id="ex-wm-scale" min="1" max="100" step="1" value="15"></label>
+      <label class="row">Opacity (%) <input type="number" id="ex-wm-opacity" min="0" max="100" step="5" value="50"></label>
+      <label class="row">Position
+        <select id="ex-wm-pos">
+          <option value="tl">Top left</option><option value="tc">Top centre</option><option value="tr">Top right</option>
+          <option value="ml">Middle left</option><option value="c">Centre</option><option value="mr">Middle right</option>
+          <option value="bl">Bottom left</option><option value="bc">Bottom centre</option><option value="br" selected>Bottom right</option></select></label>
+      <label class="row">Margin (%) <input type="number" id="ex-wm-margin" min="0" max="40" step="0.5" value="2"></label>
+      <div class="hint">Watermarks and sharpening are drawn on the exported file only; the preview and the original are untouched.</div>
+    </div>
     <label style="font-size:12px"><input type="checkbox" id="ex-meta" checked>
       Keep all metadata (EXIF, GPS, IPTC, XMP)</label>
     <label style="font-size:12px"><input type="checkbox" id="ex-save" checked>
@@ -688,6 +718,7 @@
     <div class="hint">Exports render the saved edits at full resolution, not the preview.</div>
     <div id="ex-progress" hidden><div id="ex-bar"></div></div>
     <div class="hint" id="ex-msg"></div>
+    <div id="ex-queue" style="display:grid;gap:6px"></div>
   </div>
   <div class="foot">
     <button id="ex-cancel">Close</button>
@@ -2886,7 +2917,50 @@ loadPresets();
     colorspace: el("ex-cs").value || null,
     long_edge: el("ex-resize").value === "edge" ? +el("ex-edge").value : null,
     keep_metadata: el("ex-meta").checked,
+    sharpen: el("ex-sharp").value ? { for: el("ex-sharp").value, amount: el("ex-sharp-amt").value } : null,
+    watermark: watermark(),
   });
+  const watermark = () => {
+    const type = el("ex-wm").value;
+    if (!type) return null;
+    return { type, text: el("ex-wm-text").value, font: el("ex-wm-font").value, size: +el("ex-wm-size").value,
+      color: el("ex-wm-color").value, image: el("ex-wm-image").value, scale: +el("ex-wm-scale").value,
+      opacity: +el("ex-wm-opacity").value, position: el("ex-wm-pos").value, margin: +el("ex-wm-margin").value };
+  };
+  const applySettings = (st) => {
+    el("ex-format").value = st.format || "jpeg";
+    el("ex-quality").value = st.quality ?? 92;
+    el("ex-depth").value = String(st.bit_depth || 8);
+    el("ex-cs").value = st.colorspace || "";
+    el("ex-resize").value = st.long_edge ? "edge" : "none";
+    if (st.long_edge) el("ex-edge").value = st.long_edge;
+    el("ex-meta").checked = st.keep_metadata !== false;
+    if (st.template) el("ex-template").value = st.template;
+    if (st.dest) el("ex-dest").value = st.dest;
+    el("ex-sharp").value = st.sharpen ? st.sharpen.for : "";
+    el("ex-sharp-amt").value = st.sharpen ? st.sharpen.amount : "standard";
+    const w = st.watermark;
+    el("ex-wm").value = w ? w.type : "";
+    if (w) {
+      el("ex-wm-text").value = w.text ?? ""; el("ex-wm-font").value = w.font ?? ""; el("ex-wm-size").value = w.size;
+      el("ex-wm-color").value = w.color || "#ffffff"; el("ex-wm-image").value = w.image ?? "";
+      el("ex-wm-scale").value = w.scale; el("ex-wm-opacity").value = w.opacity;
+      el("ex-wm-pos").value = w.position; el("ex-wm-margin").value = w.margin;
+    }
+  };
+  let presets = [];
+  async function loadPresets(select) {
+    try { presets = (await (await fetch("/api/export/presets")).json()).presets || []; } catch (e) { return; }
+    const sel = el("ex-preset");
+    sel.innerHTML = '<option value="">(custom)</option>';
+    for (const p of presets) {
+      const o = document.createElement("option");
+      o.value = p.name; o.textContent = p.name + (p.builtin ? " (built-in)" : "");
+      sel.appendChild(o);
+    }
+    sel.value = select || "";
+    el("ex-preset-del").disabled = !presets.some((p) => p.name === sel.value && !p.builtin);
+  }
   const msg = (t, err = false) => { el("ex-msg").textContent = t; el("ex-msg").classList.toggle("err", err); };
 
   function syncControls() {
@@ -2895,6 +2969,11 @@ loadPresets();
     el("ex-depth-row").hidden = !png;
     el("ex-q-val").textContent = el("ex-quality").value;
     el("ex-edge").disabled = el("ex-resize").value !== "edge";
+    const wm = el("ex-wm").value;
+    el("ex-wm-opts").hidden = !wm;
+    for (const id of ["text", "font", "size", "color"]) el("ex-wm-" + id + "-row").hidden = wm !== "text";
+    for (const id of ["image", "scale"]) el("ex-wm-" + id + "-row").hidden = wm !== "image";
+    el("ex-sharp-amt").disabled = !el("ex-sharp").value;
     const scope = el("ex-scope").value;
     el("ex-scope").querySelector('[value="current"]').disabled = !current;
     el("ex-scope").querySelector('[value="selected"]').disabled = !selected.size;
@@ -2924,25 +3003,66 @@ loadPresets();
           if (!d.exiftool) msg("exiftool is not installed; exporting will fail until it is.", true);
         } catch (e) {}
       }
+      loadPresets(el("ex-preset").value);
+      try {
+        const dd = await (await fetch("/api/export/defaults")).json();
+        el("ex-fonts").innerHTML = (dd.fonts || []).map((f) => `<option value="${esc(f)}">`).join("");
+      } catch (e) {}
+      refreshQueue();
       el("ex-scope").value = selected.size > 1 ? "selected" : (current ? "current" : "folder");
       dlg.showModal();
     }
     syncControls();
   }
 
-  async function poll(id) {
-    for (;;) {
-      const s = await (await fetch("/api/export/status/" + id)).json();
-      if (s.error) { msg(s.error, true); return; }
-      el("ex-bar").style.width = (100 * s.done / Math.max(1, s.total)) + "%";
-      if (s.state === "running") {
-        msg(`Exporting ${s.done + 1} of ${s.total}${s.current ? ": " + s.current : ""}`);
-        await new Promise((r) => setTimeout(r, 400));
-        continue;
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  async function postJson(url) { return (await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json(); }
+
+  function renderQueue(jobs) {
+    const box = el("ex-queue");
+    box.innerHTML = "";
+    for (const j of jobs.slice(-6).reverse()) {
+      const d = document.createElement("details");
+      d.open = j.state === "running" || j.state === "interrupted";
+      const bad = j.items.filter((i) => i.status === "error").length;
+      const label = j.state === "queued" ? `queued (#${j.queue_position})` : j.state;
+      d.innerHTML = `<summary style="font-size:12px;cursor:pointer">${esc(j.dest.split("/").pop() || j.dest)}: ${label}, ${j.done}/${j.total}${bad ? `, ${bad} failed` : ""}</summary>`;
+      const ul = document.createElement("div");
+      ul.className = "hint";
+      ul.innerHTML = j.items.map((i) => `<div${i.status === "error" ? ' class="err"' : ""}>${esc(i.name)}: ${i.status === "ok" ? "written" : i.status === "error" ? esc(i.error) : i.status}</div>`).join("");
+      d.appendChild(ul);
+      if (j.state === "queued" || j.state === "running" || j.state === "interrupted") {
+        const cancel = document.createElement("button");
+        cancel.textContent = "Cancel"; cancel.type = "button";
+        cancel.onclick = async () => { await postJson("/api/export/cancel/" + j.id); refreshQueue(); };
+        d.appendChild(cancel);
       }
-      const bad = s.failed.map((f) => `${f.source}: ${f.error}`).join("; ");
-      msg(`Exported ${s.written.length} of ${s.total} to ${s.dest}` + (bad ? ` -- failed: ${bad}` : ""), !!bad);
-      return;
+      if (j.state === "interrupted") {
+        const resume = document.createElement("button");
+        resume.textContent = "Resume"; resume.type = "button";
+        resume.onclick = async () => { const r = await postJson("/api/export/resume/" + j.id); if (r.error) msg(r.error, true); refreshQueue(); };
+        d.appendChild(resume);
+      }
+      box.appendChild(d);
+    }
+  }
+  let queueTimer = null;
+  async function refreshQueue() {
+    clearTimeout(queueTimer);
+    let jobs = [];
+    try { jobs = (await (await fetch("/api/export/jobs")).json()).jobs || []; } catch (e) { return; }
+    renderQueue(jobs);
+    const active = jobs.filter((j) => j.state === "running" || j.state === "queued");
+    const run = active.find((j) => j.state === "running") || active[0];
+    if (run) {
+      el("ex-progress").hidden = false;
+      el("ex-bar").style.width = (100 * run.done / Math.max(1, run.total)) + "%";
+      msg(run.state === "running" ? `Exporting ${run.done + 1} of ${run.total}${run.current ? ": " + run.current : ""}` : `Queued (#${run.queue_position})`);
+    }
+    if (active.length && dlg.open) queueTimer = setTimeout(refreshQueue, 500);
+    else if (!active.length && jobs.length) {
+      const last = jobs[jobs.length - 1];
+      if (last.state !== "interrupted") msg(`Export ${last.state}: ${last.written.length} of ${last.total} to ${last.dest}` + (last.failed.length ? ` -- ${last.failed.length} failed` : ""), !!last.failed.length);
     }
   }
 
@@ -2960,7 +3080,7 @@ loadPresets();
       msg("Starting…");
       const job = await post("/api/export", options());
       if (job.error) { msg(job.error, true); return; }
-      await poll(job.id);
+      await refreshQueue();
     } catch (e) {
       msg(String(e), true);
     } finally {
@@ -2971,6 +3091,31 @@ loadPresets();
   el("export-open").addEventListener("click", open);
   el("ex-cancel").addEventListener("click", () => dlg.close());
   el("ex-go").addEventListener("click", go);
+  el("ex-preset").addEventListener("change", () => {
+    const p = presets.find((x) => x.name === el("ex-preset").value);
+    el("ex-preset-del").disabled = !p || p.builtin;
+    if (p) { applySettings(p.settings); syncControls(); }
+  });
+  el("ex-preset-save").addEventListener("click", async () => {
+    const name = prompt("Preset name", el("ex-preset").value || "");
+    if (!name) return;
+    const { scope, path, paths, ...settings } = options();
+    const r = await post("/api/export/presets", { name, settings });
+    if (r.error) { msg(r.error, true); return; }
+    await loadPresets(r.name);
+    msg(`Saved preset "${r.name}"`);
+  });
+  el("ex-preset-del").addEventListener("click", async () => {
+    const name = el("ex-preset").value;
+    if (!name || !confirm(`Delete preset "${name}"?`)) return;
+    const r = await post("/api/export/presets/delete", { name });
+    if (r.error) { msg(r.error, true); return; }
+    await loadPresets("");
+  });
+  for (const id of ["ex-sharp", "ex-sharp-amt", "ex-wm", "ex-wm-text", "ex-wm-font", "ex-wm-size", "ex-wm-color", "ex-wm-image", "ex-wm-scale", "ex-wm-opacity", "ex-wm-pos", "ex-wm-margin"]) {
+    el(id).addEventListener("input", syncControls);
+    el(id).addEventListener("change", syncControls);
+  }
   for (const id of ["ex-scope", "ex-template", "ex-format", "ex-quality", "ex-depth", "ex-cs", "ex-resize", "ex-edge", "ex-dest"]) {
     el(id).addEventListener("input", syncControls);
     el(id).addEventListener("change", syncControls);

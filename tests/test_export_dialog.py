@@ -62,7 +62,7 @@ def wait(client, job, timeout=60):
     end = time.time() + timeout
     while time.time() < end:
         s = client.get(f"/api/export/status/{job['id']}").get_json()
-        if s["state"] != "running":
+        if s["state"] not in ("running", "queued"):
             return s
         time.sleep(0.05)
     raise AssertionError("export did not finish")
@@ -178,16 +178,18 @@ def test_unknown_job_is_404(client):
     assert client.get("/api/export/status/nope").status_code == 404
 
 
-def test_second_export_while_one_runs_is_409(client, tmp_path):
-    from export_api import _jobs, _lock
-    with _lock:
-        _jobs["busy"] = {"id": "busy", "state": "running"}
+def test_second_export_while_one_runs_is_queued(client, tmp_path, monkeypatch):
+    import export_api
+    monkeypatch.setattr(export_api, "_ensure_worker", lambda: None)  # keep the fake "running" job in charge
+    with export_api._lock:
+        export_api._jobs["busy"] = {"id": "busy", "state": "running"}
     try:
         res = client.post("/api/export", json={"path": "IMG_0001.CR2", "dest": str(tmp_path / "o")})
-        assert res.status_code == 409
+        assert res.status_code == 202
+        assert res.get_json()["state"] == "queued"
     finally:
-        with _lock:
-            _jobs.pop("busy")
+        with export_api._lock:
+            export_api._jobs.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -247,3 +247,9 @@ def converter_present(request, monkeypatch):
     present = "no_converter" not in request.keywords
     monkeypatch.setattr(process, "dng_converter_available", lambda: present)
     monkeypatch.setattr(ingest, "dng_converter_available", lambda: present)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config_dir(tmp_path, monkeypatch):
+    """Export presets and the export queue live in the user config dir; never use the real one."""
+    monkeypatch.setenv("PHOTO_ROOM_CONFIG_DIR", str(tmp_path / "config"))
