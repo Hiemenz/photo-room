@@ -27,6 +27,7 @@ from flask import Flask, Response, jsonify, render_template, request
 from PIL import Image, ImageFilter
 
 import colormix
+import library
 import history
 import quality
 import style
@@ -1300,12 +1301,166 @@ def api_rate():
     try:
         rating = int(payload.get("rating", 0))
         write_rating(path, rating)
+        library.update_cached(path, rating=rating)
         label = "rejected" if rating == REJECTED else (
             "unrated" if rating == 0 else f"{rating} star" + ("s" if rating > 1 else "")
         )
         return jsonify({"ok": True, "rating": rating, "message": f"{path.name}: {label}"})
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Library module: flags, colour labels, keywords, filtered + sorted pages
+# ---------------------------------------------------------------------------
+
+LIBRARY_PAGE_SIZE = 200
+LIBRARY_MAX_PAGE = 1000
+
+
+def _paths_from(payload: dict) -> list[Path]:
+    raw = payload.get("paths")
+    if raw is None:
+        raw = [payload["path"]]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("No photos given")
+    return [_safe_path(r) for r in raw]
+
+
+def _rel(path: Path) -> str:
+    return path.relative_to(LIBRARY_ROOT.resolve()).as_posix()
+
+
+@app.route("/api/library")
+def api_library():
+    """
+    One page of the library, filtered and sorted.
+
+    Never decodes a raw: metadata is one cached exiftool pass and thumbnails
+    are fetched separately, lazily, by the browser.
+    """
+    args = request.args
+    try:
+        offset = max(0, int(args.get("offset", 0)))
+        limit = max(1, min(LIBRARY_MAX_PAGE, int(args.get("limit", LIBRARY_PAGE_SIZE))))
+        keys = ("rating_min", "rating_op", "flag", "label", "keyword",
+                "camera", "date_from", "date_to", "q")
+        criteria = {k: args.get(k, "") for k in keys}
+        everything = library.build_items(LIBRARY_ROOT, list_photos(LIBRARY_ROOT))
+        matched = library.filter_items(everything, criteria)
+        matched = library.sort_items(
+            matched, args.get("sort", "name"), args.get("dir", "asc") == "desc"
+        )
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+    body = {
+        "total": len(matched),
+        "library_total": len(everything),
+        "offset": offset,
+        "items": matched[offset:offset + limit],
+    }
+    if offset == 0:
+        body["facets"] = library.facets(everything)
+    return jsonify(body)
+
+
+def _json_or_error():
+    try:
+        return _json_body(), None
+    except ValueError as exc:
+        return None, (jsonify({"error": str(exc)}), 415)
+
+
+@app.route("/api/flag", methods=["POST"])
+def api_flag():
+    """Set pick / reject / none on one or many photos (reject = rating -1)."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+    try:
+        paths = _paths_from(payload)
+        flag = payload.get("flag")
+        if flag not in library.FLAGS:
+            raise ValueError(f"flag must be one of {', '.join(library.FLAGS)}")
+    except (ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        current = library.read_metadata(paths)
+        for p in paths:
+            was_rejected = current.get(str(p), {}).get("rating") == REJECTED
+            if flag == "reject" and not was_rejected:
+                write_rating(p, REJECTED)
+                library.update_cached(p, rating=REJECTED)
+            elif flag != "reject" and was_rejected:
+                write_rating(p, 0)
+                library.update_cached(p, rating=0)
+        library.set_picks(LIBRARY_ROOT, [_rel(p) for p in paths], flag == "pick")
+        return jsonify({"ok": True, "flag": flag, "count": len(paths),
+                        "message": f"{len(paths)} photo(s): {flag}"})
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/label", methods=["POST"])
+def api_label():
+    """Set a colour label (or clear it with "none") on one or many photos."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+    try:
+        paths = _paths_from(payload)
+        label = library.normalize_label(payload.get("label"))
+    except (ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    failed = []
+    for p in paths:
+        try:
+            library.write_xmp(p, label=label)
+            library.update_cached(p, label=label)
+        except Exception as exc:
+            failed.append(f"{p.name}: {describe_error(exc)}")
+    if failed:
+        return jsonify({"error": "; ".join(failed[:3])}), 500
+    return jsonify({"ok": True, "label": label, "count": len(paths),
+                    "message": f"{len(paths)} photo(s): " + (label.lower() + " label" if label else "label cleared")})
+
+
+@app.route("/api/keywords", methods=["POST"])
+def api_keywords():
+    """Add and/or remove keywords, or replace them with ``set``, on one or many photos."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+    try:
+        paths = _paths_from(payload)
+        replace = payload.get("set")
+        add = library.normalize_keywords(payload.get("add", []))
+        remove = {k.lower() for k in library.normalize_keywords(payload.get("remove", []))}
+        if replace is None and not add and not remove:
+            raise ValueError("Nothing to change")
+        existing = library.read_metadata(paths)
+    except (ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    failed = []
+    for p in paths:
+        try:
+            if replace is not None:
+                new = library.normalize_keywords(replace)
+            else:
+                have = existing.get(str(p), {}).get("keywords", [])
+                new = library.normalize_keywords(
+                    [k for k in have if k.lower() not in remove] + add
+                )
+            library.write_xmp(p, keywords=new)
+            library.update_cached(p, keywords=new)
+        except Exception as exc:
+            failed.append(f"{p.name}: {describe_error(exc)}")
+    if failed:
+        return jsonify({"error": "; ".join(failed[:3])}), 500
+    return jsonify({"ok": True, "count": len(paths), "message": f"Keywords updated on {len(paths)} photo(s)"})
 
 
 @app.route("/api/thumb")

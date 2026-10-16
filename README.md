@@ -168,6 +168,54 @@ what Lightroom and Bridge read, so marks made here mean the same thing
 wherever the photos are opened next. The whole library's ratings are read
 in a single exiftool call.
 
+### Library module
+
+The bar at the top switches between **Library** and **Develop**. Press `g`
+anywhere to open the Library grid; `e`, `d`, `Enter` or a double-click opens
+the selected photo in Develop.
+
+In the grid, click selects, `cmd`/`ctrl`-click adds to the selection,
+`shift`-click selects a range, and the arrow keys move the cursor. Every
+action below applies to the whole selection.
+
+| Key | Action |
+|---|---|
+| `p` / `u` / `x` | Pick / unflag / reject |
+| `0`-`5` | Star rating |
+| `6` `7` `8` `9` | Red / Yellow / Green / Blue label (swatches in the footer also set Purple and clear) |
+
+Keywords are typed in the footer (comma separated, Enter to add, **Remove**
+to take them off the selection).
+
+The filter bar narrows the grid by rating, flag, colour label, keyword,
+camera and capture date range, plus a text search over file name, keywords
+and camera; the sort menu orders by name, capture date, rating, label, flag
+or camera, ascending or descending. Filters combine (all must match). Files
+missing the sort field, such as an undated photo, always sort last.
+
+Where the data lives, so Lightroom reads what you set here:
+
+| Field | Stored as |
+|---|---|
+| Rating | `XMP-xmp:Rating` |
+| Reject | rating `-1`, the same state the `x` key already set |
+| Colour label | `XMP-xmp:Label` (`Red`, `Yellow`, `Green`, `Blue`, `Purple`) |
+| Keywords | `XMP-dc:Subject` |
+| Pick | `.photo-room-library.json` in the library root (Camera Raw has no standard field for it; Lightroom keeps flags in its catalogue) |
+
+Picking a rejected photo un-rejects it, and rejecting a picked one drops the
+pick. Writing label and keywords modifies the file's XMP in place, as ratings
+already do, so that photo's thumbnail is rebuilt once.
+
+Large libraries stay quick: the grid never decodes a raw. Metadata is read in
+batched `exiftool -fast2` passes and cached in memory by file size and
+modification time (changes made elsewhere are picked up automatically), the
+API returns 200 photos per page, the next page loads as you scroll, and
+thumbnails come from the camera's embedded preview and load only when
+visible. Endpoints: `GET /api/library` (filters, `sort`, `dir`, `offset`,
+`limit`), `POST /api/flag`, `/api/label`, `/api/keywords` (each accepts `path`
+or `paths`).
+
 ### Presets
 
 Save the current sliders under a name, then pick it from the dropdown to

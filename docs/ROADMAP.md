@@ -38,7 +38,7 @@ every panel, export JPEGs, and re-open the files in Lightroom with the edits int
 - [x] M2 Tone curve (parametric + point curve, per-channel) with XMP read/write
 - [x] M3 HSL / colour mixer (8 hue bands) and colour grading (shadows/mids/highlights wheels)
 - [x] M4 History panel, snapshots, before/after (side by side and split), reset-to-import
-- [ ] M5 Library module: grid view, flags and colour labels, keywords, metadata filter bar, search
+- [x] M5 Library module: grid view, flags and colour labels, keywords, metadata filter bar, search
 - [ ] M6 Collections and virtual copies; compare and survey views
 - [ ] M7 Local adjustments: graduated filter, radial filter, adjustment brush with feather and mask overlay
 - [ ] M8 Spot removal (clone/heal), transform (vertical/horizontal/rotate/aspect), lens profile correction via lensfun, chromatic aberration
