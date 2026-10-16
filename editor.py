@@ -795,6 +795,11 @@ def write_sidecar(path: Path, adj: dict) -> Path:
     # while still creating the file correctly, so the file is the test.
     if not target.exists():
         raise RuntimeError(f"Could not write {target.name}: {result.stderr.strip()}")
+    # A tag name exiftool does not know is only a warning, and the value is
+    # dropped. That is how the colour-grading hue/saturation of the shadows and
+    # highlights went missing, so treat it as the failure it is.
+    if "is not defined" in result.stderr:
+        raise RuntimeError(f"exiftool dropped settings for {target.name}: {result.stderr.strip()}")
     return target
 
 

@@ -119,11 +119,28 @@ def _run_exiftool(args: list[str]) -> subprocess.CompletedProcess:
     )
 
 
+def meta_target(path: Path) -> Path:
+    """The file holding a photo's label / keywords / rating: the DNG, else its .xmp sidecar."""
+    return path if path.suffix.lower() == ".dng" else path.with_suffix(".xmp")
+
+
 def write_xmp(path: Path, label=None, keywords=None) -> None:
+    """
+    Write label / keywords where Lightroom reads them. A raw is never opened for
+    writing (exiftool would rewrite the CR2 in place); its sidecar is created
+    or updated instead, like ratings and develop settings.
+    """
     args = xmp_args(label, keywords)
     if not args:
         return
-    result = _run_exiftool(args + ["-overwrite_original", str(path)])
+    target = meta_target(path)
+    if target != path and not target.exists():
+        result = _run_exiftool(args + ["-o", str(target), os.devnull])
+        # Seeding from an empty source warns "no writable tags set" yet succeeds.
+        if not target.exists():
+            raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
+        return
+    result = _run_exiftool(args + ["-overwrite_original", str(target)])
     if result.returncode != 0:
         raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
 
@@ -180,12 +197,18 @@ def set_picks(root: Path, rels: list[str], picked: bool) -> None:
 # Metadata index (cached; invalidated by file size/mtime)
 # ---------------------------------------------------------------------------
 
-_cache: dict[str, tuple[tuple[int, int], dict]] = {}
+_cache: dict[str, tuple[tuple[int, ...], dict]] = {}
 
 
-def _sig(path: Path) -> tuple[int, int]:
+def _sig(path: Path) -> tuple[int, ...]:
+    """(size, mtime) of the photo and of its sidecar (zeros when it has none)."""
     st = path.stat()
-    return (st.st_size, st.st_mtime_ns)
+    side = meta_target(path)
+    try:
+        ss = side.stat() if side != path else None
+    except OSError:
+        ss = None
+    return (st.st_size, st.st_mtime_ns, ss.st_size if ss else 0, ss.st_mtime_ns if ss else 0)
 
 
 def clear_cache() -> None:
@@ -235,9 +258,37 @@ def read_metadata(paths: list[Path]) -> dict[str, dict]:
             if str(p) not in seen:
                 with _lock:
                     _cache[str(p)] = (_sig(p), parse_entry({}))
+        _overlay_sidecars(batch)
 
     with _lock:
         return {str(p): dict(_cache[str(p)][1]) for p in paths if str(p) in _cache}
+
+
+def _overlay_sidecars(batch: list[Path]) -> None:
+    """Rating, label and keywords live in the sidecar of a raw; they win over the raw's own."""
+    sides = {str(meta_target(p).resolve()): p for p in batch
+             if meta_target(p) != p and meta_target(p).exists()}
+    if not sides:
+        return
+    result = subprocess.run(
+        ["exiftool", "-fast2", "-j", "-XMP-xmp:Rating", "-XMP-xmp:Label", "-XMP-dc:Subject",
+         "-@", "-"],
+        input="\n".join(sides), capture_output=True, text=True,
+        timeout=max(EXIFTOOL_TIMEOUT, len(sides) // 10))
+    try:
+        entries = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError:
+        return
+    for entry in entries:
+        p = sides.get(str(Path(entry.get("SourceFile", "")).resolve()))
+        if p is None:
+            continue
+        side = parse_entry(entry)
+        with _lock:
+            sig, meta = _cache[str(p)]
+            meta = dict(meta)
+            meta.update(rating=side["rating"], label=side["label"], keywords=side["keywords"])
+            _cache[str(p)] = (sig, meta)
 
 
 def update_cached(path: Path, **fields) -> None:

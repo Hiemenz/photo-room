@@ -77,8 +77,13 @@ def xmp_tag(key: str) -> str:
     if key == "grade_blending":
         return "ColorGradeBlending"
     if key == "grade_balance":
-        return "ColorGradeBalance"
+        return "SplitToningBalance"
     _, rng, what = key.split("_")
+    if rng in ("shadow", "highlight") and what in ("hue", "sat"):
+        # Camera Raw kept the old Split Toning names for these four; the
+        # "ColorGradeShadowHue" style names do not exist in the crs schema, so
+        # exiftool silently drops them ("Tag ... is not defined").
+        return f"SplitToning{GRADE_XMP_NAMES[rng]}{'Hue' if what == 'hue' else 'Saturation'}"
     return f"ColorGrade{GRADE_XMP_NAMES[rng]}{what.capitalize()}"
 
 

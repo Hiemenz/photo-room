@@ -196,9 +196,9 @@ def test_xmp_tag_names():
     t = colormix.XMP_TAGS
     assert t["hue_red"] == "HueAdjustmentRed" and t["sat_aqua"] == "SaturationAdjustmentAqua"
     assert t["lum_magenta"] == "LuminanceAdjustmentMagenta" and t["gray_orange"] == "GrayMixerOrange"
-    assert t["grade_shadow_hue"] == "ColorGradeShadowHue" and t["grade_mid_sat"] == "ColorGradeMidtoneSat"
+    assert t["grade_shadow_hue"] == "SplitToningShadowHue" and t["grade_mid_sat"] == "ColorGradeMidtoneSat"
     assert t["grade_highlight_lum"] == "ColorGradeHighlightLum" and t["grade_global_hue"] == "ColorGradeGlobalHue"
-    assert t["grade_blending"] == "ColorGradeBlending" and t["grade_balance"] == "ColorGradeBalance"
+    assert t["grade_blending"] == "ColorGradeBlending" and t["grade_balance"] == "SplitToningBalance"
     assert len(set(t.values())) == len(t) == 8 * 4 + 12 + 2
 
 

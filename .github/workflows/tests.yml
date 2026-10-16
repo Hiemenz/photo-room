@@ -42,6 +42,11 @@ jobs:
       - name: Run tests
         run: uv run pytest
 
+      # The tests that use the real exiftool (develop-settings round trip and
+      # metadata preservation on export), on their own so a failure is obvious.
+      - name: Run real-exiftool tests
+        run: uv run pytest -m exiftool
+
   # Real-browser tests of the editor UI. Separate from the fast job above so
   # a slow or flaky browser never blocks the unit suite, and so it is the
   # one place that needs Chromium.

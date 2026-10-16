@@ -291,6 +291,15 @@ def copy_metadata(source: Path, dest: Path) -> None:
         # Rating, keywords and anything else kept in the sidecar. Develop
         # settings are excluded above.
         cmd += ["-TagsFromFile", str(sidecar), "-XMP:all", "--XMP-crs:all"]
+    # Those two are deliberately not copied (the source's size is wrong for the
+    # output), but a JPEG's Exif block must declare its own pixel size: exiftool
+    # warns "Missing required JPEG ExifIFD tag" and strict readers reject it.
+    try:
+        with Image.open(dest) as out:
+            width, height = out.size
+        cmd += [f"-ExifIFD:ExifImageWidth={width}", f"-ExifIFD:ExifImageHeight={height}"]
+    except OSError:
+        pass
     cmd += ["-Orientation#=1", "-overwrite_original", str(dest)]
     result = run_tool(cmd, timeout=EXIFTOOL_TIMEOUT, what="exiftool",
                       capture_output=True, text=True)

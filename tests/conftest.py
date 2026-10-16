@@ -253,3 +253,14 @@ def converter_present(request, monkeypatch):
 def _isolated_config_dir(tmp_path, monkeypatch):
     """Export presets and the export queue live in the user config dir; never use the real one."""
     monkeypatch.setenv("PHOTO_ROOM_CONFIG_DIR", str(tmp_path / "config"))
+
+
+def pytest_collection_modifyitems(config, items):
+    """Tests marked ``exiftool`` need the real binary; skip them cleanly without it."""
+    import shutil
+
+    if shutil.which("exiftool") is None:
+        skip = pytest.mark.skip(reason="exiftool is not installed")
+        for item in items:
+            if "exiftool" in item.keywords:
+                item.add_marker(skip)

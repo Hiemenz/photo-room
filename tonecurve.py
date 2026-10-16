@@ -221,8 +221,17 @@ def scale_toward_identity(tc, strength: float):
 # XMP
 # ---------------------------------------------------------------------------
 
-def _fmt(v: float) -> str:
-    return f"{v:.0f}" if abs(v - round(v)) < 1e-6 else f"{v:.2f}"
+def _xmp_points(points) -> list[list[int]]:
+    """Points as Camera Raw stores them: integer pairs on the 0..255 scale.
+
+    Lightroom only ever writes whole numbers ("64, 52"); a fractional "90.50"
+    is not part of its format. Rounding can land two points on one x, so the
+    later one wins and the curve stays a function.
+    """
+    by_x: dict[int, int] = {}
+    for x, y in points:
+        by_x[min(255, max(0, int(round(x))))] = min(255, max(0, int(round(y))))
+    return [[x, by_x[x]] for x in sorted(by_x)]
 
 
 def xmp_arguments(tc) -> list[str]:
@@ -238,7 +247,7 @@ def xmp_arguments(tc) -> list[str]:
         if tc is None or _points_are_linear(tc["points"][c]):
             args.append(f"{tag}=")
         else:
-            args.append(tag + "=" + "|".join(f"{_fmt(x)}, {_fmt(y)}" for x, y in tc["points"][c]))
+            args.append(tag + "=" + "|".join(f"{x}, {y}" for x, y in _xmp_points(tc["points"][c])))
     for key, (tag, default) in PARAMETRIC_TAGS.items():
         value = default if tc is None else tc["parametric"][key]
         args.append(f"-XMP-crs:{tag}={int(round(value))}")

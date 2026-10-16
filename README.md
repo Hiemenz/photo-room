@@ -97,8 +97,10 @@ All of these are plain keys in the adjustments (`hue_red`, `sat_red`,
 `grade_balance`), so presets, copy/paste and batch apply carry them, and
 zero is an exact no-op. They are written to Camera Raw XMP as
 `crs:HueAdjustmentRed`, `SaturationAdjustment*`, `LuminanceAdjustment*`,
-`GrayMixer*`, `ColorGrade{Shadow,Midtone,Highlight,Global}{Hue,Sat,Lum}`,
-`ColorGradeBlending` and `ColorGradeBalance`, and read back on open. Edit
+`GrayMixer*`, `ColorGrade{Midtone,Global}{Hue,Sat}`,
+`ColorGrade{Shadow,Midtone,Highlight,Global}Lum`,
+`SplitToning{Shadow,Highlight}{Hue,Saturation}` (the names Camera Raw still uses for
+those four), `ColorGradeBlending` and `SplitToningBalance`, and read back on open. Edit
 strength scales saturation / luminance values but not hues, blending or
 balance. The maths lives in `colormix.py`.
 
@@ -722,11 +724,59 @@ uv run pytest
 Runs on every push and pull request via GitHub Actions.
 
 Most of the suite fakes rawpy, exiftool, and the DNG Converter, so it needs
-no camera files. The export tests (`tests/test_export.py`) use the real
-`exiftool` and are skipped if it is not installed; CI installs it on both
-ubuntu and macOS. The image-math tests assert
+no camera files. The export tests (`tests/test_export.py`) and the
+real-exiftool tests below use the real `exiftool` and are skipped if it is not
+installed; CI installs it on both ubuntu and macOS. The image-math tests assert
 direction and invariants rather than exact pixel values, since the preview
 approximates Camera Raw rather than reproducing it.
+
+### Real-exiftool tests
+
+Tests marked `exiftool` run the real `exiftool` binary instead of the in-process
+double (they skip if it is not installed). CI installs it (apt on ubuntu, brew on
+macOS) and runs them explicitly as `uv run pytest -m exiftool`.
+
+```bash
+uv run pytest -m exiftool
+```
+
+- `tests/test_real_exiftool_xmp.py` pushes **every** develop setting the app
+  writes (basic, tone curves, parametric, HSL, colour grading, masks, retouch
+  spots, crop/straighten, transform, lens, rating/label/keywords) through the
+  sidecar writer and reads it back with exiftool. It asserts the values, that
+  the XML is valid with the `crs:` namespace, that every requested tag really
+  exists in the file (exiftool only *warns* about unknown tags and drops them),
+  and that exiftool reports no warning or error. The tone curve is compared to
+  the Camera Raw format: `<crs:ToneCurvePV2012><rdf:Seq>` of `<rdf:li>x, y</rdf:li>`
+  with whole numbers, as Lightroom writes it.
+- `tests/test_real_exiftool_export.py` builds a synthetic source with rich EXIF
+  (camera, lens, exposure, GPS), IPTC (keywords, caption, copyright, UTF-8
+  text), an embedded ICC profile and a sidecar, exports it to JPEG and PNG
+  (8 and 16 bit, built-in presets, sharpening, watermark, resize) and asserts
+  that every EXIF/GPS/IPTC/XMP tag is still on the output, that PNGs carry
+  `eXIf`, `iCCP` and XMP chunks, and that exiftool validates the result.
+  Tags that legitimately change are listed with the reason in
+  `EXPECTED_TO_CHANGE`: pixel dimensions, `Orientation` (applied to the pixels,
+  then normalised to 1), the thumbnail/preview of the unedited frame, and
+  container bookkeeping. Develop settings (`XMP-crs`) are deliberately not
+  copied because the edits are baked into the pixels.
+- `tests/test_real_raw_e2e.py` (marker `realraw`, **skipped by default**) runs a
+  real Canon CR2 end to end: rawpy decode, edit, rating/label/keywords, export,
+  then compares every tag including Canon MakerNotes. The sample is
+  `IMG_9406.CR2` (Canon EOS 1000D, ~10 MB) from
+  [raw.pixls.us](https://raw.pixls.us/), whose samples are all released by their
+  uploaders under CC0 1.0. It is downloaded to `~/.cache/photo-room-test-raw`
+  (never committed), checked against a pinned SHA-256, and the raw is asserted
+  to be byte-identical afterwards.
+
+  ```bash
+  PHOTO_ROOM_REAL_RAW=1 uv run pytest -m realraw       # download once, then run
+  PHOTO_ROOM_RAW_SAMPLE=/path/to/any.CR2 uv run pytest -m realraw
+  ```
+
+Not covered by any test: Adobe DNG Converter output (macOS/Windows only), and
+whether Lightroom itself renders the sidecar identically (no Adobe software is
+available on CI).
 
 ### Browser tests
 
