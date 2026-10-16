@@ -27,6 +27,7 @@ from flask import Flask, Response, jsonify, render_template, request
 from PIL import Image, ImageFilter
 
 import colormix
+import history
 import quality
 import style
 import thumbs
@@ -1036,6 +1037,18 @@ def api_files():
     return jsonify({"root": str(LIBRARY_ROOT), "files": files})
 
 
+def complete_adjustments(adj: dict, baseline_temp: int) -> dict:
+    """Fill every control, colour key, crop and curve so the UI gets a full set."""
+    adj = dict(adj)
+    adj.setdefault("color_temp", baseline_temp)
+    merged = {c["key"]: adj.get(c["key"], c["default"]) for c in CONTROLS + GLOBAL_CONTROLS}
+    merged.update({k: adj.get(k, d) for k, d in colormix.COLOR_DEFAULTS.items()})
+    merged["monochrome"] = bool(adj.get("monochrome", False))
+    merged["crop"] = adj.get("crop")
+    merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
+    return merged
+
+
 @app.route("/api/open", methods=["POST"])
 def api_open():
     """Open a file: return its preview plus whatever adjustments it already has."""
@@ -1065,18 +1078,33 @@ def api_open():
             source = "styled" if auto.pop("styled", False) else "auto"
             adj = {k: v for k, v in auto.items() if k != "iso"}
 
-        adj.setdefault("color_temp", baseline_temp)
-        merged = {c["key"]: adj.get(c["key"], c["default"]) for c in CONTROLS + GLOBAL_CONTROLS}
-        merged.update({k: adj.get(k, d) for k, d in colormix.COLOR_DEFAULTS.items()})
-        merged["monochrome"] = bool(adj.get("monochrome", False))
-        merged["crop"] = adj.get("crop")
-        merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
+        merged = complete_adjustments(adj, baseline_temp)
 
         base, _ = _load_base_render(path)
         assessment = quality.assess(base)
 
+        # The as-imported state: the auto (or styled) proposal, remembered the
+        # first time the photo is opened. Drives Before and reset-to-import.
+        hist = history.load(path)
+        if hist["original"] is None:
+            if source != "saved":
+                imported = merged   # already the auto proposal
+            else:
+                with _cache_lock:
+                    decoded = _decode_cache.get(str(path.resolve()))
+                auto = compute_auto_adjustments(
+                    path, decoded=decoded, style_model=get_style_model())
+                auto = {k: v for k, v in auto.items() if k not in ("iso", "styled")}
+                imported = complete_adjustments(auto, baseline_temp)
+            hist = history.set_original(path, imported)
+        if not hist["entries"]:
+            hist, _ = history.record(
+                path, "Import" if source != "saved" else "Opened with saved edits", merged)
+
         rendered = render_with_histogram(path, merged)
         return jsonify({
+            "history": history.summary(hist),
+            "import_adjustments": complete_adjustments(hist["original"], baseline_temp),
             "preview": rendered["preview"],
             "quality": assessment,
             "histogram": rendered["histogram"],
@@ -1448,6 +1476,126 @@ def api_reset():
         })
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# History and snapshots (history.py). These never touch the photo itself: the
+# state lives in a sidecar JSON, and the client saves to XMP separately.
+# ---------------------------------------------------------------------------
+
+def _history_request():
+    """Parse the JSON body and resolve its path. Returns (payload, path, error_response)."""
+    try:
+        payload = _json_body()
+    except ValueError as exc:
+        return None, None, (jsonify({"error": str(exc)}), 415)
+    try:
+        return payload, _safe_path(payload["path"]), None
+    except (ValueError, KeyError) as exc:
+        return None, None, (jsonify({"error": str(exc)}), 400)
+
+
+def _state_response(path: Path, adjustments: dict, hist: dict, **extra):
+    """A full adjustment set rendered, as the client needs after a jump/apply."""
+    _, baseline_temp = _load_base_render(path)
+    merged = complete_adjustments(adjustments, baseline_temp)
+    rendered = render_with_histogram(path, merged)
+    return jsonify({
+        "ok": True, "adjustments": merged, "preview": rendered["preview"],
+        "histogram": rendered["histogram"], "history": history.summary(hist), **extra,
+    })
+
+
+@app.route("/api/history", methods=["POST"])
+def api_history():
+    _, path, err = _history_request()
+    if err:
+        return err
+    return jsonify({"history": history.summary(history.load(path))})
+
+
+@app.route("/api/history/record", methods=["POST"])
+def api_history_record():
+    payload, path, err = _history_request()
+    if err:
+        return err
+    adj = payload.get("adjustments")
+    if not isinstance(adj, dict):
+        return jsonify({"error": "adjustments must be an object"}), 400
+    try:
+        hist, recorded = history.record(path, str(payload.get("label", "Edit")), adj)
+    except OSError as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+    return jsonify({"ok": True, "recorded": recorded, "history": history.summary(hist)})
+
+
+@app.route("/api/history/jump", methods=["POST"])
+def api_history_jump():
+    payload, path, err = _history_request()
+    if err:
+        return err
+    try:
+        hist, adj = history.jump(path, str(payload.get("id", "")))
+        return _state_response(path, adj, hist)
+    except KeyError as exc:
+        return jsonify({"error": exc.args[0]}), 404
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/history/reset_to_import", methods=["POST"])
+def api_history_reset_to_import():
+    """Return to the as-imported settings, recorded as a step so it can be undone."""
+    _, path, err = _history_request()
+    if err:
+        return err
+    try:
+        hist = history.load(path)
+        if hist["original"] is None:
+            return jsonify({"error": "No import state recorded; open the photo first"}), 404
+        hist, _ = history.record(path, "Reset to import", hist["original"])
+        return _state_response(path, hist["original"], hist)
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/snapshots/create", methods=["POST"])
+def api_snapshot_create():
+    payload, path, err = _history_request()
+    if err:
+        return err
+    adj = payload.get("adjustments")
+    if not isinstance(adj, dict):
+        return jsonify({"error": "adjustments must be an object"}), 400
+    try:
+        hist = history.create_snapshot(path, str(payload.get("name", "")), adj)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "history": history.summary(hist)})
+
+
+@app.route("/api/snapshots/apply", methods=["POST"])
+def api_snapshot_apply():
+    payload, path, err = _history_request()
+    if err:
+        return err
+    try:
+        adj = history.get_snapshot(path, str(payload.get("id", "")))
+        hist, _ = history.record(path, f"Snapshot: {payload.get('name') or 'applied'}", adj)
+        return _state_response(path, adj, hist)
+    except KeyError as exc:
+        return jsonify({"error": exc.args[0]}), 404
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/snapshots/delete", methods=["POST"])
+def api_snapshot_delete():
+    payload, path, err = _history_request()
+    if err:
+        return err
+    hist, removed = history.delete_snapshot(path, str(payload.get("id", "")))
+    return jsonify({"ok": removed, "history": history.summary(hist)})
 
 
 @app.route("/api/recover", methods=["POST"])

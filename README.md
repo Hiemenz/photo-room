@@ -188,12 +188,37 @@ re-anchored to each file's own camera white balance rather than copied as
 an absolute Kelvin value, so a batch spanning different bodies does not
 shift colour.
 
+### History, snapshots and before/after
+
+The left panel has a **History** list. Every committed step (a slider
+release, a curve change, a preset, a crop, paste, revert) is recorded with a
+label and time; click one to jump back to that state. Jumping is
+non-destructive: later steps stay listed (dimmed) until you make a new edit,
+which drops them, like undo/redo. Nothing is written to the photo until you
+save. The newest 100 steps per photo are kept.
+
+**Snapshots** (`+ New`) store the current settings under a name; click one to
+apply it (recorded as a history step) and `x` to delete it. Re-using a name
+replaces that snapshot.
+
+**Reset to import** returns to the as-imported state, the auto (or learned
+style) proposal captured the first time the photo is opened. It is a history
+step, so it can be undone. *Revert to original* is different: it clears the
+stored XMP from the file.
+
+History and snapshots live in `IMG_0001.dng.photoroom.json` beside the photo,
+not in the XMP, so the develop settings Lightroom reads are unchanged.
+
+**Before/after.** The **After / Split / Side by side** buttons above the photo
+switch views. Split has a draggable divider. Press `\` to flip to Before and
+back (tap to latch, or hold to peek). *Before* is the as-imported state.
+
 ### Keyboard
 
 | Key | Action |
 |---|---|
 | `←` `→` | Previous / next photo |
-| `\` (hold) | Show the unedited original |
+| `\` (hold or tap) | Show the as-imported "Before"; tap to latch |
 | `b` | Toggle black and white |
 | `cmd`+`s` | Save adjustments |
 | `cmd`+`c` / `cmd`+`v` | Copy / paste settings |
