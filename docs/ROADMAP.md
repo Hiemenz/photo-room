@@ -43,7 +43,7 @@ every panel, export JPEGs, and re-open the files in Lightroom with the edits int
 - [x] M7 Local adjustments: graduated filter, radial filter, adjustment brush with feather and mask overlay
 - [x] M8 Spot removal (clone/heal), transform (vertical/horizontal/rotate/aspect), lens profile correction via lensfun, chromatic aberration
 - [x] M9 Export presets, output sharpening, watermark, batch export queue (builds on M1b)
-- [ ] M10 Performance and polish: preview caching, background thumbnails for large libraries, keyboard shortcuts matching Lightroom (G, D, E, R, 1-5, X, P), dark theme
+- [x] M10 Performance and polish: preview caching, background thumbnails for large libraries, keyboard shortcuts matching Lightroom (G, D, E, R, 1-5, X, P), dark theme
 
 ## Not planned
 AI masking, AI denoise, generative remove, Print/Book/Slideshow/Web modules, tethered capture, cloud sync, mobile apps.

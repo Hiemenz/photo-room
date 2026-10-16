@@ -124,7 +124,7 @@ def _feature_vector(features: dict) -> np.ndarray:
 
 def _connect(db_path: Path | None = None):
     if duckdb is None:
-        raise RuntimeError("duckdb is not installed; run: poetry add duckdb")
+        raise RuntimeError("duckdb is not installed; run: uv add duckdb")
     path = db_path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(path))

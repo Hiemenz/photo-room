@@ -16,6 +16,11 @@ from __future__ import annotations
 
 import numpy as np
 
+try:                      # optional: threaded, SIMD colour conversion
+    import cv2
+except ImportError:       # pragma: no cover - numpy path covers it
+    cv2 = None
+
 BANDS = ["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"]
 # Band centres in degrees of hue. Uneven on purpose: it follows how Camera
 # Raw spaces them, with more resolution through the warm colours.
@@ -125,6 +130,13 @@ def has_color_settings(adj: dict) -> bool:
 
 def rgb_to_hsv(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return hue (degrees 0..360), saturation, value for an RGB float image."""
+    if cv2 is not None and img.ndim == 3 and img.dtype == np.float32:
+        hsv = cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_RGB2HSV)
+        return hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    return _rgb_to_hsv_numpy(img)
+
+
+def _rgb_to_hsv_numpy(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     r, g, b = img[..., 0], img[..., 1], img[..., 2]
     v = img.max(axis=-1)
     c = v - img.min(axis=-1)
@@ -137,6 +149,14 @@ def rgb_to_hsv(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 
 def hsv_to_rgb(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
+    h = np.asarray(h)
+    if cv2 is not None and h.ndim == 2 and h.dtype == np.float32:
+        hsv = np.stack([h % np.float32(360.0), s, v], axis=-1).astype(np.float32, copy=False)
+        return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+    return _hsv_to_rgb_numpy(h, s, v)
+
+
+def _hsv_to_rgb_numpy(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
     h6 = (np.asarray(h, dtype=np.float32) % 360.0) / 60.0
     def f(n):
         k = (n + h6) % 6.0
@@ -211,19 +231,69 @@ def _vec(adj: dict, prefix: str) -> np.ndarray:
     return np.array([float(adj.get(f"{prefix}_{b}", 0) or 0) for b in BANDS], dtype=np.float32)
 
 
-def apply_hsl(img: np.ndarray, adj: dict) -> np.ndarray:
-    """Per-band hue / saturation / luminance. Exact no-op when all are zero."""
+HUE_STEPS = 3600     # hue lookup resolution: 0.1 degree
+
+
+def _hue_index(hue: np.ndarray) -> np.ndarray:
+    """Hue in degrees to an index into a ``HUE_STEPS`` table (0.1 degree)."""
+    return (np.asarray(hue, dtype=np.float32) * np.float32(HUE_STEPS / 360.0) + np.float32(0.5)
+            ).astype(np.int32) % HUE_STEPS
+
+
+_HUE_GRID = np.arange(HUE_STEPS, dtype=np.float32) * np.float32(360.0 / HUE_STEPS)
+
+
+def _band_table(vec: np.ndarray) -> np.ndarray:
+    """A per-band vector expanded to a ``HUE_STEPS`` lookup table."""
+    return band_mix(_HUE_GRID, vec)
+
+
+class Analysis:
+    """
+    The part of the colour mixer that depends only on the pixels, not on the
+    sliders: HSV, the hue-table index and the chroma fade. Computed once per
+    input image and reused while a slider is dragged.
+    """
+    __slots__ = ("h", "s", "v", "idx", "chroma")
+
+    def __init__(self, img: np.ndarray):
+        self.h, self.s, self.v = rgb_to_hsv(img)
+        self.idx = _hue_index(self.h)
+        self.chroma = _smoothstep(0.0, CHROMA_FLOOR * 2, self.s).astype(np.float32)
+
+    @property
+    def nbytes(self) -> int:
+        return sum(a.nbytes for a in (self.h, self.s, self.v, self.idx, self.chroma))
+
+
+def has_hsl(adj: dict) -> bool:
+    return any(_vec(adj, p).any() for p in ("hue", "sat", "lum"))
+
+
+def apply_hsl(img: np.ndarray, adj: dict, analysis: "Analysis | None" = None) -> np.ndarray:
+    """Per-band hue / saturation / luminance. Exact no-op when all are zero.
+
+    ``analysis`` is the :class:`Analysis` of ``img`` when the caller has one
+    cached; it never changes the result."""
     dh, ds, dl = _vec(adj, "hue"), _vec(adj, "sat"), _vec(adj, "lum")
     if not (dh.any() or ds.any() or dl.any()):
         return img
-    h, s, v = rgb_to_hsv(img)
-    chroma = _smoothstep(0.0, CHROMA_FLOOR * 2, s)
-    mh, ms, ml = band_mix(h, dh, ds, dl)
-    hue_shift = mh * chroma / 100.0 * MAX_HUE_SHIFT_DEG
-    sat_scale = 1.0 + ms * chroma / 100.0
-    gain = 1.0 + ml * chroma / 100.0 * LUM_GAIN
-    out = hsv_to_rgb(h + hue_shift, np.clip(s * sat_scale, 0.0, 1.0), v)
-    return np.clip(out * gain[..., None], 0.0, 1.0)
+    a = analysis or Analysis(img)
+    h, s, v, chroma = a.h, a.s, a.v, a.chroma
+    sat_scale = 1.0 + _band_table(ds)[a.idx] * chroma / 100.0
+    new_s = np.clip(s * sat_scale, 0.0, 1.0)
+    if dh.any():
+        hue_shift = _band_table(dh)[a.idx] * chroma * np.float32(MAX_HUE_SHIFT_DEG / 100.0)
+        out = hsv_to_rgb(h + hue_shift, new_s, v)
+    else:
+        # Hue untouched: rescale each pixel's distance from its own value
+        # instead of a full HSV round trip. Same result, a third of the work.
+        ratio = np.divide(new_s, s, out=np.ones_like(s), where=s > 1e-9)
+        out = v[..., None] - (v[..., None] - img) * ratio[..., None]
+    if dl.any():
+        gain = 1.0 + _band_table(dl)[a.idx] * chroma * np.float32(LUM_GAIN / 100.0)
+        out = out * gain[..., None]
+    return np.clip(out, 0.0, 1.0)
 
 
 def apply_gray_mixer(img: np.ndarray, adj: dict) -> np.ndarray:

@@ -10,6 +10,30 @@ an `.xmp` sidecar beside each raw, so the original is never touched. If Adobe
 DNG Converter is installed (macOS/Windows) it is used as an optional extra:
 photos are converted to DNG with the raw embedded, and edits go inside the DNG.
 
+## Quick start on Linux/macOS: card to export
+
+```bash
+# 1. Once: tools and dependencies
+sudo apt install libimage-exiftool-perl     # macOS: brew install exiftool
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv sync
+
+# 2. Copy the raws off the card into a dated library (the card is only read)
+uv run python ingest.py cards                       # find the mounted card
+uv run python ingest.py run /media/$USER/EOS_DIGITAL -o ~/Pictures/library/
+
+# 3. Open the editor on the library
+uv run python editor.py ~/Pictures/library/         # then http://127.0.0.1:5000
+```
+
+4. **Cull** in the Library module: `g` for the grid, `1`-`5` / `x` / `p` to rate and flag.
+5. **Edit** in Develop (`d`): sliders, tone curve, colour mixer, crop (`r`), masks. `?` lists every shortcut.
+6. **Save** with `Ctrl/Cmd+S`; the edits go into an `.xmp` sidecar beside each raw.
+7. **Export** with `Ctrl/Cmd+Shift+E`: pick PNG or JPEG, size, and leave *Keep metadata* ticked.
+   Every EXIF, GPS, IPTC and XMP tag and the colour profile is copied from the raw.
+
+No Adobe software is needed. CR2 is decoded with rawpy/LibRaw.
+
 ## Requirements
 
 - `exiftool` — `brew install exiftool` (macOS) or `sudo apt install libimage-exiftool-perl` (Debian/Ubuntu/Raspberry Pi OS)
@@ -41,7 +65,9 @@ uv run python editor.py ~/Pictures/dng/
 ```
 
 Pick a photo from the library on the left; the preview updates live as you
-move the sliders.
+move the sliders. The app starts in a neutral grey **dark theme** (the button
+at the top right, or `Shift`+`T`, switches to a light one; the choice is
+remembered in the browser). Press `?` at any time for the shortcut list.
 
 | Control | Range | Notes |
 |---|---|---|
@@ -194,9 +220,11 @@ decision, not an intensity.
 
 ### Browsing a shoot
 
-After conversion a folder holds both the CR2 and its DNG. They are one
-photograph, so the library lists the DNG and hides the source raw — the
-DNG carries the edits and embeds the original anyway.
+Where Adobe DNG Converter was used, a folder holds both the CR2 and its DNG.
+They are one photograph, so the library lists the DNG and hides the source
+raw — the DNG carries the edits and embeds the original anyway. Without the
+converter (the Linux default) the raw itself is listed and its edits live in
+the `.xmp` sidecar beside it.
 
 **Grid** turns the main pane into a contact sheet. Click a frame to open
 it; `cmd`-click still selects for a batch apply.
@@ -204,12 +232,20 @@ it; `cmd`-click still selects for a batch apply.
 Thumbnails come from the JPEG preview the camera already embedded in each
 raw rather than from demosaicing the sensor — about five times faster, and
 cached on disk keyed by file size and modification time. A 431-frame shoot
-costs roughly 47 seconds the first time and is instant afterwards. Cells
-load only as they scroll into view.
+costs roughly 47 seconds the first time and is instant afterwards.
+
+For a big library the editor builds the missing thumbnails **in the
+background**: when the Library opens, two worker threads walk the whole folder
+while the grid stays usable, and a *Thumbnails 120/431* bar at the bottom
+shows progress. Cells you scroll to are built first by a separate set of
+workers, so they never queue behind the background job. The grid is paginated
+(it fetches a page at a time) and cells load only as they scroll into view.
 
 ### Rating and culling
 
-Press `0`–`5` to rate the open photo, `x` to reject it, or click the stars.
+Press `1`–`5` to rate the open photo, `0` to clear the rating, `x` to reject it,
+`p` to pick, `u` to unflag, `6`–`9` for the Red / Yellow / Green / Blue label,
+or click the stars.
 The dropdown above the library filters to unrated, rated, your best, or
 rejects — and the arrow keys then move within whatever the filter shows, so
 culling down to your picks and arrowing through does not jump back to
@@ -445,15 +481,38 @@ back (tap to latch, or hold to peek). *Before* is the as-imported state.
 
 ### Keyboard
 
+Shortcuts follow Lightroom Classic. Press `?` in the editor for the same list.
+`Mod` is `Ctrl` on Linux and `Cmd` on macOS. Shortcuts are ignored while you
+type in a text box, number field or menu, and while a dialog is open.
+
 | Key | Action |
 |---|---|
-| `←` `→` | Previous / next photo |
-| `\` (hold or tap) | Show the as-imported "Before"; tap to latch |
+| `g` | Library grid |
+| `e` | Loupe: open the selected photo in Develop |
+| `d` | Develop |
+| `r` | Crop tool (Develop) |
+| `c` | Compare view (from Develop it opens the Library first) |
+| `n` | Survey view (likewise) |
+| `1`–`5` | Star rating |
+| `0` | Clear the rating |
+| `x` | Reject |
+| `p` | Pick flag |
+| `u` | Unflag |
+| `6` `7` `8` `9` | Label Red / Yellow / Green / Blue |
+| `←` `→` | Previous / next photo (the cursor moves in the grid) |
+| `\` (hold or tap) | Before: show the as-imported state; tap to latch |
+| `o` | Mask overlay (red tint), with the Masks panel open |
 | `b` | Toggle black and white |
-| `o` | Show / hide the selected mask (red tint), with the Masks panel open |
-| `Delete` | Delete the selected mask |
-| `cmd`+`s` | Save adjustments |
-| `cmd`+`c` / `cmd`+`v` | Copy / paste settings |
+| `Delete` | Delete the selected mask or spot |
+| `Esc` | Leave the current tool, close overlays |
+| `Mod`+`Z` | Undo (steps back through the History panel) |
+| `Mod`+`Shift`+`Z` | Redo |
+| `Mod`+`C` / `Mod`+`V` | Copy / paste settings |
+| `Mod`+`S` | Save adjustments |
+| `Mod`+`Shift`+`E` | Export dialog |
+| `v` | Virtual copy (Library) |
+| `?` | Shortcut list |
+| `Shift`+`T` | Toggle dark / light theme |
 
 ### Reverting
 
@@ -472,7 +531,9 @@ python ingest.py run /Volumes/EOS_DIGITAL -o ~/Pictures/library/ --no-skip
 ```
 
 Insert a card and it copies every raw into the library, sorts by shoot
-date, converts to DNG, and applies your learned adjustments.
+date, and applies your learned adjustments. With Adobe DNG Converter installed
+it also converts each raw to DNG; without it (Linux) the raws are kept as they
+are and the adjustments go to `.xmp` sidecars.
 
 **The card is read-only throughout.** Nothing is deleted or modified on
 it — erase it in-camera once you are satisfied the copy is good. Each
@@ -705,12 +766,14 @@ tint is normally 0.
 All EXIF written by the camera survives conversion — make, model, lens,
 serial numbers, date, ISO, exposure, aperture, focal length, GPS.
 
-Conversion produces mosaic DNGs rather than linear ones. The sensor data
+When Adobe DNG Converter is used (macOS/Windows), conversion produces mosaic
+DNGs rather than linear ones. The sensor data
 is identical; a linear DNG stores it demosaiced at roughly twice the size
 (130MB against 60MB for a 5D Mark IV frame, of which 33MB is the embedded
 original either way).
 
-Three fields are rewritten by Adobe DNG Converter itself, not by this tool:
+Three fields are rewritten by Adobe DNG Converter itself, not by this tool
+(so only on that path):
 `ShutterSpeedValue` and `ApertureValue` are re-derived as rounded APEX
 values (the exact `ExposureTime` and `FNumber` are preserved), and
 `FocalPlaneXResolution` changes because the output is a linear DNG.
@@ -803,105 +866,34 @@ rather than fail. Screenshots of the editor land in `tests/ui/artifacts/`
 Tested against a 665-photograph library on an external drive: the file
 list returns in 24ms, and the ratings scan — one exiftool pass over every
 file — takes about 4 seconds. The library appears immediately and ratings
-paint in when they arrive, rather than the list waiting on them.
+paint in when they arrive, rather than the list waiting on them. Thumbnails
+are built by background threads and cached on disk (see "Browsing a shoot").
 
-## Memory
+## Performance and memory
 
-The editor keeps the eight most recently opened photographs in memory —
-their previews and the decoded sensor data behind them, roughly 38MB per
-photograph. That keeps arrow-key browsing and before/after comparison
-instant while capping the cost near 300MB. Without the bound, browsing a
-431-frame shoot would have held about 16GB.
+Slider drags are meant to feel immediate on a Raspberry Pi 5. Four things
+keep the preview quick:
 
-## Damaged files
+- **Decoded base per photo.** The half-size linear render of each photograph
+  is held in memory (the eight most recent photos, roughly 38MB each, so about
+  300MB) and every slider move composites from it instead of re-reading the raw.
+- **Stage cache.** The preview is built in stages (geometry, tone, saturation,
+  colour mixer, grading, detail, then masks and strength). Each stage's output
+  is cached under a key made from the settings of every stage up to it, so
+  moving the Clarity slider reuses everything upstream and only redoes Detail,
+  and dragging an HSL slider reuses the colour analysis of the pixels as well.
+  The cache is capped at 160MB and evicts the least recently used stage.
+- **Drag render.** While a slider is moving, the editor renders a smaller
+  preview (800px on the long edge) and sends a sharp full-size one about
+  220 ms after you stop. Photos with spot removal or lens corrections always
+  render full-size, since those work at the true scale of the frame.
+- **Stale requests are skipped.** Each request carries a sequence number; the
+  browser cancels the one in flight and the server drops any request that a
+  newer one has overtaken, even partway through the stages. Renders run one at
+  a time.
 
-A card read error or an interrupted copy produces truncated or empty
-files. Convert, cull and ingest each handle them per file and carry on —
-a run reports what it could not read rather than stopping. The editor
-returns a readable error and stays up, and the rest of the shoot is
-unaffected.
-
-A truncated file often still shows a thumbnail, because the camera's
-embedded preview sits near the start of the file and may have survived
-the copy.
-
-## Photos edited in Lightroom
-
-A DNG exported from Lightroom or Camera Raw carries its develop settings
-inside the file, in the same place this tool writes to. Overwriting them
-destroys editing work that may exist nowhere else outside a catalogue.
-
-Files carrying settings from other software are detected by `crs:Version`,
-which Lightroom stamps and this tool never writes, and by the creator tags.
-When one is found:
-
-- **`revert` refuses** and explains, unless you pass `--force`.
-  `revert --extract-original` is always safe — it only writes the embedded
-  raw back out and changes nothing.
-- **Batch apply skips it** and says how many were skipped.
-- **The editor warns** when you open it, before you save over anything.
-
-Lightroom Classic may also keep `.xmp` sidecars beside your photos. Where
-one exists, this tool **reads** it in preference to the copy inside the
-DNG, so opening a photo shows the edit you actually made rather than a
-differing embedded copy. On a real shoot the two disagreed — exposure
-+1.12 against +1.11, highlights -84 against -81, on files written in the
-same minute.
-
-By default it **writes** only into the DNG, so on a sidecar-managed photo
-Lightroom will not see edits made here — and the editor says so when you
-save.
-
-Start it with `--write-sidecars` to mirror each save into the `.xmp` as
-well, keeping both stores in step:
-
-```bash
-uv run python editor.py ~/Pictures/dng/ --write-sidecars
-```
-
-This is off by default deliberately. A sidecar is what Lightroom reads
-back, so writing one decides which application wins — worth choosing
-rather than inheriting. An existing sidecar is updated in place, so the
-tone curve, lens profile and everything else Lightroom keeps there
-survives untouched.
-
-## Amazon Photos uploads do not work
-
-`--upload-amazon` refuses and explains why. This is not a bug that can be
-fixed here.
-
-Amazon closed the Drive API to third parties in August 2019 and shut the
-Drive service down entirely in December 2023. The endpoint this code
-targets, `content-na.drive.amazonaws.com/cdproxy/nodes`, answers 404, and
-the `clouddrive:write` scope can no longer be granted. Amazon Photos has
-no public API that replaces it.
-
-The implementation is kept as `_upload_to_amazon_photos_unreachable` so
-that if Amazon ever publishes one, this becomes a change of endpoint
-rather than a rewrite. Nothing calls it.
-
-## Process version
-
-Edits are written declaring Camera Raw process version `11.0` — Process
-Version 5, what Camera Raw 11 writes for new images and the oldest that
-supports every slider here, Texture and Dehaze included.
-
-A file already declaring something newer keeps it. Lightroom Classic
-currently writes `15.4` (Process Version 6), and process version selects
-the rendering engine, so overwriting that with `11.0` would change how the
-photograph looks rather than merely editing its metadata.
-
-## Hung helper programs
-
-Every call to the DNG Converter and to exiftool has a deadline — 300
-seconds for a conversion, 120 for metadata. A stalled program is reported
-as a failure of that one file and the rest of the run continues.
-
-This matters because the DNG Converter is a GUI application driven from
-the command line, and answers some invocations by opening a window rather
-than writing to stdout. `-h` does exactly that: no output, never exits.
-Unbounded, one such file would stall a 431-frame ingest with nothing on
-screen to say why.
+`uv run python scripts/bench_preview.py` times each control's drag on a
+synthetic 1400px photo (it is not part of the test run).
 
 ## Running as a local server
 

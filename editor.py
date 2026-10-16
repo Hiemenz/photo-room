@@ -28,6 +28,11 @@ import rawpy
 from flask import Flask, Response, jsonify, render_template, request
 from PIL import Image, ImageFilter
 
+try:                       # optional: only used for faster resizing
+    import cv2
+except ImportError:        # pragma: no cover
+    cv2 = None
+
 import catalog
 import colormix
 import masks
@@ -37,6 +42,7 @@ import lens
 import quality
 import retouch
 import style
+import stagecache
 import thumbs
 import tonecurve
 from tonecurve import apply_tone_curve
@@ -120,6 +126,8 @@ def _evict_if_needed() -> None:
     while len(_base_cache) > MAX_CACHED_PHOTOS:
         oldest, _ = _base_cache.popitem(last=False)
         _decode_cache.pop(oldest, None)
+        _stage_cache.drop_photo(oldest)
+        _stage_cache.drop_photo(oldest + ":fast")
     # The decode cache can also be populated on its own, so bound it too.
     while len(_decode_cache) > MAX_CACHED_PHOTOS:
         _decode_cache.popitem(last=False)
@@ -404,22 +412,30 @@ def _apply_detail(img: np.ndarray, adj: dict) -> np.ndarray:
     return np.clip(img, 0.0, 1.0)
 
 
-def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.ndarray:
-    """
-    Composite slider values onto the neutral render.
+class StaleRender(Exception):
+    """Raised between stages when a newer request has superseded this one."""
 
-    This approximates how Camera Raw will interpret the same XMP values; it is
-    a preview for judging an edit, not a byte-exact match to Adobe's renderer.
-    """
+
+# Stage outputs for the preview (see stagecache.py). ~16MB per float32 stage
+# image at 1400px, so 160MB holds the stages of a couple of photos.
+STAGE_CACHE_BYTES = 160 * 1024 * 1024
+_stage_cache = stagecache.StageCache(STAGE_CACHE_BYTES)
+
+
+def _stage_geometry(base: np.ndarray, adj: dict) -> np.ndarray:
     # Geometry first, so the untouched reference the strength blend compares
     # against is the cropped picture rather than the whole frame. `base` must
-    # stay pristine — the steps below mutate `img` in place.
+    # stay pristine -- later stages work on copies.
     # Spots and lens corrections work on the original frame; the transform
     # then feeds Straighten and Crop (see retouch.py).
     base = retouch.apply_corrections(base, adj)
     if not adj.get("_raw_frame"):
         base = retouch.apply_transform(base, adj)
         base = apply_geometry(base, adj)
+    return base
+
+
+def _stage_tone(base: np.ndarray, baseline_temp: int, adj: dict) -> np.ndarray:
     img = base.copy()
 
     # --- White balance ---
@@ -472,9 +488,10 @@ def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.nda
     img = np.clip(img, 0.0, 1.0)
 
     # --- Tone curve ---
-    img = np.clip(apply_tone_curve(img, adj.get("tone_curve")), 0.0, 1.0)
+    return np.clip(apply_tone_curve(img, adj.get("tone_curve")), 0.0, 1.0)
 
-    # --- Color ---
+
+def _stage_saturation(img: np.ndarray, adj: dict) -> np.ndarray:
     saturation = float(adj.get("saturation", 0))
     vibrance = float(adj.get("vibrance", 0))
     if saturation or vibrance:
@@ -487,19 +504,102 @@ def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.nda
             factor = factor + (vibrance / 100.0) * (1.0 - current_sat)
         img = gray + delta * factor
 
-    img = np.clip(img, 0.0, 1.0)
+    return np.clip(img, 0.0, 1.0)
+
+
+def apply_adjustments(
+    base: np.ndarray,
+    baseline_temp: int,
+    adj: dict,
+    cache_id: str | None = None,
+    should_abort=None,
+) -> np.ndarray:
+    """
+    Composite slider values onto the neutral render.
+
+    This approximates how Camera Raw will interpret the same XMP values; it is
+    a preview for judging an edit, not a byte-exact match to Adobe's renderer.
+
+    With a ``cache_id`` (one photo's identity) each stage's output is kept in
+    the stage cache and a re-render resumes after the last stage whose
+    settings are unchanged. ``should_abort`` is polled between stages and
+    raises :class:`StaleRender` for a request that has been superseded.
+    """
+    cache = _stage_cache if cache_id else None
+    keys = stagecache.stage_keys(adj, baseline_temp) if cache else None
+    S = stagecache
+
+    def checkpoint():
+        if should_abort is not None and should_abort():
+            raise StaleRender()
+
+    def lookup(stage):
+        return cache.get(cache_id, stage, keys[stage]) if cache else None
+
+    def keep(stage, value, source):
+        # Pass-throughs and crops of the input (views of it) cost nothing to
+        # recompute; anything else is stored, as an owning array so the cache's
+        # byte count is honest.
+        if cache and value is not source and not np.may_share_memory(value, source):
+            if value.base is not None:
+                value = value.copy()
+            cache.put(cache_id, stage, keys[stage], value)
+        return value
+
+    # Resume from the latest cached stage; each stage below runs only if its
+    # own output was not found.
+    cached = {}
+    for stage in (S.DETAIL, S.GRADE, S.MIX, S.SATURATION, S.TONE):
+        hit = lookup(stage)
+        if hit is not None:
+            cached[stage] = hit
+            break
+    resume = next(iter(cached), -1)
+
+    # Geometry output is also the reference for the strength blend.
+    geo = lookup(S.GEOMETRY)
+    if geo is None:
+        checkpoint()
+        geo = keep(S.GEOMETRY, _stage_geometry(base, adj), base)
+
+    if resume >= S.TONE:
+        img = cached[resume]
+    else:
+        checkpoint()
+        img = keep(S.TONE, _stage_tone(geo, baseline_temp, adj), geo)
+    if resume < S.SATURATION:
+        checkpoint()
+        img = keep(S.SATURATION, _stage_saturation(img, adj), img)
 
     # --- Colour mixer / grading ---
     # In black & white the HSL sliders give way to the B&W mixer, which
     # brightens or darkens each hue band ahead of the grey conversion.
     mono = bool(adj.get("monochrome"))
-    img = colormix.apply_gray_mixer(img, adj) if mono else colormix.apply_hsl(img, adj)
-    if not mono:
-        img = colormix.apply_grading(img, adj)
+    if resume < S.MIX:
+        checkpoint()
+        if mono:
+            mixed = colormix.apply_gray_mixer(img, adj)
+        else:
+            # The HSV analysis depends only on the input pixels, so it is kept
+            # while an HSL slider is dragged.
+            analysis = cache.get(cache_id, "hsv", keys[S.SATURATION]) if cache else None
+            if analysis is None and colormix.has_hsl(adj):
+                analysis = colormix.Analysis(img)
+                if cache:
+                    cache.put(cache_id, "hsv", keys[S.SATURATION], analysis)
+            mixed = colormix.apply_hsl(img, adj, analysis)
+        img = keep(S.MIX, mixed, img)
+    if resume < S.GRADE:
+        checkpoint()
+        if not mono:
+            img = keep(S.GRADE, colormix.apply_grading(img, adj), img)
 
     # --- Detail ---
-    img = _apply_detail(img, adj)
+    if resume < S.DETAIL:
+        checkpoint()
+        img = keep(S.DETAIL, _apply_detail(img, adj), img)
 
+    checkpoint()
     # --- Local adjustments (masks.py): graduated, radial and brush masks ---
     img = masks.apply_masks(img, adj.get("masks"), blur=_blur)
 
@@ -508,14 +608,14 @@ def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.nda
     # extrapolates away from the original, exaggerating the same edit.
     strength = float(adj.get("strength", 100)) / 100.0
     if abs(strength - 1.0) > 1e-6:
-        img = base + (img - base) * strength
+        img = geo + (img - geo) * strength
 
     # --- Monochrome ---
     # Applied after the colour sliders so they act as channel mixers: warming
     # the temperature changes which tones render light or dark. The blend is
-    # capped at fully grey — extrapolating past it would swing the image back
+    # capped at fully grey -- extrapolating past it would swing the image back
     # into inverted colour rather than making it "more" black and white.
-    if adj.get("monochrome"):
+    if mono:
         # Applied in full regardless of strength, because the file stores it
         # as a boolean. Blending it produced a half-desaturated preview of a
         # photograph that was saved fully black and white.
@@ -563,10 +663,50 @@ def render_preview(path: Path, adj: dict, quality: int = 82) -> str:
     return render_with_histogram(path, adj, quality)["preview"]
 
 
-def render_with_histogram(path: Path, adj: dict, quality: int = 82) -> dict:
+# While a slider is moving the preview renders from a smaller copy of the
+# photo (about a third of the pixels) and a sharp render follows when it
+# settles, as Lightroom does. Spots and lens corrections work on the original
+# frame at its true scale, so they always get the full-size path.
+FAST_EDGE = 800
+_fast_cache: OrderedDict[str, tuple[np.ndarray, np.ndarray]] = OrderedDict()   # path -> (full, small)
+
+
+def _fast_base(path: Path, base: np.ndarray) -> np.ndarray:
+    key = str(path.resolve())
+    with _cache_lock:
+        hit = _fast_cache.get(key)
+        if hit is not None and hit[0] is base:
+            _fast_cache.move_to_end(key)
+            return hit[1]
+    h, w = base.shape[:2]
+    size = (max(1, round(w * FAST_EDGE / max(h, w))), max(1, round(h * FAST_EDGE / max(h, w))))
+    if cv2 is not None:
+        small = cv2.resize(base, size, interpolation=cv2.INTER_AREA)
+    else:
+        img = Image.fromarray((base * 255.0 + 0.5).astype(np.uint8)).resize(size, Image.BILINEAR)
+        small = np.asarray(img, dtype=np.float32) / 255.0
+    with _cache_lock:
+        _fast_cache[key] = (base, small)
+        while len(_fast_cache) > MAX_CACHED_PHOTOS:
+            _fast_cache.popitem(last=False)
+    return small
+
+
+def fast_ok(adj: dict) -> bool:
+    return not (adj.get("spots") or adj.get("lens_profile") or adj.get("ca_remove")
+                or adj.get("_raw_frame"))
+
+
+def render_with_histogram(path: Path, adj: dict, quality: int = 82, should_abort=None,
+                          fast: bool = False) -> dict:
     """Render the preview and its histogram from a single composite pass."""
     base, baseline_temp = _load_base_render(path)
-    out = apply_adjustments(base, baseline_temp, lens.attach_meta(path, adj))
+    cache_id = str(path.resolve())
+    if fast and fast_ok(adj) and max(base.shape[:2]) > FAST_EDGE * 1.25:
+        base = _fast_base(path, base)
+        cache_id += ":fast"
+    out = apply_adjustments(base, baseline_temp, lens.attach_meta(path, adj),
+                            cache_id=cache_id, should_abort=should_abort)
     img = Image.fromarray((out * 255.0 + 0.5).astype(np.uint8))
 
     buf = io.BytesIO()
@@ -1314,6 +1454,41 @@ def api_open():
         return jsonify({"error": describe_error(exc)}), 500
 
 
+# Slider drags send a rising sequence number per photo. A request that has been
+# overtaken by a newer one is skipped (before it starts, or between stages),
+# since the client is about to discard its image anyway. Renders run one at a
+# time: on a Pi, two at once just make both slower.
+_latest_seq: dict[str, int] = {}
+_seq_lock = threading.Lock()
+_render_lock = threading.Lock()
+
+
+def _note_seq(key: str, seq: int) -> None:
+    with _seq_lock:
+        if seq > _latest_seq.get(key, 0):
+            _latest_seq[key] = seq
+        if len(_latest_seq) > 256:                # bounded: forget old photos
+            for k in list(_latest_seq)[:128]:
+                if k != key:
+                    del _latest_seq[k]
+
+
+def _render_if_current(path: Path, adj: dict, seq: int, fast: bool = False) -> dict:
+    key = str(path.resolve())
+    _note_seq(key, seq)
+
+    def stale() -> bool:
+        return _latest_seq.get(key, 0) > seq
+
+    with _render_lock:
+        if stale():
+            return {"stale": True}
+        try:
+            return render_with_histogram(path, adj, should_abort=stale, fast=fast)
+        except StaleRender:
+            return {"stale": True}
+
+
 @app.route("/api/preview", methods=["POST"])
 def api_preview():
     try:
@@ -1332,7 +1507,10 @@ def api_preview():
             # Spot editing shows the uncropped frame so clicks map straight
             # onto the stored coordinates.
             adj = {**adj, "_raw_frame": True}
-        return jsonify(render_with_histogram(path, adj))
+        seq = payload.get("seq")
+        if not isinstance(seq, int) or isinstance(seq, bool):
+            return jsonify(render_with_histogram(path, adj))
+        return jsonify(_render_if_current(path, adj, seq, bool(payload.get("fast"))))
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
 
@@ -1964,6 +2142,40 @@ def api_view_preview():
     return _catalog_call(run)
 
 
+_thumb_pool_instance: thumbs.ThumbPool | None = None
+_thumb_pool_lock = threading.Lock()
+
+
+def _thumb_pool() -> thumbs.ThumbPool:
+    """The shared thumbnail workers, created on first use for the current library."""
+    global _thumb_pool_instance
+    with _thumb_pool_lock:
+        if _thumb_pool_instance is None or _thumb_pool_instance.root != LIBRARY_ROOT:
+            def fallback(p):
+                rgb, _, _ = decode_for_analysis(p)
+                return rgb
+            _thumb_pool_instance = thumbs.ThumbPool(LIBRARY_ROOT, decode_fallback=fallback)
+        return _thumb_pool_instance
+
+
+@app.route("/api/thumbs/prefetch", methods=["POST"])
+def api_thumbs_prefetch():
+    """Start building every missing thumbnail in the background; returns progress."""
+    try:
+        _json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        return jsonify(_thumb_pool().prefetch(list_photos(LIBRARY_ROOT)))
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/thumbs/status")
+def api_thumbs_status():
+    return jsonify(_thumb_pool().progress())
+
+
 @app.route("/api/thumb")
 def api_thumb():
     """Serve a cached thumbnail for one file."""
@@ -1974,12 +2186,8 @@ def api_thumb():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    def fallback(p):
-        rgb, _, _ = decode_for_analysis(p)
-        return rgb
-
     try:
-        data = thumbs.get(path, LIBRARY_ROOT, decode_fallback=fallback)
+        data = _thumb_pool().get_now(path)
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
 

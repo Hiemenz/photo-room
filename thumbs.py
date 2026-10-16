@@ -19,6 +19,7 @@ import io
 import os
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -138,3 +139,85 @@ def clear_cache(root: Path) -> int:
         except OSError:
             pass
     return removed
+
+
+# ---------------------------------------------------------------------------
+# Background generation
+# ---------------------------------------------------------------------------
+
+class ThumbPool:
+    """
+    Builds thumbnails on worker threads so a large library fills in behind the
+    UI instead of in front of it.
+
+    Two lanes: ``request`` serves what the browser is asking for right now
+    (visible grid cells), ``background`` walks the rest of the library with
+    fewer workers so it never starves those. Both write the same on-disk
+    cache, so a thumbnail built by one is a hit for the other, and a per-file
+    lock stops the lanes building the same file twice.
+    """
+
+    def __init__(self, root: Path, decode_fallback=None, background_workers: int = 2,
+                 request_workers: int = 3):
+        from concurrent.futures import ThreadPoolExecutor
+        self.root = root
+        self.decode_fallback = decode_fallback
+        self._request = ThreadPoolExecutor(request_workers, thread_name_prefix="thumb-req")
+        self._background = ThreadPoolExecutor(background_workers, thread_name_prefix="thumb-bg")
+        self._lock = threading.Lock()
+        self._file_locks: dict[str, threading.Lock] = {}
+        self._queued: set[str] = set()
+        self.total = 0
+        self.done = 0
+        self.failed = 0
+
+    # -- one file -----------------------------------------------------------
+    def _build(self, path: Path) -> bytes:
+        key = _cache_key(path)
+        with self._lock:
+            lock = self._file_locks.setdefault(key, threading.Lock())
+        try:
+            with lock:
+                return get(path, self.root, self.decode_fallback)
+        finally:
+            with self._lock:
+                self._file_locks.pop(key, None)
+
+    def get_now(self, path: Path, timeout: float = 120) -> bytes:
+        """The thumbnail for a file the browser is waiting on (request lane)."""
+        return self._request.submit(self._build, path).result(timeout=timeout)
+
+    # -- whole library ------------------------------------------------------
+    def _background_job(self, path: Path) -> None:
+        try:
+            if not cache_path(path, self.root).exists():
+                self._build(path)
+        except Exception:
+            with self._lock:
+                self.failed += 1
+        finally:
+            with self._lock:
+                self.done += 1
+                self._queued.discard(str(path))
+
+    def prefetch(self, paths) -> dict:
+        """Queue files that have no cached thumbnail yet. Returns the progress."""
+        with self._lock:
+            if self.total and self.done >= self.total:      # previous batch finished
+                self.total = self.done = self.failed = 0
+            todo = []
+            for p in paths:
+                p = Path(p)
+                if str(p) in self._queued or cache_path(p, self.root).exists():
+                    continue
+                self._queued.add(str(p))
+                todo.append(p)
+            self.total += len(todo)
+        for p in todo:
+            self._background.submit(self._background_job, p)
+        return self.progress()
+
+    def progress(self) -> dict:
+        with self._lock:
+            return {"total": self.total, "done": self.done, "failed": self.failed,
+                    "active": self.done < self.total}

@@ -4,17 +4,46 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Photo Room</title>
+<script>
+  try { const t = localStorage.getItem("photoroom-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <style>
+  /* Dark by default: neutral grey panels like Lightroom. The light theme
+     overrides the same tokens; the choice is remembered in localStorage. */
   :root {
-    --bg: #1a1a1c;
-    --panel: #232327;
-    --panel-2: #2c2c31;
-    --line: #38383f;
-    --text: #e8e8ea;
-    --muted: #9a9aa3;
+    color-scheme: dark;
+    --bg: #1c1c1c;
+    --panel: #2a2a2a;
+    --panel-2: #353535;
+    --inset: #171717;
+    --scope: #171717;     /* histogram and curve canvases stay dark in both themes */
+    --line: #444444;
+    --text: #e0e0e0;
+    --muted: #a3a3a3;
     --accent: #6ea8fe;
-    --danger: #e0685f;
+    --on-accent: #0f1c33;
+    --danger: #e8776e;
+    --sel: #3a4559;
+    --sel-2: #44526b;
+    --focus: #8ab8ff;
   }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #d9d9d9;
+    --panel: #f0f0f0;
+    --panel-2: #e2e2e2;
+    --inset: #ffffff;
+    --line: #b4b4b4;
+    --text: #1d1d1d;
+    --muted: #55555a;
+    --accent: #1f62c8;
+    --on-accent: #ffffff;
+    --danger: #b3261e;
+    --sel: #c6d6f0;
+    --sel-2: #b3c9ea;
+    --focus: #1f62c8;
+  }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
   * { box-sizing: border-box; }
   body {
     margin: 0; height: 100vh; display: flex;
@@ -42,8 +71,8 @@
     background: var(--panel-2); color: var(--text);
     border-left-color: var(--accent); font-weight: 500;
   }
-  .file.selected { background: #2f3a4d; color: var(--text); }
-  .file.selected.active { background: #35435c; }
+  .file.selected { background: var(--sel); color: var(--text); }
+  .file.selected.active { background: var(--sel-2); }
   #files-foot {
     padding: 9px 16px; border-top: 1px solid var(--line);
     font-size: 11px; color: var(--muted); line-height: 1.5;
@@ -74,7 +103,7 @@
   .mask-row .kind { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; opacity: .7; }
   .mask-row .eye { padding: 0 4px; cursor: pointer; }
   .mask-row.off { opacity: .5; }
-  #mask-tools button.armed { background: var(--accent); color: #fff; }
+  #mask-tools button.armed { background: var(--accent); color: var(--on-accent); }
   #mask-hint { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
   #spot-layer { position: absolute; inset: 0; display: none; cursor: crosshair; }
   #spot-layer.on { display: block; }
@@ -108,7 +137,7 @@
     display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
   }
   #crop-bar button { padding: 4px 9px; font-size: 11px; }
-  #crop-bar button.active { background: var(--accent); border-color: var(--accent); color: #12203a; }
+  #crop-bar button.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   #compare-badge {
     position: absolute; top: 18px; left: 22px; padding: 3px 9px;
     border-radius: 3px; background: rgba(0,0,0,.7); color: #fff;
@@ -192,7 +221,7 @@
   }
   #histogram {
     width: 100%; height: 76px; display: block;
-    background: #141416; border-bottom: 1px solid var(--line);
+    background: var(--scope); border-bottom: 1px solid var(--line);
   }
   #clip {
     display: flex; justify-content: space-between; padding: 5px 18px 0;
@@ -232,7 +261,7 @@
   .seg { display: flex; gap: 4px; margin-top: 10px; }
   .seg[hidden] { display: none; }
   .seg button { flex: 1; padding: 3px 0; font-size: 11px; }
-  .seg button.active { background: var(--accent); color: #fff; }
+  .seg button.active { background: var(--accent); color: var(--on-accent); }
   .wheelrow { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
   .wheelrow canvas { width: 84px; height: 84px; flex-shrink: 0; cursor: crosshair; border-radius: 50%; }
   .wheelrow .wheelsliders { flex: 1; min-width: 0; }
@@ -243,7 +272,7 @@
   #curve-panel { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
   #curve-panel h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; color: var(--muted);
     text-transform: uppercase; letter-spacing: .06em; }
-  #curve-canvas { width: 100%; aspect-ratio: 1; display: block; background: #141416;
+  #curve-canvas { width: 100%; aspect-ratio: 1; display: block; background: var(--scope);
     border: 1px solid var(--line); border-radius: 3px; cursor: crosshair; touch-action: none; }
   .curve-row { display: flex; gap: 5px; margin-top: 7px; align-items: center; }
   .curve-row button { padding: 3px 8px; font-size: 11px; }
@@ -285,7 +314,7 @@
   }
   button:hover:not(:disabled) { border-color: var(--muted); }
   button:disabled { opacity: .4; cursor: default; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #12203a; font-weight: 600; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
   button.danger { color: var(--danger); }
   #status {
     padding: 0 18px 12px; font-size: 11px; color: var(--muted);
@@ -298,11 +327,31 @@
   #modules {
     position: fixed; top: 0; left: 0; right: 0; height: 30px; z-index: 30;
     display: flex; justify-content: center; align-items: center; gap: 2px;
-    background: #141416; border-bottom: 1px solid var(--line);
+    background: var(--inset); border-bottom: 1px solid var(--line);
   }
   #modules button {
     background: none; border: 0; color: var(--muted); font-size: 11px;
     letter-spacing: .08em; text-transform: uppercase; padding: 6px 14px; cursor: pointer;
+  }
+  #modtools { position: fixed; top: 0; right: 8px; height: 30px; z-index: 31; display: flex; align-items: center; gap: 4px; }
+  #modtools button {
+    background: none; border: 1px solid var(--line); color: var(--muted); font-size: 11px;
+    border-radius: 4px; padding: 2px 8px; cursor: pointer;
+  }
+  #modtools button:hover { color: var(--text); }
+  #thumb-progress { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  #thumb-progress[hidden] { display: none; }
+  #thumb-bar { width: 90px; height: 6px; accent-color: var(--accent); }
+  #help-dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0; width: min(680px, 94vw); }
+  #help-dialog::backdrop { background: rgba(0,0,0,.6); }
+  #help-dialog h2 { margin: 0; padding: 14px 18px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  #help-body { padding: 12px 18px 16px; max-height: 72vh; overflow: auto; columns: 2 280px; column-gap: 28px; }
+  #help-body h3 { margin: 12px 0 4px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); break-after: avoid; }
+  #help-body h3:first-child { margin-top: 0; }
+  #help-body .sc { display: flex; justify-content: space-between; gap: 10px; padding: 2px 0; font-size: 12px; break-inside: avoid; }
+  #help-body kbd {
+    font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; white-space: nowrap;
   }
   #modules button.on { color: var(--text); font-weight: 600; }
   #modules button + button { border-left: 1px solid var(--line); }
@@ -383,7 +432,7 @@
   }
   #cmp, #svy {
     position: fixed; top: 30px; left: 0; right: 0; bottom: 0; z-index: 40;
-    background: #101012; display: none; flex-direction: column;
+    background: var(--inset); display: none; flex-direction: column;
   }
   #cmp.on, #svy.on { display: flex; }
   .ov-bar { display: flex; gap: 10px; align-items: center; padding: 6px 12px; background: var(--panel);
@@ -431,7 +480,7 @@
   /* ---- Before / after ---- */
   #ba-bar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; z-index: 3; }
   #ba-bar button { padding: 3px 9px; font-size: 11px; }
-  #ba-bar button.active { background: var(--accent); border-color: var(--accent); color: #12203a; }
+  #ba-bar button.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   #ba-layer { position: absolute; inset: 44px 12px 12px; display: none; }
   #ba-layer.on { display: block; }
   #ba-layer img { position: absolute; width: 100%; height: 100%; object-fit: contain; }
@@ -467,6 +516,17 @@
   <button id="mod-library" data-mod="library">Library</button>
   <button id="mod-develop" data-mod="develop" class="on">Develop</button>
 </div>
+
+<div id="modtools">
+  <button id="theme-toggle" title="Switch between the dark and light theme">Light</button>
+  <button id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+</div>
+
+<dialog id="help-dialog" aria-labelledby="help-title">
+  <h2 id="help-title">Keyboard shortcuts</h2>
+  <div id="help-body"></div>
+  <div style="padding:10px 18px;border-top:1px solid var(--line);text-align:right"><button id="help-close">Close</button></div>
+</dialog>
 
 <section id="lib" aria-label="Library">
   <div id="lib-bar">
@@ -509,6 +569,9 @@
   </div>
   <div id="lib-foot">
     <span id="lib-count"></span>
+    <span id="thumb-progress" hidden title="Building thumbnails in the background">
+      <span id="thumb-label">Thumbnails 0/0</span><progress id="thumb-bar" max="1" value="0"></progress>
+    </span>
     <button id="lib-vc" title="Virtual copy of the selected photo (V)">Virtual copy</button>
     <button id="lib-vc-del" title="Delete the selected virtual copies; the raw is never touched">Delete copy</button>
     <select id="lib-addto" title="Add the selection to a collection"><option value="">Add to collection…</option></select>
@@ -1187,7 +1250,6 @@ $("spot-clear").addEventListener("click", () => {
     }
   });
 })();
-$("preview").addEventListener("load", paintSpots);
 window.addEventListener("resize", paintSpots);
 
 // ---- Histogram -----------------------------------------------------------
@@ -1239,25 +1301,40 @@ function setStatus(msg, isError = false) {
 }
 
 // ---- Preview -------------------------------------------------------------
-// Slider drags fire continuously; coalesce them so only the latest render runs.
-let pending = null;
+// Slider drags fire continuously. Each change renders a quick, smaller preview
+// (one request in flight; later changes coalesce into the next one), and a
+// sharp full-size render follows once the controls have been still for a moment.
+// Every request carries a rising sequence number so the server can skip any
+// that a newer one has overtaken.
+let previewSeq = Date.now();
+let previewInflight = null;   // {fast, abort}
+let previewDirty = false;
+let previewIdle = null;
+const SETTLE_MS = 220;
+
 function schedulePreview() {
-  clearTimeout(pending);
-  pending = setTimeout(renderPreview, 140);
+  clearTimeout(previewIdle);
+  previewIdle = setTimeout(() => renderPreview(false), SETTLE_MS);
+  if (previewInflight && previewInflight.fast) { previewDirty = true; return; }
+  renderPreview(true);
 }
 
-async function renderPreview() {
+async function renderPreview(fast = false) {
   if (!current) return;
+  if (previewInflight) previewInflight.abort.abort();     // overtaken: drop its response
   const token = ++renderToken;
+  const abort = new AbortController();
+  previewInflight = { fast, abort };
   $("spinner").classList.add("on");
   try {
     const res = await fetch("/api/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: current, adjustments: values, raw_frame: spotTool }),
+      signal: abort.signal,
+      body: JSON.stringify({ path: current, adjustments: values, raw_frame: spotTool, fast, seq: ++previewSeq }),
     });
     const data = await res.json();
-    if (token !== renderToken) return;   // a newer render already superseded this
+    if (token !== renderToken || data.stale) return;   // a newer render superseded this
     if (data.error) { setStatus(data.error, true); return; }
     drawHistogram(data.histogram);
     if (comparing) {
@@ -1266,9 +1343,13 @@ async function renderPreview() {
       $("preview").src = data.preview;
     }
   } catch (e) {
-    if (token === renderToken) setStatus(String(e), true);
+    if (token === renderToken && e.name !== "AbortError") setStatus(String(e), true);
   } finally {
-    if (token === renderToken) $("spinner").classList.remove("on");
+    if (previewInflight && previewInflight.abort === abort) previewInflight = null;
+    if (token === renderToken) {
+      if (previewDirty) { previewDirty = false; renderPreview(true); }
+      else $("spinner").classList.remove("on");
+    }
   }
 }
 
@@ -1739,7 +1820,6 @@ function applyRatio() {
 })();
 
 window.addEventListener("resize", paintCropBox);
-$("preview").addEventListener("load", paintCropBox);
 
 // ---- Tone curve ----------------------------------------------------------
 // Point curve on a canvas (RGB master + R, G, B) and four parametric sliders.
@@ -1893,11 +1973,11 @@ function paintCurve() {
   if (!cv) return;
   const g = cv.getContext("2d"), S = cv.width, tc = curve();
   g.clearRect(0, 0, S, S);
-  g.strokeStyle = "rgba(255,255,255,.08)"; g.lineWidth = 1;
+  g.strokeStyle = "rgba(128,128,128,.22)"; g.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
     g.beginPath(); g.moveTo(i*S/4, 0); g.lineTo(i*S/4, S); g.moveTo(0, i*S/4); g.lineTo(S, i*S/4); g.stroke();
   }
-  g.strokeStyle = "rgba(255,255,255,.18)";
+  g.strokeStyle = "rgba(128,128,128,.45)";
   g.beginPath(); g.moveTo(0, S); g.lineTo(S, 0); g.stroke();
   const draw = (ch, active) => {
     const pts = tc.points[ch];
@@ -2342,7 +2422,19 @@ document.querySelectorAll("#mask-tools button").forEach(b => b.addEventListener(
 }));
 maskPanel.addEventListener("toggle", () => { if (!maskPanel.open) maskTool = null; layoutMaskLayer(); });
 window.addEventListener("resize", layoutMaskLayer);
-$("preview").addEventListener("load", layoutMaskLayer);
+// Overlays (spots, crop box, mask handles) are positioned from the displayed
+// frame, so they only need redrawing when that changes. The quick render that
+// follows every slider move and the sharp one after it are shown at the same
+// size; redrawing then would rebuild handles under a drag in progress.
+let previewLayoutKey = "";
+$("preview").addEventListener("load", () => {
+  const img = $("preview"), r = img.getBoundingClientRect();
+  const key = [r.left, r.top, r.width, r.height].map(v => v.toFixed(1)).join() + "|"
+    + (img.naturalWidth / img.naturalHeight).toFixed(2) + "|" + current + "|" + spotTool + "|" + cropping;
+  if (key === previewLayoutKey) return;
+  previewLayoutKey = key;
+  paintSpots(); paintCropBox(); layoutMaskLayer();
+});
 $("mask-show").addEventListener("change", (e) => { setMaskOverlay(e.target.checked); });
 function setMaskOverlay(on) {
   maskOverlayOn = on;
@@ -2607,36 +2699,139 @@ function step(delta) {
   if (visible[next] !== current) openFile(visible[next]);
 }
 
+// ---- Shortcuts ------------------------------------------------------------
+// One table drives the '?' overlay, so the list shown always matches the keys
+// handled below. "Mod" is Ctrl on Linux/Windows and Cmd on macOS.
+const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const MOD = IS_MAC ? "Cmd" : "Ctrl";
+const SHORTCUTS = [
+  ["Modules", [
+    ["G", "Library grid"], ["E", "Loupe / Develop the selected photo"], ["D", "Develop"],
+    ["R", "Crop (Develop)"], ["C", "Compare view"], ["N", "Survey view"],
+  ]],
+  ["Culling", [
+    ["1 - 5", "Star rating"], ["0", "Clear rating"], ["X", "Reject"], ["P", "Pick flag"],
+    ["U", "Unflag"], ["6 7 8 9", "Red / Yellow / Green / Blue label"],
+    ["Left / Right", "Previous / next photo"],
+  ]],
+  ["Develop", [
+    ["\\", "Before / after (hold, or tap to latch)"], ["O", "Mask overlay"], ["B", "Black & white"],
+    [`${MOD}+Z`, "Undo"], [`${MOD}+Shift+Z`, "Redo"],
+    [`${MOD}+C / ${MOD}+V`, "Copy / paste settings"], [`${MOD}+S`, "Save"],
+    ["Delete", "Delete the selected mask or spot"], ["Esc", "Leave the current tool"],
+  ]],
+  ["Output and app", [
+    [`${MOD}+Shift+E`, "Export"], ["?", "This list"], ["Shift+T", "Toggle dark / light theme"],
+  ]],
+];
+
+function buildHelp() {
+  const body = $("help-body");
+  body.innerHTML = "";
+  for (const [title, rows] of SHORTCUTS) {
+    const h = document.createElement("h3"); h.textContent = title; body.appendChild(h);
+    for (const [keys, what] of rows) {
+      const row = document.createElement("div"); row.className = "sc";
+      const d = document.createElement("span"); d.textContent = what;
+      const k = document.createElement("kbd"); k.textContent = keys;
+      row.append(d, k); body.appendChild(row);
+    }
+  }
+}
+function toggleHelp() {
+  const dlg = $("help-dialog");
+  if (dlg.open) { dlg.close(); return; }
+  if (document.querySelector("dialog[open]")) return;
+  buildHelp(); dlg.showModal();
+}
+$("help-open").addEventListener("click", toggleHelp);
+$("help-close").addEventListener("click", () => $("help-dialog").close());
+$("help-dialog").addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (e.key === "?") { e.preventDefault(); $("help-dialog").close(); }
+});
+
+// ---- Theme ----------------------------------------------------------------
+function setTheme(name, remember = true) {
+  document.documentElement.dataset.theme = name;
+  $("theme-toggle").textContent = name === "light" ? "Dark" : "Light";
+  if (remember) { try { localStorage.setItem("photoroom-theme", name); } catch (e) { /* private mode */ } }
+}
+$("theme-toggle").addEventListener("click", () =>
+  setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
+setTheme(document.documentElement.dataset.theme === "light" ? "light" : "dark", false);
+
+// Keys are never shortcuts while the user is typing or choosing in a control.
+function typingTarget(el) {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable) return true;
+  return tag === "INPUT" && !["range", "checkbox", "radio", "button"].includes(el.type);
+}
+
+// Compare and Survey live in the Library; from Develop, go there first.
+async function viaLibrary(open) {
+  if (module_ !== "library") {
+    if (current) libActive = current;
+    await setModule("library");
+  }
+  open();
+}
+
+function undoRedo(direction) {
+  if (!current) return;
+  const target = histState.entries[histState.index + direction];
+  if (target) jumpTo(target.id);
+  else setStatus(direction < 0 ? "Nothing to undo" : "Nothing to redo");
+}
+
 document.addEventListener("keydown", (e) => {
-  if (e.target.tagName === "INPUT" && e.target.type !== "range") return;
+  if (typingTarget(e.target)) return;
+  if (document.querySelector("dialog[open]")) return;
 
   if (e.metaKey || e.ctrlKey) {
     // Let the browser handle these when the user is selecting page text.
     if (!window.getSelection().isCollapsed) return;
-    if (e.key === "s") {
+    const k = e.key.toLowerCase();
+    if (k === "s" && !e.shiftKey) {
       e.preventDefault();
       if (!$("save").disabled) $("save").click();
       return;
     }
-    if (e.key === "c" && current) {
+    if (k === "z" && !e.altKey) {
+      e.preventDefault();
+      if (module_ === "develop") undoRedo(e.shiftKey ? 1 : -1);
+      return;
+    }
+    if (k === "c" && !e.shiftKey && current) {
       e.preventDefault(); $("copy").click(); return;
     }
-    if (e.key === "v" && clipboard) {
+    if (k === "v" && !e.shiftKey && clipboard) {
       e.preventDefault(); $("paste").click(); return;
     }
   }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.target.tagName === "SELECT") return;
+  if (e.key === "?") { e.preventDefault(); toggleHelp(); return; }
+  if (e.key === "T") { e.preventDefault(); $("theme-toggle").click(); return; }
   if (libraryKey(e)) return;
 
-  if (current && e.key >= "0" && e.key <= "5") {
+  // The Library handles its own digits, flags and labels above; what follows
+  // is the Develop module (the photo being edited).
+  if (current && e.key >= "0" && e.key <= "5" && e.key.length === 1) {
     e.preventDefault();
     return setRating(parseInt(e.key, 10));
   }
-  if (current && (e.key === "x" || e.key === "X")) {
+  const key = e.key.toLowerCase();
+  if (current && key === "x") {
     e.preventDefault();
     return setRating((ratings[current] ?? 0) === REJECTED ? 0 : REJECTED);
   }
+  if (current && key === "p") { e.preventDefault(); return libFlag("pick", [current]); }
+  if (current && key === "u") { e.preventDefault(); return libFlag("none", [current]); }
+  if (current && LABEL_KEYS[e.key]) { e.preventDefault(); return libLabel(LABEL_KEYS[e.key], [current]); }
+  if (current && key === "r" && !$("crop-toggle").disabled) { e.preventDefault(); return $("crop-toggle").click(); }
+  if (current && key === "c") { e.preventDefault(); return viaLibrary(openCompare); }
+  if (current && key === "n") { e.preventDefault(); return viaLibrary(openSurvey); }
 
   switch (e.key) {
     case "ArrowRight": e.preventDefault(); step(1); break;
@@ -2742,9 +2937,37 @@ async function libLoad(reset) {
     $("kw-list").innerHTML = data.facets.keywords.map(k => `<option value="${k.keyword.replace(/"/g, "&quot;")}">`).join("");
   }
   libAppend(data.items);
+  if (!libState.thumbsStarted) { libState.thumbsStarted = true; startThumbPrefetch(); }
   $("lib-count").textContent = `${libState.total} of ${libState.libraryTotal} photos`
     + (libMulti.size > 1 ? ` · ${libMulti.size} selected` : "");
   $("lib-rmcol").hidden = !(libCollection && !collectionById(libCollection)?.smart);
+}
+
+// Thumbnails for the whole library are built by background workers on the
+// server; the grid stays paginated and never waits for them.
+async function startThumbPrefetch() {
+  try {
+    const res = await fetch("/api/thumbs/prefetch", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    paintThumbProgress(await res.json());
+  } catch { return; }
+  const poll = setInterval(async () => {
+    try {
+      const st = await (await fetch("/api/thumbs/status")).json();
+      paintThumbProgress(st);
+      if (!st.active) clearInterval(poll);
+    } catch { clearInterval(poll); }
+  }, 1000);
+}
+
+function paintThumbProgress(st) {
+  const box = $("thumb-progress");
+  if (!st || st.error || !st.total || !st.active) { box.hidden = true; return; }
+  box.hidden = false;
+  $("thumb-label").textContent = `Thumbnails ${st.done}/${st.total}`;
+  $("thumb-bar").max = st.total;
+  $("thumb-bar").value = st.done;
 }
 
 function libCell(it) {
@@ -2842,8 +3065,7 @@ function libColumns() {
   return getComputedStyle($("lib-grid")).gridTemplateColumns.split(" ").length || 1;
 }
 
-async function libFlag(flag) {
-  const paths = libTargets();
+async function libFlag(flag, paths = libTargets()) {
   if (!paths.length) return;
   const data = await post("/api/flag", { paths, flag });
   if (data.error) return setStatus(data.error, true);
@@ -2856,8 +3078,7 @@ async function libFlag(flag) {
   setStatus(data.message); libPaintAll(); libRefilterSoon();
 }
 
-async function libLabel(label) {
-  const paths = libTargets();
+async function libLabel(label, paths = libTargets()) {
   if (!paths.length) return;
   const data = await post("/api/label", { paths, label });
   if (data.error) return setStatus(data.error, true);
@@ -2906,8 +3127,9 @@ function setModule(name) {
   closeOverlays();
   if (name === "library") {
     if (current && !libActive) libActive = current;
-    libLoad(true);
+    const loading = libLoad(true);
     colLoad();
+    return loading;
   }
 }
 

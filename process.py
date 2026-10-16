@@ -1037,7 +1037,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler, FileCreatedEvent
     except ImportError:
-        print("watchdog not installed. Run: poetry add watchdog", file=sys.stderr)
+        print("watchdog not installed. Run: uv add watchdog", file=sys.stderr)
         sys.exit(1)
 
     folder = Path(args.folder)

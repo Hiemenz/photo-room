@@ -227,11 +227,16 @@ def clear_preview_cache():
     """
     import editor
 
-    editor._base_cache.clear()
-    editor._decode_cache.clear()
+    def clear():
+        editor._base_cache.clear()
+        editor._decode_cache.clear()
+        editor._stage_cache.clear()
+        editor._fast_cache.clear()
+        editor._latest_seq.clear()
+
+    clear()
     yield
-    editor._base_cache.clear()
-    editor._decode_cache.clear()
+    clear()
 
 
 @pytest.fixture(autouse=True)

@@ -1,7 +1,7 @@
 [project]
 name = "photo-room"
 version = "0.1.0"
-description = "CR2 to DNG converter with auto adjustments"
+description = "Local raw photo editor: import CR2 cards, edit like Lightroom, export with metadata intact"
 authors = [
     {name = "Kevin Hiemenz",email = "47609755+Hiemenz@users.noreply.github.com"}
 ]
