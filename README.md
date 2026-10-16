@@ -471,6 +471,7 @@ modified.
 | `--long-edge N` | Resize so the longer side is N pixels; never upscales |
 | `--colorspace srgb\|adobergb\|prophoto` | Decode into this space and embed a matching ICC profile. Raw default is sRGB; ordinary images keep their own profile unless one is given |
 | `--template` | Filename template with `{name}` `{date}` (shoot date) `{seq}` `{width}` `{height}`; `{seq:04d}` pads. Path separators are rejected. An existing file is never overwritten (`-1`, `-2` ... are appended) |
+| `--bit-depth 8\|16` | PNG bits per channel (16 is PNG only; default 8) |
 | `--no-metadata` | Skip the metadata copy (default is to keep it) |
 
 **Metadata.** Everything is copied from the source with exiftool
@@ -483,7 +484,40 @@ applied twice if Lightroom saw them. The output carries its own ICC profile.
 The test suite exports a synthetic photo with EXIF, GPS, IPTC and XMP and
 fails if any tag differs before and after.
 
-The editor has no export dialog yet; export is command-line only for now.
+### Export dialog (in the editor)
+
+Click **Export...** in the right-hand panel, or press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>.
+
+| Setting | Meaning |
+|---|---|
+| Export | Current photo, all selected (Cmd/Ctrl-click or shift-click in the library), or the whole folder |
+| Destination | Folder to write to (created if missing; default `~/Pictures/photo-room-export`). Kept outside the library so exports are not listed as photos |
+| File name | Template with `{name}` `{date}` `{seq}` `{seq:04d}` `{width}` `{height}`; the resulting name is previewed live, including `-1` suffixes for files that already exist. `{width}`/`{height}` in the preview are estimates because a crop changes them |
+| Format / Quality | PNG or JPEG; quality slider for JPEG |
+| PNG bit depth | 8 or 16 bits per channel (see below) |
+| Colour space | sRGB, Adobe RGB or ProPhoto RGB, with the ICC profile embedded |
+| Resize | Original size, or long edge in pixels (never upscales) |
+| Keep all metadata (EXIF, GPS, IPTC, XMP) | On by default; copied from the source with exiftool |
+| Save the open photo's edits first | On by default; saves the sliders you are looking at so the export matches the screen |
+
+The dialog calls the same `exporter.py` as `process.py export`, so it renders
+the **saved** edit stack (basic, tone curve, HSL, colour grading, crop) from
+the raw at **full resolution** (never the half-size preview). Batches run in
+the background with a progress bar; one photo failing is reported at the end
+without stopping the rest. Only one export runs at a time. If exiftool is not
+installed the dialog says so and how to install it (it is needed to read the
+saved edits as well as to copy metadata).
+
+Endpoints: `GET /api/export/defaults`, `POST /api/export/preview`,
+`POST /api/export` (returns 202 and a job id), `GET /api/export/status/<id>`.
+
+**16-bit PNG.** `--bit-depth 16` on the CLI, or the dialog's PNG bit depth.
+Raw files are decoded by LibRaw at 16 bits and the edit stack runs in
+floating point, so the output keeps the extra precision (smooth gradients
+after heavy edits). Limits: PNG only (JPEG is 8-bit by definition); ordinary
+8-bit sources (JPEG/TIFF) are written as 16-bit but gain no real detail; and
+the file is larger. The metadata copy and embedded ICC profile work the same.
+
 Virtual copies are exported too (see Collections, virtual copies, Compare and Survey).
 
 ## What the automatic adjustments do

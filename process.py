@@ -866,7 +866,7 @@ def cmd_export(args: argparse.Namespace) -> None:
         opts = exporter.ExportOptions(
             format=args.format, quality=args.quality, long_edge=args.long_edge,
             colorspace=args.colorspace, template=args.template,
-            keep_metadata=not args.no_metadata,
+            keep_metadata=not args.no_metadata, bit_depth=args.bit_depth,
         ).validate()
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1180,6 +1180,8 @@ def main():
                     help="Output colour space (raw default: srgb; other images keep their profile)")
     ex.add_argument("--template", default="{name}",
                     help="Filename template: {name} {date} {seq} {width} {height} (default: {name})")
+    ex.add_argument("--bit-depth", type=int, choices=[8, 16], default=8,
+                    help="PNG bit depth per channel (16 is PNG only; default: 8)")
     ex.add_argument("--no-metadata", action="store_true", help="Do not copy EXIF/GPS/IPTC/XMP from the source")
     ex.add_argument("-v", "--verbose", action="store_true")
 

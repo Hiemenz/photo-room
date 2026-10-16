@@ -60,7 +60,7 @@ def test_every_slider_moves_and_triggers_a_preview(opened):
     for d in page.locator("details.panel").all():
         d.evaluate("d => d.open = true")
 
-    ids = js(page, "[...document.querySelectorAll('input[type=range]')].map(i => i.id)")
+    ids = js(page, "[...document.querySelectorAll('input[type=range]:not(#export-dialog input)')].map(i => i.id)")
     # 15 main + strength, 24 HSL, 8 B&W, 14 grading, 4 parametric
     assert len(ids) >= 60, ids
     seen = set()

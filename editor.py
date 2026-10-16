@@ -54,6 +54,10 @@ from process import (
 
 app = Flask(__name__)
 
+import export_api  # noqa: E402  (the Export dialog's endpoints)
+
+app.register_blueprint(export_api.bp)
+
 
 # A page open in the same browser can post to this server. Without a check,
 # a cross-origin form POST with Content-Type text/plain skips the CORS

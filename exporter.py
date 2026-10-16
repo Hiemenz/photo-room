@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import io
 import re
+import shutil
 import struct
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +53,7 @@ class ExportOptions:
     colorspace: str | None = None  # None: raw -> srgb, other images -> keep source
     template: str = "{name}"
     keep_metadata: bool = True
+    bit_depth: int = 8  # 16 is PNG only
 
     def validate(self) -> "ExportOptions":
         fmt = self.format.lower()
@@ -59,6 +62,11 @@ class ExportOptions:
         self.format = "jpeg" if fmt == "jpg" else fmt
         if not 1 <= int(self.quality) <= 100:
             raise ValueError("quality must be between 1 and 100")
+        if int(self.bit_depth) not in (8, 16):
+            raise ValueError("bit depth must be 8 or 16")
+        self.bit_depth = int(self.bit_depth)
+        if self.bit_depth == 16 and self.format != "png":
+            raise ValueError("16-bit output is only available for PNG")
         if self.long_edge is not None and int(self.long_edge) < 16:
             raise ValueError("long edge must be at least 16 pixels")
         if self.colorspace is not None:
@@ -149,10 +157,22 @@ def _saved_adjustments(path: Path) -> dict:
     return dict(saved) if saved else {}
 
 
-def render(path: Path, opts: ExportOptions,
-           adjustments: dict | None = None) -> tuple[Image.Image, bytes | None]:
+def _scaled_float(arr: np.ndarray, long_edge: int | None) -> np.ndarray:
+    """Resize a float RGB array (never upscaling), channel by channel in mode F."""
+    h, w = arr.shape[:2]
+    if not long_edge or max(h, w) <= long_edge:
+        return arr
+    scale = long_edge / max(h, w)
+    size = (max(1, round(w * scale)), max(1, round(h * scale)))
+    planes = [np.asarray(Image.fromarray(np.ascontiguousarray(arr[:, :, c]), "F")
+                         .resize(size, Image.LANCZOS)) for c in range(3)]
+    return np.clip(np.stack(planes, axis=-1), 0.0, 1.0)
+
+
+def _render_array(path: Path, opts: ExportOptions,
+                  adjustments: dict | None = None) -> tuple[np.ndarray, bytes | None]:
     """
-    Render ``path`` with its saved edits. Returns (8-bit RGB image, ICC bytes).
+    Render ``path`` with its saved edits. Returns (float RGB 0..1, ICC bytes).
 
     ``adjustments`` overrides the saved edits; a virtual copy exports with its
     own settings this way.
@@ -160,6 +180,7 @@ def render(path: Path, opts: ExportOptions,
     import editor
 
     adj = dict(adjustments) if adjustments is not None else _saved_adjustments(path)
+    deep = opts.bit_depth == 16
 
     if path.suffix.lower() in RAW_SUFFIXES:
         import rawpy
@@ -173,9 +194,12 @@ def render(path: Path, opts: ExportOptions,
             rb = cam_mul[0] / cam_mul[2] if cam_mul[2] > 0 else 1.0
             baseline = int(np.clip(5500 / rb, 2500, 10000))
             rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True,
-                                  output_bps=8, output_color=color)
+                                  output_bps=16 if deep else 8, output_color=color)
         icc = icc_profile_for(space)
-        img = Image.fromarray(rgb)
+        if deep:
+            base = np.asarray(rgb, dtype=np.float32) / 65535.0
+        else:
+            img = Image.fromarray(rgb)
     else:
         with Image.open(path) as src:
             src = ImageOps.exif_transpose(src)
@@ -192,18 +216,56 @@ def render(path: Path, opts: ExportOptions,
                     ImageCms.ImageCmsProfile(io.BytesIO(icc)), outputMode="RGB")
         else:
             icc = source_icc or icc_profile_for("srgb")
+        if deep:
+            base = np.asarray(img, dtype=np.float32) / 255.0
 
     # Resizing first keeps the heavy float passes proportional to the output.
     # Geometry (crop/straighten) is fractional, so it is unaffected.
-    img = _scaled(img, opts.long_edge)
-    base = np.asarray(img, dtype=np.float32) / 255.0
+    if deep:
+        base = _scaled_float(base, opts.long_edge)
+    else:
+        base = np.asarray(_scaled(img, opts.long_edge), dtype=np.float32) / 255.0
 
     adj.setdefault("color_temp", baseline)
     adj["_baseline_temp"] = baseline
     adj = editor.effective_adjustments(adj)
     out = editor.apply_adjustments(base, baseline, adj)
-    result = Image.fromarray((np.clip(out, 0, 1) * 255.0 + 0.5).astype(np.uint8))
-    return result, icc
+    return np.clip(out, 0.0, 1.0), icc
+
+
+def render(path: Path, opts: ExportOptions,
+           adjustments: dict | None = None) -> tuple[Image.Image, bytes | None]:
+    """Render ``path`` with its saved edits. Returns (8-bit RGB image, ICC bytes)."""
+    out, icc = _render_array(path, opts, adjustments=adjustments)
+    return Image.fromarray((out * 255.0 + 0.5).astype(np.uint8)), icc
+
+
+def write_png16(path: Path, arr: np.ndarray, icc: bytes | None) -> None:
+    """
+    Write a float RGB array (0..1) as a 16-bit-per-channel PNG.
+
+    Pillow cannot save 16-bit RGB, so the file is assembled directly:
+    signature, IHDR, optional iCCP, one IDAT, IEND.
+    """
+    h, w = arr.shape[:2]
+    samples = (np.clip(arr, 0.0, 1.0) * 65535.0 + 0.5).astype(">u2")
+    rows = samples.reshape(h, w * 3).tobytes()
+    stride = w * 6
+    raw = b"".join(b"\x00" + rows[i * stride:(i + 1) * stride] for i in range(h))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 16, 2, 0, 0, 0))
+    if icc:
+        out += chunk(b"iCCP", b"ICC Profile\x00\x00" + zlib.compress(icc))
+    out += chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b"")
+    path.write_bytes(out)
+
+
+def exiftool_available() -> bool:
+    return shutil.which("exiftool") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -289,11 +351,18 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
     from the raw, with the copy's rating, colour label and keywords on top.
     """
     opts = opts.validate()
-    img, icc = render(source, opts, adjustments=virtual["adjustments"] if virtual else None)
+    adjustments = virtual["adjustments"] if virtual else None
+    if opts.bit_depth == 16:
+        arr, icc = _render_array(source, opts, adjustments=adjustments)
+        size = (arr.shape[1], arr.shape[0])
+        img = None
+    else:
+        img, icc = render(source, opts, adjustments=adjustments)
+        size = img.size
 
     out_dir.mkdir(parents=True, exist_ok=True)
     ext = FORMATS[opts.format]
-    name = output_name(source, opts.template, ext, seq, img.size,
+    name = output_name(source, opts.template, ext, seq, size,
                        stem=virtual_stem(source, virtual) if virtual else None)
     dest = out_dir / name
     n = 1
@@ -301,7 +370,9 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
         dest = out_dir / f"{Path(name).stem}-{n}{ext}"
         n += 1
 
-    if opts.format == "jpeg":
+    if img is None:
+        write_png16(dest, arr, icc)
+    elif opts.format == "jpeg":
         img.save(dest, "JPEG", quality=int(opts.quality), subsampling=0 if opts.quality >= 90 else 2,
                  optimize=True, icc_profile=icc)
     else:

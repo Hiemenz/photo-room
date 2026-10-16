@@ -410,6 +410,20 @@
   #ba-divider { position: absolute; top: 0; bottom: 0; width: 18px; margin-left: -9px; cursor: ew-resize; z-index: 2; touch-action: none; }
   #ba-divider::after { content: ""; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: #fff; box-shadow: 0 0 4px rgba(0,0,0,.6); }
   #ba-layer.side #ba-divider { display: none; }
+
+  /* ---- Export dialog ---- */
+  #export-dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0; width: min(520px, 94vw); }
+  #export-dialog::backdrop { background: rgba(0,0,0,.6); }
+  #export-dialog h2 { margin: 0; padding: 14px 18px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  #export-dialog .body { padding: 12px 18px; display: grid; gap: 9px; max-height: 70vh; overflow: auto; }
+  #export-dialog label.row { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 8px; font-size: 12px; }
+  #export-dialog input[type=text], #export-dialog input[type=number], #export-dialog select { font: inherit; font-size: 12px; padding: 4px 6px; border-radius: 4px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); min-width: 0; }
+  #export-dialog .hint { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  #export-dialog .hint.err, #ex-msg.err { color: var(--danger); }
+  #ex-preview { font-family: ui-monospace, monospace; color: var(--text); word-break: break-all; }
+  #export-dialog .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+  #ex-progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+  #ex-bar { height: 100%; width: 0; background: var(--accent); }
 </style>
 </head>
 <body>
@@ -613,17 +627,63 @@
       <button id="paste" disabled>Paste settings</button>
     </div>
     <button id="save" class="primary" disabled>Save adjustments</button>
+    <button id="export-open" title="Export… (Ctrl/Cmd+Shift+E)">Export…</button>
     <button id="reset" disabled>Revert to original</button>
     <button id="recover" class="danger" disabled>Recover original raw file</button>
     <div style="font-size:10px;color:var(--muted);line-height:1.7;margin-top:3px">
       <kbd>&larr;</kbd> <kbd>&rarr;</kbd> photo &middot;
       <kbd>\</kbd> hold to compare &middot;
-      <kbd>b</kbd> B&amp;W &middot; <kbd>cmd</kbd>+<kbd>s</kbd> save<br>
+      <kbd>b</kbd> B&amp;W &middot; <kbd>cmd</kbd>+<kbd>s</kbd> save &middot; <kbd>cmd</kbd>+<kbd>shift</kbd>+<kbd>e</kbd> export<br>
       <kbd>cmd</kbd>+<kbd>c</kbd> copy &middot; <kbd>cmd</kbd>+<kbd>v</kbd> paste settings<br>
       <kbd>0</kbd>–<kbd>5</kbd> rate &middot; <kbd>x</kbd> reject
     </div>
   </div>
 </aside>
+
+<dialog id="export-dialog">
+  <h2>Export</h2>
+  <div class="body">
+    <label class="row">Export
+      <select id="ex-scope">
+        <option value="current">Current photo</option>
+        <option value="selected">All selected</option>
+        <option value="folder">Whole folder</option>
+      </select></label>
+    <div class="hint" id="ex-count"></div>
+    <label class="row">Destination
+      <input type="text" id="ex-dest" spellcheck="false"></label>
+    <label class="row">File name
+      <input type="text" id="ex-template" value="{name}" spellcheck="false"></label>
+    <div class="hint">Tokens: {name} {date} {seq} {seq:04d} {width} {height}.
+      Result: <span id="ex-preview"></span></div>
+    <label class="row">Format
+      <select id="ex-format"><option value="jpeg">JPEG</option><option value="png">PNG</option></select></label>
+    <label class="row" id="ex-q-row">Quality
+      <span style="display:flex;gap:8px;align-items:center"><input type="range" id="ex-quality" min="1" max="100" value="92" style="flex:1"><output id="ex-q-val">92</output></span></label>
+    <label class="row" id="ex-depth-row">PNG bit depth
+      <select id="ex-depth"><option value="8">8-bit</option><option value="16">16-bit</option></select></label>
+    <label class="row">Colour space
+      <select id="ex-cs">
+        <option value="">Default (sRGB for raw)</option>
+        <option value="srgb">sRGB</option><option value="adobergb">Adobe RGB</option><option value="prophoto">ProPhoto RGB</option>
+      </select></label>
+    <label class="row">Resize
+      <span style="display:flex;gap:8px;align-items:center">
+        <select id="ex-resize"><option value="none">Original size</option><option value="edge">Long edge</option></select>
+        <input type="number" id="ex-edge" min="16" step="1" value="2048" style="width:90px" disabled> px</span></label>
+    <label style="font-size:12px"><input type="checkbox" id="ex-meta" checked>
+      Keep all metadata (EXIF, GPS, IPTC, XMP)</label>
+    <label style="font-size:12px"><input type="checkbox" id="ex-save" checked>
+      Save the open photo's edits first</label>
+    <div class="hint">Exports render the saved edits at full resolution, not the preview.</div>
+    <div id="ex-progress" hidden><div id="ex-bar"></div></div>
+    <div class="hint" id="ex-msg"></div>
+  </div>
+  <div class="foot">
+    <button id="ex-cancel">Close</button>
+    <button id="ex-go" class="primary">Export</button>
+  </div>
+</dialog>
 
 <script>
 const CONTROLS = {{ controls | tojson }};
@@ -2551,6 +2611,126 @@ loadRatings().then(() => {
   if (filterMode !== "all") applyFilter();
 });
 loadPresets();
+</script>
+<script>
+// ---- Export dialog (M1b) ---------------------------------------------------
+(() => {
+  const el = (id) => document.getElementById(id);
+  const dlg = el("export-dialog");
+  let running = false, previewTimer = null;
+
+  const scopePaths = () => {
+    const scope = el("ex-scope").value;
+    return { scope, path: current, paths: [...selected] };
+  };
+  const options = () => ({
+    ...scopePaths(),
+    dest: el("ex-dest").value,
+    template: el("ex-template").value,
+    format: el("ex-format").value,
+    quality: +el("ex-quality").value,
+    bit_depth: el("ex-format").value === "png" ? +el("ex-depth").value : 8,
+    colorspace: el("ex-cs").value || null,
+    long_edge: el("ex-resize").value === "edge" ? +el("ex-edge").value : null,
+    keep_metadata: el("ex-meta").checked,
+  });
+  const msg = (t, err = false) => { el("ex-msg").textContent = t; el("ex-msg").classList.toggle("err", err); };
+
+  function syncControls() {
+    const png = el("ex-format").value === "png";
+    el("ex-q-row").hidden = png;
+    el("ex-depth-row").hidden = !png;
+    el("ex-q-val").textContent = el("ex-quality").value;
+    el("ex-edge").disabled = el("ex-resize").value !== "edge";
+    const scope = el("ex-scope").value;
+    el("ex-scope").querySelector('[value="current"]').disabled = !current;
+    el("ex-scope").querySelector('[value="selected"]').disabled = !selected.size;
+    el("ex-count").textContent = scope === "current" ? (current || "No photo open")
+      : scope === "selected" ? `${selected.size} selected photo(s)` : `Every photo in ${files.length ? "the folder (" + files.length + ")" : "the folder"}`;
+    schedulePreview();
+  }
+
+  function schedulePreview() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(async () => {
+      let data;
+      try { data = await post("/api/export/preview", options()); } catch (e) { return; }
+      el("ex-preview").classList.remove("err");
+      if (data.error) { el("ex-preview").textContent = data.error; el("ex-preview").classList.add("err"); return; }
+      const first = data.names.slice(0, 3).map((n) => n.name).join(", ");
+      el("ex-preview").textContent = first + (data.count > 3 ? ` … (${data.count} files)` : "") + (data.approximate ? " (size approximate)" : "");
+    }, 150);
+  }
+
+  async function open() {
+    if (!dlg.open) {
+      if (!el("ex-dest").value) {
+        try {
+          const d = await (await fetch("/api/export/defaults")).json();
+          el("ex-dest").value = d.dest;
+          if (!d.exiftool) msg("exiftool is not installed; exporting will fail until it is.", true);
+        } catch (e) {}
+      }
+      el("ex-scope").value = selected.size > 1 ? "selected" : (current ? "current" : "folder");
+      dlg.showModal();
+    }
+    syncControls();
+  }
+
+  async function poll(id) {
+    for (;;) {
+      const s = await (await fetch("/api/export/status/" + id)).json();
+      if (s.error) { msg(s.error, true); return; }
+      el("ex-bar").style.width = (100 * s.done / Math.max(1, s.total)) + "%";
+      if (s.state === "running") {
+        msg(`Exporting ${s.done + 1} of ${s.total}${s.current ? ": " + s.current : ""}`);
+        await new Promise((r) => setTimeout(r, 400));
+        continue;
+      }
+      const bad = s.failed.map((f) => `${f.source}: ${f.error}`).join("; ");
+      msg(`Exported ${s.written.length} of ${s.total} to ${s.dest}` + (bad ? ` -- failed: ${bad}` : ""), !!bad);
+      return;
+    }
+  }
+
+  async function go() {
+    if (running) return;
+    running = true; el("ex-go").disabled = true;
+    el("ex-progress").hidden = false; el("ex-bar").style.width = "0";
+    try {
+      if (el("ex-save").checked && current && ["current", "folder", "selected"].includes(el("ex-scope").value)
+          && (el("ex-scope").value !== "selected" || selected.has(current))) {
+        msg("Saving edits…");
+        const saved = await post("/api/save", { path: current, adjustments: { ...values, _baseline_temp: baselineTemp } });
+        if (saved.error) { msg(saved.error, true); return; }
+      }
+      msg("Starting…");
+      const job = await post("/api/export", options());
+      if (job.error) { msg(job.error, true); return; }
+      await poll(job.id);
+    } catch (e) {
+      msg(String(e), true);
+    } finally {
+      running = false; el("ex-go").disabled = false;
+    }
+  }
+
+  el("export-open").addEventListener("click", open);
+  el("ex-cancel").addEventListener("click", () => dlg.close());
+  el("ex-go").addEventListener("click", go);
+  for (const id of ["ex-scope", "ex-template", "ex-format", "ex-quality", "ex-depth", "ex-cs", "ex-resize", "ex-edge", "ex-dest"]) {
+    el(id).addEventListener("input", syncControls);
+    el(id).addEventListener("change", syncControls);
+  }
+  // Arrow keys in the dialog's controls must not step through photos behind it.
+  dlg.addEventListener("keydown", (e) => e.stopPropagation());
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "E" || e.key === "e")) {
+      e.preventDefault();
+      dlg.open ? dlg.close() : open();
+    }
+  }, true);
+})();
 </script>
 </body>
 </html>
