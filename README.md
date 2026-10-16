@@ -14,6 +14,8 @@ photos are converted to DNG with the raw embedded, and edits go inside the DNG.
 
 - `exiftool` — `brew install exiftool` (macOS) or `sudo apt install libimage-exiftool-perl` (Debian/Ubuntu/Raspberry Pi OS)
 - Python 3.12+ with [uv](https://docs.astral.sh/uv/)
+- Optional: `uv sync --extra lens` installs `lensfunpy` for lens profiles
+  (see "Lens corrections"); everything else works without it.
 - Optional: [Adobe DNG Converter](https://helpx.adobe.com/camera-raw/using/adobe-dng-converter.html)
   (free, macOS/Windows only). Not needed on Linux; see below.
 
@@ -216,6 +218,68 @@ visible. Endpoints: `GET /api/library` (filters, `sort`, `dir`, `offset`,
 `limit`), `POST /api/flag`, `/api/label`, `/api/keywords` (each accepts `path`
 or `paths`).
 
+### Spot removal
+
+**Spot removal** (right panel) turns on a spot tool. Click a blemish and a
+circle is placed with a source circle (dashed) chosen for you: the nearby
+patch whose surroundings best match. Drag the dashed circle to pick the
+source yourself, drag the solid one to move the spot, `Delete` removes it.
+Per spot (or as the default for the next one): **Size**, **Feather**,
+**Opacity** and **Heal** or **Clone**. Clone copies the source pixels;
+Heal Poisson-blends them (OpenCV seamless clone) so the texture comes from
+the source but the tone follows the area around the destination.
+
+Spots are stored as fractions of the frame (radius as a fraction of the
+width), so the preview and the full-resolution export repair the same
+places. They are applied to the original frame before lens correction,
+transform, straighten and crop, so changing the crop never moves a repair.
+While the tool is on the preview shows the whole uncropped frame so clicks
+land where they appear. They are written as `crs:RetouchAreas` (circle
+mask, `SourceX`, `OffsetY`, opacity, feather) and read back from it.
+Presets and **Paste settings** never carry spots, and batch apply drops
+them; they belong to one photograph. Lightroom's own rendering of the same
+areas is not guaranteed to match pixel for pixel, and its non-circular
+retouch shapes are not read.
+
+### Transform and Upright
+
+**Transform** has **Vertical** and **Horizontal** (perspective, +-100 is a
+30 degree tilt; positive widens the top / enlarges the right edge),
+**Rotate** (degrees, on top of Straighten), **Aspect**, **Scale** and
+**X / Y offset**. It is one homography; the result is automatically
+cropped to the largest rectangle of the original proportions that has no
+empty corners, so nothing needs filling. All neutral is an exact no-op.
+Order is transform, then Straighten, then Crop, so a crop you drag is
+relative to the transformed picture.
+
+**Upright** buttons set those sliders from detected lines (OpenCV Canny and
+Hough): **Level** rotates only, **Vertical** also fixes converging
+verticals, **Full** also converging horizontals, **Auto** picks what the
+lines support. With too few clear lines nothing changes. Detection runs on
+the preview, and the sliders are ordinary values you can adjust afterwards.
+They are written as the `crs:Perspective*` tags (Camera Raw has its own
+auto-crop, so a transformed photo that is also cropped will frame slightly
+differently there).
+
+### Lens corrections and chromatic aberration
+
+**Use lens profile** reads the camera, lens, focal length and aperture from
+EXIF and applies the [lensfun](https://lensfun.github.io/) database's
+distortion, vignetting and (where the profile has it) lateral CA
+correction. That needs the optional package: `uv sync --extra lens`
+(`lensfunpy` ships wheels for common Linux and macOS setups; elsewhere it
+needs a C++ build). Without it, or when no profile matches, the panel says
+so and the manual controls still work: **Distortion** (positive straightens
+barrel distortion), **Vignetting** (positive lightens the corners).
+**Remove chromatic aberration** registers the red and blue channels to green
+with a generic radial-shift estimate when no lens profile supplies one, and
+**Purple / Green fringe** desaturate fringes next to high-contrast edges.
+Written as `LensProfileEnable`, `LensManualDistortionAmount`,
+`VignetteAmount`, `AutoLateralCA` and `Defringe*Amount`. Every lens step is
+wrapped so a failure leaves the picture uncorrected rather than raising.
+Transform, lens and CA settings travel with presets, copy/paste, batch
+apply and the history like any slider; they are not scaled by Edit strength.
+
 ### Collections, virtual copies, Compare and Survey
 
 **Collections.** The Library has a left panel listing collections. `+` makes
@@ -274,9 +338,9 @@ preview, save, reset and history endpoints accept a virtual copy's id
 ### Presets
 
 Save the current sliders under a name, then pick it from the dropdown to
-apply it to any photo. Presets carry tone and colour only — crop and
-straighten are framing decisions belonging to one photograph, so they are
-never stored.
+apply it to any photo. Presets carry tone, colour, transform and lens
+settings — crop, straighten and spot removal are framing and retouching
+decisions belonging to one photograph, so they are never stored.
 
 Temperature is kept as a ratio of the source photo's white balance, so a
 preset means "warmer than this camera saw it" rather than a fixed Kelvin

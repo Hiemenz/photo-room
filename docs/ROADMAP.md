@@ -41,7 +41,7 @@ every panel, export JPEGs, and re-open the files in Lightroom with the edits int
 - [x] M5 Library module: grid view, flags and colour labels, keywords, metadata filter bar, search
 - [x] M6 Collections and virtual copies; compare and survey views
 - [ ] M7 Local adjustments: graduated filter, radial filter, adjustment brush with feather and mask overlay
-- [ ] M8 Spot removal (clone/heal), transform (vertical/horizontal/rotate/aspect), lens profile correction via lensfun, chromatic aberration
+- [x] M8 Spot removal (clone/heal), transform (vertical/horizontal/rotate/aspect), lens profile correction via lensfun, chromatic aberration
 - [ ] M9 Export presets, output sharpening, watermark, batch export queue (builds on M1b)
 - [ ] M10 Performance and polish: preview caching, background thumbnails for large libraries, keyboard shortcuts matching Lightroom (G, D, E, R, 1-5, X, P), dark theme
 

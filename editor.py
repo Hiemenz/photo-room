@@ -12,6 +12,7 @@ Run:
 
 import argparse
 import base64
+import copy
 import os
 import re
 import io
@@ -31,7 +32,9 @@ import catalog
 import colormix
 import library
 import history
+import lens
 import quality
+import retouch
 import style
 import thumbs
 import tonecurve
@@ -410,7 +413,12 @@ def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.nda
     # Geometry first, so the untouched reference the strength blend compares
     # against is the cropped picture rather than the whole frame. `base` must
     # stay pristine — the steps below mutate `img` in place.
-    base = apply_geometry(base, adj)
+    # Spots and lens corrections work on the original frame; the transform
+    # then feeds Straighten and Crop (see retouch.py).
+    base = retouch.apply_corrections(base, adj)
+    if not adj.get("_raw_frame"):
+        base = retouch.apply_transform(base, adj)
+        base = apply_geometry(base, adj)
     img = base.copy()
 
     # --- White balance ---
@@ -554,7 +562,7 @@ def render_preview(path: Path, adj: dict, quality: int = 82) -> str:
 def render_with_histogram(path: Path, adj: dict, quality: int = 82) -> dict:
     """Render the preview and its histogram from a single composite pass."""
     base, baseline_temp = _load_base_render(path)
-    out = apply_adjustments(base, baseline_temp, adj)
+    out = apply_adjustments(base, baseline_temp, lens.attach_meta(path, adj))
     img = Image.fromarray((out * 255.0 + 0.5).astype(np.uint8))
 
     buf = io.BytesIO()
@@ -721,7 +729,8 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
         f"-XMP-crs:CropBottom={float((adj.get('crop') or {}).get('bottom', 1.0)):.5f}",
         f"-XMP-crs:LuminanceSmoothing={int(adj.get('luminance_nr', 0))}",
         f"-XMP-crs:ConvertToGrayscale={'True' if adj.get('monochrome') else 'False'}",
-    ] + colormix.xmp_arguments(adj) + tonecurve.xmp_arguments(adj.get("tone_curve"))
+    ] + (colormix.xmp_arguments(adj) + tonecurve.xmp_arguments(adj.get("tone_curve"))
+         + retouch.xmp_arguments(adj, adj.get("_frame")))
 
 
 def _process_version_for(path: Path) -> str:
@@ -777,6 +786,7 @@ def save_adjustments(
     adj: dict,
     frame_size: tuple[float, float] | None = None,
     sidecar: bool = False,
+    source_size: tuple[float, float] | None = None,
 ) -> None:
     """
     Write the full slider set back as Camera Raw XMP develop settings.
@@ -791,6 +801,9 @@ def save_adjustments(
     photographer's decision rather than a default.
     """
     adj = effective_adjustments(adj)
+    if source_size:
+        # Spot radii are fractions of the width; Camera Raw also wants the height.
+        adj["_frame"] = tuple(source_size)
 
     angle = float(adj.get("straighten", 0) or 0)
     if angle and frame_size:
@@ -846,6 +859,15 @@ def read_saved_adjustments(path: Path, prefer_sidecar: bool = True) -> dict | No
 
 def _read_adjustments_from(path: Path) -> dict | None:
     """Return slider values already stored in the file, or None if it has none."""
+    out = _read_basic_adjustments_from(path)
+    extra = retouch.read_from_file(path, EXIFTOOL_TIMEOUT)
+    if extra:
+        out = dict(out or {})
+        out.update(extra)
+    return out or None
+
+
+def _read_basic_adjustments_from(path: Path) -> dict | None:
     tags = [
         "ColorTemperature", "Tint", "Exposure2012", "Contrast2012",
         "Highlights2012", "Shadows2012", "Whites2012", "Blacks2012",
@@ -1117,6 +1139,8 @@ def index():
         controls=CONTROLS,
         global_controls=GLOBAL_CONTROLS,
         color_controls=COLOR_CONTROLS,
+        m8_controls=retouch.CONTROLS,
+        m8_toggles=retouch.TOGGLES,
         curve_presets=tonecurve.PRESETS,
         curve_parametric=[{"key": k, "label": k.capitalize()} for k in ("highlights", "lights", "darks", "shadows")],
         root=str(LIBRARY_ROOT),
@@ -1138,6 +1162,7 @@ def complete_adjustments(adj: dict, baseline_temp: int) -> dict:
     merged["monochrome"] = bool(adj.get("monochrome", False))
     merged["crop"] = adj.get("crop")
     merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
+    merged.update(retouch.complete(adj))
     return merged
 
 
@@ -1212,6 +1237,7 @@ def api_open():
             "baseline_temp": baseline_temp,
             "foreign_editor": None if vc else detect_foreign_edits(path),
             "has_sidecar": has_sidecar(path),
+            "lens": lens.describe(path),
         })
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
@@ -1231,7 +1257,64 @@ def api_preview():
 
     try:
         adj = payload.get("adjustments", {})
+        if payload.get("raw_frame"):
+            # Spot editing shows the uncropped frame so clicks map straight
+            # onto the stored coordinates.
+            adj = {**adj, "_raw_frame": True}
         return jsonify(render_with_histogram(path, adj))
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/upright", methods=["POST"])
+def api_upright():
+    """Suggest transform values from detected lines (Auto / Level / Vertical / Full)."""
+    try:
+        payload = _json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        path = _safe_path(payload["path"])
+    except (ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    mode = payload.get("mode", "auto")
+    if mode not in retouch.transform.UPRIGHT_MODES:
+        return jsonify({"error": f"mode must be one of {list(retouch.transform.UPRIGHT_MODES)}"}), 400
+    try:
+        base, _ = _load_base_render(path)
+        # Detect on the lens-corrected frame, before any transform, so the
+        # result is what the sliders should be set to from neutral.
+        adj = {k: v for k, v in (payload.get("adjustments") or {}).items()
+               if not k.startswith("xf_")}
+        framed = retouch.apply_corrections(base, lens.attach_meta(path, adj))
+        found = retouch.transform.upright(framed, mode)
+        info = found.pop("info", {})
+        return jsonify({"ok": True, "mode": mode, "values": found, "detected": info,
+                        "message": ("No clear lines found; nothing changed"
+                                    if all(found[k] == retouch.transform.DEFAULTS[k] for k in found)
+                                    else f"Upright ({mode}) from {info.get('lines', 0)} lines")})
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/spot/suggest", methods=["POST"])
+def api_spot_suggest():
+    """Pick a clone/heal source for a spot placed at (x, y) with radius r."""
+    try:
+        payload = _json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        path = _safe_path(payload["path"])
+        x, y = float(payload["x"]), float(payload["y"])
+        r = float(payload.get("r", 0.02))
+    except (ValueError, KeyError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        base, _ = _load_base_render(path)
+        sx, sy = retouch.spots.suggest_source(base, min(max(x, 0.0), 1.0),
+                                              min(max(y, 0.0), 1.0), r)
+        return jsonify({"ok": True, "sx": sx, "sy": sy})
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
 
@@ -1260,11 +1343,17 @@ def api_save():
         chosen = payload.get("adjustments", {})
 
         frame_size = None
-        if float(chosen.get("straighten", 0) or 0):
+        source_size = None
+        needs_frame = (float(chosen.get("straighten", 0) or 0)
+                       or chosen.get("spots") or not retouch.transform.is_identity(chosen))
+        if needs_frame:
             base, _ = _load_base_render(path)
-            frame_size = (base.shape[1], base.shape[0])
+            source_size = (base.shape[1], base.shape[0])
+            # Straighten and Crop act on the transformed frame.
+            frame_size = retouch.frame_after_transform(*source_size, chosen)
 
-        save_adjustments(path, chosen, frame_size=frame_size, sidecar=WRITE_SIDECARS)
+        save_adjustments(path, chosen, frame_size=frame_size, sidecar=WRITE_SIDECARS,
+                         source_size=source_size)
         learned = _record_for_learning(path, chosen)
 
         # Settings are written into the DNG, but a sidecar is read back in
@@ -1906,6 +1995,8 @@ def api_batch_apply():
                     continue
 
             per_file = dict(adjustments)
+            # Spot positions are specific to the photo they were placed on.
+            per_file.pop("spots", None)
 
             # Temperature is camera-relative, so copying an absolute Kelvin
             # value onto a frame shot under different light shifts its colour.
@@ -1972,6 +2063,7 @@ def api_reset():
         neutral["color_temp"] = baseline_temp
         neutral["monochrome"] = False
         neutral["crop"] = None
+        neutral.update(copy.deepcopy(retouch.DEFAULTS))
         if vc:
             catalog.update_virtual(LIBRARY_ROOT, vc[1]["id"], adjustments=neutral)
         rendered = render_with_histogram(path, neutral)

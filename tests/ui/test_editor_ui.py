@@ -60,7 +60,10 @@ def test_every_slider_moves_and_triggers_a_preview(opened):
     for d in page.locator("details.panel").all():
         d.evaluate("d => d.open = true")
 
-    ids = js(page, "[...document.querySelectorAll('input[type=range]:not(#export-dialog input)')].map(i => i.id)")
+    # The spot tool's size/feather/opacity act on the selected spot, not on
+    # the adjustments dict; test_m8_ui.py covers them.
+    ids = [i for i in js(page, "[...document.querySelectorAll('input[type=range]:not(#export-dialog input)')].map(i => i.id)")
+           if not i.startswith("spot-")]
     # 15 main + strength, 24 HSL, 8 B&W, 14 grading, 4 parametric
     assert len(ids) >= 60, ids
     seen = set()

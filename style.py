@@ -226,7 +226,7 @@ def clear_history(db_path: Path | None = None) -> int:
 
 # Framing belongs to one photograph, so a preset never carries it: pasting
 # someone else's crop onto a different frame is almost always wrong.
-PRESET_EXCLUDED = {"crop", "straighten", "_baseline_temp"}
+PRESET_EXCLUDED = {"crop", "straighten", "_baseline_temp", "spots", "_frame", "_lens_meta"}
 
 
 def save_preset(name: str, adjustments: dict, db_path: Path | None = None) -> None:
