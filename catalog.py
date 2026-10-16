@@ -21,6 +21,7 @@ raw file.
 
 from __future__ import annotations
 
+import fsutil
 import json
 import os
 import re
@@ -78,17 +79,7 @@ def load(root: Path) -> dict:
 
 
 def _save(root: Path, store: dict) -> None:
-    fd, tmp = tempfile.mkstemp(dir=str(root), prefix=".photo-room-catalog-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as fh:
-            json.dump(store, fh, indent=1, sort_keys=True)
-        os.replace(tmp, _store_path(root))
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    fsutil.atomic_write_text(_store_path(root), json.dumps(store, indent=1, sort_keys=True))
 
 
 def _new_id() -> str:

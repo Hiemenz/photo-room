@@ -218,3 +218,9 @@ def test_ratings_endpoint_excludes_the_thumbnail_cache(client, library, exiftool
 
     data = client.get("/api/ratings").get_json()["ratings"]
     assert not any(".photo-room-thumbs" in k for k in data)
+
+
+@pytest.fixture(autouse=True)
+def _dng_embed_opt_in(monkeypatch):
+    """These tests model the opt-in in-place DNG path (the default is a sidecar)."""
+    monkeypatch.setenv("PHOTO_ROOM_EMBED_DNG", "1")

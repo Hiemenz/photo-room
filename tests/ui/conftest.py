@@ -112,6 +112,7 @@ def editor_url(tmp_path):
     mp.setattr(process.subprocess, "run", tool)
     mp.setattr(editor.subprocess, "run", tool)
     mp.setattr(editor, "LIBRARY_ROOT", root)
+    mp.setenv("PHOTO_ROOM_EMBED_DNG", "1")  # the fake exiftool models in-place DNG writes
     mp.setattr(style, "DB_PATH", root / "style.duckdb")
     mp.setattr(editor, "_style_model", None)
 

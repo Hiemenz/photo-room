@@ -208,3 +208,9 @@ def test_a_save_that_will_be_read_back_carries_no_warning(tmp_path, monkeypatch,
         }).get_json()
 
     assert data["warning"] is None
+
+
+@pytest.fixture(autouse=True)
+def _dng_embed_opt_in(monkeypatch):
+    """These tests model the opt-in in-place DNG path (the default is a sidecar)."""
+    monkeypatch.setenv("PHOTO_ROOM_EMBED_DNG", "1")

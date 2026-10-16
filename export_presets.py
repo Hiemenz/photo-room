@@ -11,6 +11,7 @@ photos to export.
 
 from __future__ import annotations
 
+import fsutil
 import json
 import os
 import threading
@@ -33,13 +34,8 @@ def presets_file() -> Path:
 
 
 def atomic_write_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
+    with fsutil.lock_for(path):
+        fsutil.atomic_write_text(path, json.dumps(data, indent=2, sort_keys=True))
 
 
 BUILTINS: dict[str, dict] = {

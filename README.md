@@ -8,7 +8,11 @@ Every edit is stored as Camera Raw XMP develop settings. Image pixels are
 never modified. Raws are decoded directly with rawpy/LibRaw, and edits live in
 an `.xmp` sidecar beside each raw, so the original is never touched. If Adobe
 DNG Converter is installed (macOS/Windows) it is used as an optional extra:
-photos are converted to DNG with the raw embedded, and edits go inside the DNG.
+photos are converted to DNG with the raw embedded. Edits, ratings, labels and
+keywords for every file, DNGs included, go to the `.xmp` sidecar; a DNG is only
+ever written to if you opt in (`editor.py --embed-dng`, or
+`PHOTO_ROOM_EMBED_DNG=1`), because a DNG from a Leica, Pentax, DJI or phone may
+be your only original.
 
 ## Quick start on Linux/macOS: card to export
 
@@ -541,6 +545,15 @@ copy is checksummed and written to a temporary name first, so an
 interrupted import can never leave a truncated file that later looks
 like a successful one.
 
+**Ingest never loses or overwrites an original.** Duplicates are detected by
+content (size, a head/middle/tail sample, then a full SHA-256), not by name.
+If a different photo already uses the name (two cards, a reset counter,
+`100CANON` and `101CANON`), the new one is kept as `IMG_0001-1.CR2`,
+`-2` and so on, and is listed in the summary. A file is copied to a unique
+temporary name, flushed to disk, verified and only then given its final name
+by a no-overwrite rename. The summary reports copied, skipped as identical,
+renamed and failed counts. Re-running an ingest copies nothing new.
+
 **It does not upload.** Ingest stages the shoot; you review it in the
 editor and upload from there. A shoot generally contains frames you
 would not want published.
@@ -901,16 +914,37 @@ The editor listens on `127.0.0.1` only, so nothing on the network can
 reach it. It has no password: anyone with an account on the same machine
 can use it while it is running.
 
-Requests that change anything are refused when they carry an `Origin`
-header from another site, and every route requires a JSON content type.
-Both matter because a page open in the same browser can post to a local
-server: a cross-origin form POST with `Content-Type: text/plain` skips the
-CORS preflight, and without these checks any site visited while the editor
-was running could have rejected photographs, stripped develop settings, or
-overwritten a whole shoot.
+Every request, including `GET`s for thumbnails and previews, must carry a
+`Host` of `127.0.0.1`, `localhost` or `[::1]` (on the port the editor was
+started on), and any `Origin` must be the same. Anything else gets a 403.
+This blocks DNS rebinding, where an attacker's hostname is re-resolved to
+`127.0.0.1` so that their page is "same-origin" and could read your photos
+and change anything. Requests that change anything also need a random
+per-process session token, which the editor page carries and which other
+sites cannot read; scripts must read it from the `photoroom-token` meta tag
+of `/` and send it as `X-PhotoRoom-Token`. Every route also requires a JSON
+content type (a cross-origin `text/plain` form POST skips the CORS
+preflight), and request bodies are capped at 8 MB.
 
-Requests carrying no `Origin` at all are allowed, so `curl` and scripts
-still work — browsers attach that header to every cross-origin request.
+### Data-safety notes
+
+- Originals (raws and DNGs) are never rewritten by default; see Metadata.
+- Sidecars (`.xmp`), edit history, masks, catalog, flags, presets and the
+  export queue are written to a temporary file, fsynced and renamed into
+  place, and read-modify-write sequences hold a per-file lock, so concurrent
+  requests (key repeat, two tabs, batch plus manual edit) cannot corrupt or
+  wipe them. A history file that cannot be parsed is kept as `.bad`.
+- Export destinations are normalised (`..` and symlinks resolved). Exporting
+  into the library folder is refused unless the request sets `allow_library`;
+  relative destinations go under `~/Pictures/photo-room-export`. Output
+  files are created exclusively and never overwrite or follow a symlink; a
+  taken name gets `-1`, `-2`. `overwrite: true` replaces regular files only.
+- Filename templates accept only `{name} {date} {seq} {width} {height}`
+  with small width specs like `{seq:04d}`.
+- Uploader tokens are written 0600 in a 0700 folder via an atomic rename.
+- exiftool, LibRaw and Pillow parse whatever is on a card. Keep them up to
+  date (exiftool 12.24 or newer; older releases have a known RCE) and do not
+  ingest cards from sources you do not trust.
 
 ## Known issues
 

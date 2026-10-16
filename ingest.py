@@ -21,7 +21,9 @@ import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import os
 import shutil
+import tempfile
 import sys
 import time
 from datetime import datetime, timezone
@@ -103,18 +105,98 @@ def _sha256(path: Path, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
-def copy_from_card(
+_SAMPLE = 64 * 1024
+
+
+def _sample_equal(a: Path, b: Path, size: int) -> bool:
+    """Cheap pre-check: head, middle and tail blocks match."""
+    offsets = {0, max(0, size // 2 - _SAMPLE // 2), max(0, size - _SAMPLE)}
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        for off in sorted(offsets):
+            fa.seek(off)
+            fb.seek(off)
+            if fa.read(_SAMPLE) != fb.read(_SAMPLE):
+                return False
+    return True
+
+
+def same_content(a: Path, b: Path, a_hash: list | None = None) -> bool:
+    """
+    True only when the two files hold identical bytes. Size first, then a
+    head/middle/tail sample, and only then a full hash. A matching name and
+    size is never enough: two cameras both write IMG_0001.CR2.
+    """
+    try:
+        size = a.stat().st_size
+        if size != b.stat().st_size:
+            return False
+        if not _sample_equal(a, b, size):
+            return False
+        if a_hash is None:
+            a_hash = [None]
+        if a_hash[0] is None:
+            a_hash[0] = _sha256(a)
+        return a_hash[0] == _sha256(b)
+    except OSError:
+        return False
+
+
+def _candidate_names(name: str):
+    """IMG_0001.CR2, IMG_0001-1.CR2, IMG_0001-2.CR2, ..."""
+    yield name
+    stem, suffix = Path(name).stem, Path(name).suffix
+    n = 1
+    while True:
+        yield f"{stem}-{n}{suffix}"
+        n += 1
+
+
+# Serialises the "pick a free name and claim it" step between worker threads.
+_claim_lock = threading.Lock()
+
+
+def _claim(tmp: Path, dest_dir: Path, name: str, source: Path, src_hash: list):
+    """
+    Move the finished temp file to the first name that is free, never
+    replacing anything. Returns (final, status) with status "copied",
+    "renamed" or "identical" (an identical file appeared meanwhile).
+    """
+    with _claim_lock:
+        for cand in _candidate_names(name):
+            target = dest_dir / cand
+            if target.exists() or target.is_symlink():
+                if same_content(source, target, src_hash):
+                    tmp.unlink(missing_ok=True)
+                    return target, "identical"
+                continue
+            try:
+                os.link(tmp, target)  # fails if the name exists: no overwrite
+            except FileExistsError:
+                continue
+            except OSError:
+                # Filesystem without hard links (FAT/exFAT): the lock and the
+                # exists() check above stand in for it.
+                os.replace(tmp, target)
+            else:
+                tmp.unlink(missing_ok=True)
+            return target, ("copied" if cand == name else "renamed")
+
+
+def copy_from_card_ex(
     source: Path,
     library: Path,
     date_folders: bool = True,
     verify: bool = True,
-) -> tuple[Path, bool]:
+) -> tuple[Path, str]:
     """
-    Copy one raw into the library. Returns (destination, was_copied).
+    Copy one raw into the library without ever losing or overwriting a file.
 
-    The copy is written to a temporary name and only moved into place once
-    it is complete, so an interrupted ingest can never leave a truncated
-    file that later looks like a successful import.
+    Returns (destination, status): "copied", "identical" (same bytes already
+    there, nothing written) or "renamed" (a different file already used the
+    name, so this one was kept as IMG_0001-1.CR2 and so on).
+
+    The copy goes to a unique temporary name, is flushed and verified, and
+    is only then given its final name by a no-overwrite link/rename.
     """
     dest_dir = library
     if date_folders:
@@ -122,20 +204,44 @@ def copy_from_card(
         if shot:
             dest_dir = library / shot
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / source.name
+    src_hash: list = [None]
 
-    if dest.exists() and dest.stat().st_size == source.stat().st_size:
-        return dest, False
+    # Already imported (under this name or a numbered one)? Then do nothing.
+    for cand in _candidate_names(source.name):
+        target = dest_dir / cand
+        if not (target.exists() or target.is_symlink()):
+            break
+        if same_content(source, target, src_hash):
+            return target, "identical"
 
-    tmp = dest.with_suffix(dest.suffix + ".partial")
-    shutil.copy2(source, tmp)
-
-    if verify and _sha256(tmp) != _sha256(source):
+    fd, tmp_name = tempfile.mkstemp(
+        prefix="." + source.stem + ".", suffix=".partial", dir=dest_dir)
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copy2(source, tmp)
+        with open(tmp, "rb+") as f:
+            os.fsync(f.fileno())
+        if verify:
+            if src_hash[0] is None:
+                src_hash[0] = _sha256(source)
+            if _sha256(tmp) != src_hash[0]:
+                raise RuntimeError(f"Checksum mismatch copying {source.name}")
+        return _claim(tmp, dest_dir, source.name, source, src_hash)
+    except BaseException:
         tmp.unlink(missing_ok=True)
-        raise RuntimeError(f"Checksum mismatch copying {source.name}")
+        raise
 
-    tmp.replace(dest)
-    return dest, True
+
+def copy_from_card(
+    source: Path,
+    library: Path,
+    date_folders: bool = True,
+    verify: bool = True,
+) -> tuple[Path, bool]:
+    """Back-compatible wrapper: (destination, was_written)."""
+    dest, status = copy_from_card_ex(source, library, date_folders, verify)
+    return dest, status != "identical"
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +273,8 @@ def ingest_card(
             "found": 0,
             "copied": 0,
             "already_present": 0,
+            "skipped_identical": 0,
+            "renamed": [],
             "converted": 0,
             "already_converted": 0,
             "failed": [],
@@ -183,17 +291,20 @@ def ingest_card(
     converted: list[Path] = []
     already_converted: list[Path] = []
     skipped = 0
+    renamed: list[dict] = []
     failed: list[dict] = []
     lock = threading.Lock()
 
     def handle(raw: Path) -> None:
         nonlocal skipped
-        dest, was_copied = copy_from_card(raw, library, date_folders, verify)
+        dest, status = copy_from_card_ex(raw, library, date_folders, verify)
         with lock:
-            if was_copied:
-                copied.append(dest)
-            else:
+            if status == "identical":
                 skipped += 1
+            elif status == "renamed":
+                renamed.append({"file": str(raw), "saved_as": str(dest)})
+            else:
+                copied.append(dest)
 
         if convert:
             dng_path = dest.with_suffix(
@@ -243,6 +354,8 @@ def ingest_card(
         "found": len(raws),
         "copied": len(copied),
         "already_present": skipped,
+        "skipped_identical": skipped,
+        "renamed": sorted(renamed, key=lambda r: r["saved_as"]),
         "converted": len(converted),
         "already_converted": len(already_converted),
         "failed": failed,
@@ -395,12 +508,17 @@ def cmd_cards(args: argparse.Namespace) -> None:
 def _report(summary: dict) -> None:
     print(
         f"\n{summary['found']} raw file(s) on card: "
-        f"{summary['copied']} copied, {summary['already_present']} already present, "
+        f"{summary['copied']} copied, "
+        f"{summary['already_present']} skipped as identical, "
+        f"{len(summary.get('renamed') or [])} renamed (name clash), "
+        f"{len(summary['failed'])} failed, "
         f"{summary['converted']} converted"
         + (f", {summary.get('already_converted', 0)} already converted"
            if summary.get("already_converted") else "")
         + ("  [learned style applied]" if summary.get("styled") else "")
     )
+    for r in (summary.get("renamed") or [])[:20]:
+        print(f"  renamed: {r['file']} -> {r['saved_as']}")
     if summary["failed"]:
         print(f"{len(summary['failed'])} failed:", file=sys.stderr)
         for f in summary["failed"][:10]:

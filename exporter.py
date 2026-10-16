@@ -15,7 +15,9 @@ unless a colour space is requested.
 from __future__ import annotations
 
 import io
+import os
 import re
+import string
 import shutil
 import struct
 import zlib
@@ -334,6 +336,35 @@ def _shoot_date(path: Path) -> str:
     return raw.replace("/", "") if raw else "undated"
 
 
+_NUM_SPEC = re.compile(r"^0?\d{1,2}d?$")
+_STR_SPEC = re.compile(r"^[<>^]?\d{0,2}s?$")
+_TEMPLATE_FIELDS = {"name": _STR_SPEC, "date": _STR_SPEC,
+                    "seq": _NUM_SPEC, "width": _NUM_SPEC, "height": _NUM_SPEC}
+
+
+def _check_template(template: str) -> None:
+    """
+    Allow only the documented fields with small width specs. str.format would
+    otherwise build a string of any requested width (``{seq:150000000d}``)
+    before our length check ever runs, and allows attribute/index access.
+    """
+    if len(template) > 200:
+        raise ValueError("filename template is too long")
+    try:
+        parts = list(string.Formatter().parse(template))
+    except ValueError as exc:
+        raise ValueError(f"bad filename template {template!r}: {exc}") from None
+    for _lit, field, spec, conv in parts:
+        if field is None:
+            continue
+        if field not in _TEMPLATE_FIELDS or conv:
+            raise ValueError(
+                f"bad filename template {template!r}: unknown field {{{field}}} "
+                "(use name, date, seq, width, height)")
+        if spec and not _TEMPLATE_FIELDS[field].match(spec):
+            raise ValueError(f"bad filename template {template!r}: unsupported format {spec!r}")
+
+
 def output_name(source: Path, template: str, ext: str, seq: int,
                 size: tuple[int, int], stem: str | None = None) -> str:
     """
@@ -342,6 +373,7 @@ def output_name(source: Path, template: str, ext: str, seq: int,
     write outside the output folder. ``stem`` replaces the source's file stem
     for {name} (a virtual copy passes ``IMG_0001-copy2``).
     """
+    _check_template(template)
     needs_date = "{date" in template
     try:
         stem = template.format(
@@ -360,8 +392,30 @@ def virtual_stem(source: Path, virtual: dict) -> str:
     return f"{source.stem}-copy{virtual['copy_no']}"
 
 
+def claim_output(out_dir: Path, name: str, overwrite: bool = False) -> Path:
+    """
+    Reserve an output file name atomically (O_EXCL), so an existing file, a
+    planted symlink or a racing export can never be written through.
+    Without ``overwrite`` a taken name gets -1, -2, ... With it, an existing
+    regular file is replaced; a symlink never is.
+    """
+    stem, ext = Path(name).stem, Path(name).suffix
+    n = 0
+    while True:
+        cand = out_dir / (name if n == 0 else f"{stem}-{n}{ext}")
+        if overwrite and cand.is_file() and not cand.is_symlink():
+            return cand
+        try:
+            fd = os.open(cand, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+        except FileExistsError:
+            n += 1
+            continue
+        os.close(fd)
+        return cand
+
+
 def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
-                 virtual: dict | None = None) -> Path:
+                 virtual: dict | None = None, overwrite: bool = False) -> Path:
     """
     Export one photo. Returns the written path; never overwrites an existing file.
 
@@ -382,19 +436,19 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
     ext = FORMATS[opts.format]
     name = output_name(source, opts.template, ext, seq, size,
                        stem=virtual_stem(source, virtual) if virtual else None)
-    dest = out_dir / name
-    n = 1
-    while dest.exists():
-        dest = out_dir / f"{Path(name).stem}-{n}{ext}"
-        n += 1
+    dest = claim_output(out_dir, name, overwrite)
 
-    if img is None:
-        write_png16(dest, arr, icc)
-    elif opts.format == "jpeg":
-        img.save(dest, "JPEG", quality=int(opts.quality), subsampling=0 if opts.quality >= 90 else 2,
-                 optimize=True, icc_profile=icc)
-    else:
-        img.save(dest, "PNG", icc_profile=icc)
+    try:
+        if img is None:
+            write_png16(dest, arr, icc)
+        elif opts.format == "jpeg":
+            img.save(dest, "JPEG", quality=int(opts.quality), subsampling=0 if opts.quality >= 90 else 2,
+                     optimize=True, icc_profile=icc)
+        else:
+            img.save(dest, "PNG", icc_profile=icc)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
 
     if opts.keep_metadata:
         try:

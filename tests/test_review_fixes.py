@@ -306,3 +306,9 @@ def test_concurrent_thumbnail_writes_do_not_corrupt_the_cache(tmp_path, monkeypa
     cached = thumbs.cache_path(photo, tmp_path)
     assert Image.open(cached).format == "JPEG", "cache holds a corrupt file"
     assert list(cached.parent.glob("*.tmp")) == []
+
+
+@pytest.fixture(autouse=True)
+def _dng_embed_opt_in(monkeypatch):
+    """These tests model the opt-in in-place DNG path (the default is a sidecar)."""
+    monkeypatch.setenv("PHOTO_ROOM_EMBED_DNG", "1")

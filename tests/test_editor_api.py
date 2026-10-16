@@ -226,7 +226,8 @@ def test_save_writes_every_control_to_xmp(client, fake_exiftool):
         assert tag in cmd, f"{tag} missing from exiftool call"
 
 
-def test_save_reports_exiftool_failure(client, fake_exiftool):
+def test_save_reports_exiftool_failure(client, monkeypatch, fake_exiftool):
+    monkeypatch.setenv("PHOTO_ROOM_EMBED_DNG", "1")  # in-place DNG path is opt-in
     fake_exiftool.returncode = 1
     fake_exiftool.stderr = "permission denied"
     res = client.post("/api/save", json={"path": "IMG_0001.dng", "adjustments": {}})
@@ -296,7 +297,8 @@ def test_read_saved_ignores_unparseable_values(fake_exiftool):
 # Revert to original
 # ---------------------------------------------------------------------------
 
-def test_reset_clears_adjustments_and_returns_neutral_state(client, fake_rawpy, fake_exiftool):
+def test_reset_clears_adjustments_and_returns_neutral_state(client, monkeypatch, fake_rawpy, fake_exiftool):
+    monkeypatch.setenv("PHOTO_ROOM_EMBED_DNG", "1")  # in-place DNG path is opt-in
     res = client.post("/api/reset", json={"path": "IMG_0001.dng"})
     data = res.get_json()
 
@@ -322,7 +324,8 @@ def test_reset_returns_a_refreshed_preview(client, fake_rawpy, fake_exiftool):
     assert data["preview"].startswith("data:image/jpeg;base64,")
 
 
-def test_reset_reports_failure(client, fake_rawpy, fake_exiftool):
+def test_reset_reports_failure(client, monkeypatch, fake_rawpy, fake_exiftool):
+    monkeypatch.setenv("PHOTO_ROOM_EMBED_DNG", "1")  # in-place DNG path is opt-in
     fake_exiftool.returncode = 1
     fake_exiftool.stderr = "read-only file system"
     res = client.post("/api/reset", json={"path": "IMG_0001.dng"})

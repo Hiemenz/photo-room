@@ -255,6 +255,7 @@ def test_export_copy_numbers_do_not_collide(tmp_path, monkeypatch):
 @pytest.fixture
 def lib(tmp_path, monkeypatch, fake_rawpy):
     monkeypatch.setattr(editor, "LIBRARY_ROOT", tmp_path)
+    monkeypatch.setenv("PHOTO_ROOM_EMBED_DNG", "1")  # these fakes model in-place DNG metadata
     for name in ("a.dng", "b.dng", "c.dng"):
         (tmp_path / name).write_bytes(b"dng")
     tool = FakeExiftool(tmp_path)

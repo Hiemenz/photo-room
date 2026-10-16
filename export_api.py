@@ -14,6 +14,7 @@ restart can be resumed.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import uuid
 from pathlib import Path
@@ -91,11 +92,23 @@ def _destination(payload: dict) -> Path:
     raw = str(payload.get("dest") or "").strip()
     if not raw:
         raise ValueError("Choose a destination folder")
+    if "\x00" in raw:
+        raise ValueError("The destination is not a valid folder name")
     dest = Path(raw).expanduser()
     if not dest.is_absolute():
-        dest = _ed().LIBRARY_ROOT / dest
+        # A relative name lives under the default export folder, never in
+        # the library.
+        dest = Path(default_destination()) / dest
+    # Normalise ("..", symlinks) before judging where it really points.
+    dest = Path(os.path.realpath(dest))
     if dest.exists() and not dest.is_dir():
         raise ValueError(f"{dest} is a file, not a folder")
+    root = Path(os.path.realpath(_ed().LIBRARY_ROOT))
+    if not payload.get("allow_library") and (dest == root or root in dest.parents):
+        raise ValueError(
+            f"{dest} is inside the photo library ({root}). Exports there would "
+            "mix with your raw files; choose a folder outside it."
+        )
     return dest
 
 
@@ -246,6 +259,7 @@ def _queue_position(job: dict) -> int | None:
 def _run_job(job: dict) -> None:
     opts = export_presets.options_from_payload(job["options"])
     dest = Path(job["dest"])
+    overwrite = bool(job.get("overwrite"))
     for item in job["items"]:
         with _lock:
             if job.get("_cancel"):
@@ -255,7 +269,8 @@ def _run_job(job: dict) -> None:
             job["current"] = Path(item["source"]).name
         try:
             written = exporter.export_photo(Path(item["source"]), dest, opts,
-                                            seq=item["seq"], virtual=item["virtual"])
+                                            seq=item["seq"], virtual=item["virtual"],
+                                            overwrite=overwrite)
             with _lock:
                 item.update(status="ok", output=str(written), error=None)
                 job["written"].append(str(written))
@@ -356,7 +371,8 @@ def api_export():
         busy = any(j.get("state") == "running" for j in _jobs.values())
         job = {"id": uuid.uuid4().hex, "state": "queued", "total": len(items),
                "done": 0, "current": None, "dest": str(dest), "written": [], "failed": [],
-               "items": items, "options": settings, "queued_behind_running": busy}
+               "items": items, "options": settings, "queued_behind_running": busy,
+               "overwrite": bool(payload.get("overwrite"))}
         _jobs[job["id"]] = job
         while len(_jobs) > MAX_JOBS_KEPT:
             old = next((k for k, j in _jobs.items() if j.get("state") not in ("queued", "running")), None)

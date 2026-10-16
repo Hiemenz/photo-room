@@ -35,6 +35,8 @@ except ImportError:        # pragma: no cover
 
 import catalog
 import colormix
+import fsutil
+import security
 import geometry
 import masks
 import library
@@ -53,6 +55,8 @@ from process import (
     compute_auto_adjustments,
     detect_foreign_edits,
     edit_target,
+    is_dng,
+    read_target,
     has_sidecar,
     list_photos,
     decode_for_analysis,
@@ -64,6 +68,13 @@ from process import (
     strip_xmp_adjustments,
 )
 
+
+# Run as `python editor.py`, this file is module "__main__"; export_api and
+# exporter do `import editor`, which would load a SECOND copy with its own
+# LIBRARY_ROOT (the launch directory), caches and flags. Alias it first so
+# every launch style shares one module, one app and one configuration.
+if __name__ == "__main__":
+    sys.modules.setdefault("editor", sys.modules["__main__"])
 
 # Static assets (static/css, static/js) are resolved relative to this file, not
 # the working directory, so the editor can be launched from anywhere.
@@ -103,29 +114,8 @@ import export_api  # noqa: E402  (the Export dialog's endpoints)
 app.register_blueprint(export_api.bp)
 
 
-# A page open in the same browser can post to this server. Without a check,
-# a cross-origin form POST with Content-Type text/plain skips the CORS
-# preflight entirely, and request.get_json(force=True) parses it regardless
-# — so any site visited while the editor is running could reject
-# photographs, strip develop settings, or overwrite a whole shoot.
-@app.before_request
-def _reject_cross_origin_writes():
-    if request.method in ("GET", "HEAD", "OPTIONS"):
-        return None
-
-    origin = request.headers.get("Origin")
-    if origin is None:
-        # Same-origin fetch from the editor's own page, or a command-line
-        # client. Browsers attach Origin to every cross-origin request.
-        return None
-
-    allowed = {f"http://{request.host}", f"https://{request.host}"}
-    if origin not in allowed:
-        return jsonify({
-            "error": "Refused: this request came from another site. "
-                     "The editor only accepts changes from its own page.",
-        }), 403
-    return None
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
+security.install(app)
 
 
 def _json_body():
@@ -823,7 +813,7 @@ def _exiftool_read(args: list[str]) -> str:
 
 def existing_process_version(path: Path) -> str | None:
     """The process version already declared in a file, if any."""
-    target = edit_target(path)
+    target = read_target(path)
     if target != path and not target.exists():
         return None
     path = target
@@ -905,16 +895,17 @@ def write_sidecar(path: Path, adj: dict) -> Path:
     target = path.with_suffix(".xmp")
     args = _xmp_arguments(adj, process_version=_process_version_for(path))
 
-    if target.exists():
-        result = subprocess.run(
-            ["exiftool"] + args + ["-overwrite_original", str(target)],
-            capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
-        )
-    else:
-        result = subprocess.run(
-            ["exiftool"] + args + ["-o", str(target), os.devnull],
-            capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
-        )
+    with fsutil.lock_for(target):
+        if target.exists():
+            result = subprocess.run(
+                ["exiftool"] + args + ["-overwrite_original", str(target)],
+                capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
+            )
+        else:
+            result = subprocess.run(
+                ["exiftool"] + args + ["-o", str(target), os.devnull],
+                capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
+            )
 
     # Seeding a new sidecar from an empty source warns "no writable tags set"
     # while still creating the file correctly, so the file is the test.
@@ -1056,7 +1047,7 @@ def _read_saved_values(path: Path, prefer_sidecar: bool = True) -> tuple[dict | 
     what Lightroom reads back when sidecar writing is enabled, so it is the
     one that matches what the photographer sees in their catalogue.
     """
-    if edit_target(path) != path:
+    if not is_dng(path):
         sidecar = edit_target(path)
         return (_read_adjustments_from(sidecar), sidecar) if sidecar.exists() else (None, None)
     if prefer_sidecar:
@@ -1164,10 +1155,21 @@ REJECTED = -1
 
 
 def read_rating(path: Path) -> int:
+    if is_dng(path):
+        # The sidecar wins when it carries a rating; else the DNG's own.
+        side = edit_target(path)
+        if side != path and side.exists():
+            value = _read_rating_from(side)
+            if value:
+                return value
+        return _read_rating_from(path)
     target = edit_target(path)
     if target != path and not target.exists():
         return 0
-    path = target
+    return _read_rating_from(target)
+
+
+def _read_rating_from(path: Path) -> int:
     result = subprocess.run(
         ["exiftool", "-XMP-xmp:Rating", "-s3", "-f", str(path)],
         capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
@@ -1184,19 +1186,20 @@ def read_rating(path: Path) -> int:
 def write_rating(path: Path, rating: int) -> None:
     rating = max(REJECTED, min(5, int(rating)))
     target = edit_target(path)
-    if target != path and not target.exists():
-        cmd = ["exiftool", f"-XMP-xmp:Rating={rating}", "-o", str(target), os.devnull]
-    else:
-        cmd = ["exiftool", f"-XMP-xmp:Rating={rating}", "-overwrite_original", str(target)]
-    result = subprocess.run(
-        cmd,
-        capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
-    )
-    created_sidecar = "-o" in cmd
-    if (created_sidecar and not target.exists()) or (
-        not created_sidecar and result.returncode != 0
-    ):
-        raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
+    with fsutil.lock_for(target):
+        if target != path and not target.exists():
+            cmd = ["exiftool", f"-XMP-xmp:Rating={rating}", "-o", str(target), os.devnull]
+        else:
+            cmd = ["exiftool", f"-XMP-xmp:Rating={rating}", "-overwrite_original", str(target)]
+        result = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
+        )
+        created_sidecar = "-o" in cmd
+        if (created_sidecar and not target.exists()) or (
+            not created_sidecar and result.returncode != 0
+        ):
+            raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
 
 
 def read_ratings(paths: list[Path]) -> dict[str, int]:
@@ -1217,15 +1220,26 @@ def read_ratings(paths: list[Path]) -> dict[str, int]:
 
     # Non-DNG raws keep their rating in a sidecar; read that instead, and
     # leave those without one at 0.
-    originals = {str(edit_target(p)): str(p) for p in paths}
     out_all = {str(p): 0 for p in paths}
-    targets = [edit_target(p) for p in paths
-               if edit_target(p) == p or edit_target(p).exists()]
-    if not targets:
+    # (file to read, photo it belongs to). A DNG is read from its sidecar
+    # AND itself; the sidecar's rating wins when it has one.
+    jobs: list[tuple[str, str, bool]] = []
+    for p in paths:
+        t = edit_target(p)
+        if is_dng(p):
+            if t != p and t.exists():
+                jobs.append((str(t), str(p), True))
+            jobs.append((str(p), str(p), False))
+        elif t == p or t.exists():
+            jobs.append((str(t), str(p), True))
+    if not jobs:
         return out_all
-    inner = _read_ratings_raw(targets)
-    for tgt, rating in inner.items():
-        out_all[originals.get(tgt, tgt)] = rating
+    inner = _read_ratings_raw([Path(j[0]) for j in jobs])
+    for tgt, owner, is_side in jobs:
+        rating = inner.get(tgt, 0)
+        if is_side or not out_all[owner]:
+            if rating or is_side:
+                out_all[owner] = rating or out_all[owner]
     return out_all
 
 
@@ -1364,6 +1378,7 @@ def index():
         curve_presets=tonecurve.PRESETS,
         curve_parametric=[{"key": k, "label": k.capitalize()} for k in ("highlights", "lights", "darks", "shadows")],
         root=str(LIBRARY_ROOT),
+        token=app.config["PHOTOROOM_TOKEN"],
     )
 
 
@@ -2428,6 +2443,10 @@ def api_reset():
         neutral["monochrome"] = False
         neutral["crop"] = None
         neutral["masks"] = []
+        if not vc and is_dng(path) and edit_target(path) != path:
+            # A DNG's embedded settings are never edited; an explicit neutral
+            # sidecar overrides them instead.
+            save_adjustments(path, neutral)
         if not vc:
             masks.delete_sidecar(path)    # a virtual copy keeps its masks in the catalog
         neutral.update(copy.deepcopy(retouch.DEFAULTS))
@@ -2603,7 +2622,14 @@ def main():
         help="Also write a Lightroom-style .xmp beside each photo on save "
              "(off by default; a sidecar is what Lightroom reads back)",
     )
+    parser.add_argument(
+        "--embed-dng", action="store_true",
+        help="Write edits, ratings and labels INTO .dng files instead of a "
+             ".xmp sidecar. Off by default: a DNG may be your only original.",
+    )
     args = parser.parse_args()
+    if args.embed_dng:
+        os.environ["PHOTO_ROOM_EMBED_DNG"] = "1"
 
     global WRITE_SIDECARS
     WRITE_SIDECARS = args.write_sidecars
@@ -2618,6 +2644,7 @@ def main():
     if WRITE_SIDECARS:
         print("Saves will also write .xmp sidecars.")
     print(f"Open http://127.0.0.1:{args.port}")
+    app.config["BOUND_PORT"] = args.port
     app.run(host="127.0.0.1", port=args.port, debug=False)
 
 

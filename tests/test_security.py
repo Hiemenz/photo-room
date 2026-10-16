@@ -77,10 +77,10 @@ def test_a_form_encoded_body_is_refused(client):
     assert res.status_code == 415
 
 
-def test_reading_is_not_blocked_by_origin(client):
-    """A GET changes nothing, and blocking it would break nothing useful."""
+def test_reading_from_a_foreign_origin_is_refused(client):
+    """With DNS rebinding a foreign page can READ photos, so GETs are guarded too."""
     res = client.get("/api/files", headers={"Origin": "https://evil.example"})
-    assert res.status_code == 200
+    assert res.status_code == 403
 
 
 def test_a_request_without_an_origin_is_allowed(client, fake_rawpy, fake_exiftool):

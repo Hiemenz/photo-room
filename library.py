@@ -23,6 +23,7 @@ are fetched lazily by the browser.
 
 from __future__ import annotations
 
+import fsutil
 import json
 import os
 import subprocess
@@ -120,8 +121,9 @@ def _run_exiftool(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def meta_target(path: Path) -> Path:
-    """The file holding a photo's label / keywords / rating: the DNG, else its .xmp sidecar."""
-    return path if path.suffix.lower() == ".dng" else path.with_suffix(".xmp")
+    """The file holding a photo's label / keywords / rating (its .xmp sidecar; a DNG only on opt-in)."""
+    import process
+    return process.edit_target(path)
 
 
 def write_xmp(path: Path, label=None, keywords=None) -> None:
@@ -134,15 +136,16 @@ def write_xmp(path: Path, label=None, keywords=None) -> None:
     if not args:
         return
     target = meta_target(path)
-    if target != path and not target.exists():
-        result = _run_exiftool(args + ["-o", str(target), os.devnull])
-        # Seeding from an empty source warns "no writable tags set" yet succeeds.
-        if not target.exists():
+    with fsutil.lock_for(target):
+        if target != path and not target.exists():
+            result = _run_exiftool(args + ["-o", str(target), os.devnull])
+            # Seeding from an empty source warns "no writable tags set" yet succeeds.
+            if not target.exists():
+                raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
+            return
+        result = _run_exiftool(args + ["-overwrite_original", str(target)])
+        if result.returncode != 0:
             raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
-        return
-    result = _run_exiftool(args + ["-overwrite_original", str(target)])
-    if result.returncode != 0:
-        raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
 
 
 # ---------------------------------------------------------------------------
@@ -165,18 +168,7 @@ def load_store(root: Path) -> dict:
 
 
 def _save_store(root: Path, store: dict) -> None:
-    target = _store_path(root)
-    fd, tmp = tempfile.mkstemp(dir=str(root), prefix=".photo-room-library-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as fh:
-            json.dump(store, fh, indent=1, sort_keys=True)
-        os.replace(tmp, target)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    fsutil.atomic_write_text(_store_path(root), json.dumps(store, indent=1, sort_keys=True))
 
 
 def get_pick(root: Path, rel: str) -> bool:
@@ -318,7 +310,14 @@ def _overlay_sidecars(batch: list[Path]) -> None:
         with _lock:
             sig, meta = _cache[str(p)]
             meta = dict(meta)
-            meta.update(rating=side["rating"], label=side["label"], keywords=side["keywords"])
+            if p.suffix.lower() == ".dng":
+                # A DNG keeps its own metadata; the sidecar only adds what it has.
+                for key, tag in (("rating", "Rating"), ("label", "Label"),
+                                 ("keywords", "Subject")):
+                    if tag in entry:
+                        meta[key] = side[key]
+            else:
+                meta.update(rating=side["rating"], label=side["label"], keywords=side["keywords"])
             _cache[str(p)] = (sig, meta)
 
 

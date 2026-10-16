@@ -4,6 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Photo Room</title>
+<meta name="photoroom-token" content="{{ token }}">
+<script>
+  // Every request to this server carries the per-process session token.
+  (function () {
+    const m = document.querySelector('meta[name="photoroom-token"]');
+    const tok = m ? m.content : "";
+    const orig = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      init = init || {};
+      const h = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+      h.set("X-PhotoRoom-Token", tok);
+      init.headers = h;
+      return orig(input, init);
+    };
+  })();
+</script>
 <script>
   try { const t = localStorage.getItem("photoroom-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
 </script>

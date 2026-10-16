@@ -18,11 +18,14 @@ without Flask.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import time
 import uuid
 from pathlib import Path
+
+import fsutil
 
 MAX_ENTRIES = 100
 MAX_SNAPSHOTS = 50
@@ -48,7 +51,10 @@ def load(photo: Path) -> dict:
     """The photo's history, or an empty one if absent or unreadable."""
     try:
         data = json.loads(history_path(photo).read_text())
-    except (OSError, ValueError):
+    except OSError:
+        return _empty()
+    except ValueError:
+        fsutil.quarantine(history_path(photo))  # keep it for recovery
         return _empty()
     if not isinstance(data, dict):
         return _empty()
@@ -65,18 +71,25 @@ def load(photo: Path) -> dict:
     return out
 
 
+def _locked(fn):
+    """Serialise a load-modify-save so concurrent requests cannot lose steps."""
+    @functools.wraps(fn)
+    def wrapper(photo, *a, **k):
+        with fsutil.lock_for(history_path(photo)):
+            return fn(photo, *a, **k)
+    return wrapper
+
+
 def save(photo: Path, data: dict) -> None:
     """Atomic write, so an interrupted save never leaves half a file."""
-    target = history_path(photo)
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(json.dumps(data, separators=(",", ":")))
-    os.replace(tmp, target)
+    fsutil.atomic_write_text(history_path(photo), json.dumps(data, separators=(",", ":")))
 
 
 def _new_id() -> str:
     return uuid.uuid4().hex[:10]
 
 
+@_locked
 def set_original(photo: Path, adjustments: dict) -> dict:
     """Remember the as-imported state. Only the first call has any effect."""
     data = load(photo)
@@ -86,6 +99,7 @@ def set_original(photo: Path, adjustments: dict) -> dict:
     return data
 
 
+@_locked
 def record(photo: Path, label: str, adjustments: dict, now: float | None = None) -> tuple[dict, bool]:
     """
     Append a committed step. Returns (history, recorded).
@@ -113,6 +127,7 @@ def record(photo: Path, label: str, adjustments: dict, now: float | None = None)
     return data, True
 
 
+@_locked
 def jump(photo: Path, entry_id: str) -> tuple[dict, dict]:
     """Make an earlier (or later) step current. Returns (history, adjustments)."""
     data = load(photo)
@@ -134,6 +149,7 @@ def summary(data: dict) -> dict:
     }
 
 
+@_locked
 def create_snapshot(photo: Path, name: str, adjustments: dict, now: float | None = None) -> dict:
     name = (name or "").strip()
     if not name:
@@ -159,6 +175,7 @@ def get_snapshot(photo: Path, snapshot_id: str) -> dict:
     raise KeyError(f"No such snapshot: {snapshot_id}")
 
 
+@_locked
 def delete_snapshot(photo: Path, snapshot_id: str) -> tuple[dict, bool]:
     data = load(photo)
     kept = [s for s in data["snapshots"] if s["id"] != snapshot_id]

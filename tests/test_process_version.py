@@ -106,3 +106,9 @@ def test_the_default_supports_every_slider_written():
     Declaring something older would have Camera Raw ignore them.
     """
     assert _version_tuple(DEFAULT_PROCESS_VERSION) >= (11, 0)
+
+
+@pytest.fixture(autouse=True)
+def _dng_embed_opt_in(monkeypatch):
+    """These tests model the opt-in in-place DNG path (the default is a sidecar)."""
+    monkeypatch.setenv("PHOTO_ROOM_EMBED_DNG", "1")

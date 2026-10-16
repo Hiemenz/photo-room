@@ -38,6 +38,7 @@ pixels are bit-for-bit what they were.
 """
 from __future__ import annotations
 
+import fsutil
 import json
 import math
 import os
@@ -643,9 +644,9 @@ def save_sidecar(photo: Path, masks) -> None:
     if not clean:
         delete_sidecar(photo)
         return
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(json.dumps({"version": 1, "masks": clean}, separators=(",", ":")))
-    os.replace(tmp, target)
+    with fsutil.lock_for(target):
+        fsutil.atomic_write_text(
+            target, json.dumps({"version": 1, "masks": clean}, separators=(",", ":")))
 
 
 def load_sidecar(photo: Path) -> list[dict]:

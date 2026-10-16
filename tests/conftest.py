@@ -269,3 +269,26 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "exiftool" in item.keywords:
                 item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def _session_token_client(monkeypatch):
+    """
+    State-changing routes need the per-process session token the editor page
+    carries. Give the test client that token by default; tests of the guard
+    itself build a bare ``FlaskClient`` to go without it.
+    """
+    from flask.testing import FlaskClient
+
+    import editor
+
+    class TokenClient(FlaskClient):
+        def open(self, *args, **kwargs):
+            headers = kwargs.get("headers")
+            headers = dict(headers) if headers else {}
+            headers.setdefault("X-PhotoRoom-Token",
+                               editor.app.config["PHOTOROOM_TOKEN"])
+            kwargs["headers"] = headers
+            return super().open(*args, **kwargs)
+
+    monkeypatch.setattr(editor.app, "test_client_class", TokenClient)

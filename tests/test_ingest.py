@@ -176,14 +176,14 @@ def test_rerunning_an_ingest_copies_nothing_new(card, tmp_path, fake_exiftool, n
 
 
 def test_one_bad_file_does_not_end_the_import(card, tmp_path, fake_exiftool, monkeypatch):
-    real_copy = ingest.copy_from_card
+    real_copy = ingest.copy_from_card_ex
 
     def flaky(source, library, date_folders=True, verify=True):
         if source.name == "IMG_0002.CR2":
             raise OSError("I/O error reading card")
         return real_copy(source, library, date_folders, verify)
 
-    monkeypatch.setattr(ingest, "copy_from_card", flaky)
+    monkeypatch.setattr(ingest, "copy_from_card_ex", flaky)
     monkeypatch.setattr(ingest, "_convert_with_style", lambda *a, **k: None)
 
     summary = ingest_card(card, tmp_path / "lib", date_folders=False)
@@ -313,3 +313,68 @@ def test_the_style_is_reported_only_when_it_reached_a_photograph(card, tmp_path,
     second = ingest_card(card, lib, date_folders=False)
     assert second["converted"] == 0
     assert second["styled"] is False, "claimed a style it applied to nothing"
+
+
+# ---------------------------------------------------------------------------
+# Name clashes must never lose or overwrite an original
+# ---------------------------------------------------------------------------
+
+def _two_card_clash(tmp_path, same_size=True):
+    card = tmp_path / "card"
+    a = card / "DCIM" / "100CANON"
+    b = card / "DCIM" / "101CANON"
+    a.mkdir(parents=True)
+    b.mkdir(parents=True)
+    (a / "IMG_0001.CR2").write_bytes(b"A" * 5000)
+    (b / "IMG_0001.CR2").write_bytes(b"B" * 5000)
+    (a / "IMG_0002.CR2").write_bytes(b"C" * 6000)
+    (b / "IMG_0002.CR2").write_bytes(b"D" * (6000 if same_size else 7000))
+    return card
+
+
+@pytest.mark.parametrize("same_size", [True, False])
+@pytest.mark.parametrize("jobs", [1, 4])
+def test_colliding_names_are_all_kept(tmp_path, fake_exiftool, no_convert, same_size, jobs):
+    card = _two_card_clash(tmp_path, same_size)
+    lib = tmp_path / "lib"
+    summary = ingest_card(card, lib, date_folders=False, jobs=jobs)
+
+    contents = sorted(p.read_bytes() for p in lib.glob("*.CR2"))
+    assert len(contents) == 4
+    assert sorted(contents) == sorted(
+        p.read_bytes() for p in card.rglob("*.CR2"))
+    assert summary["copied"] + len(summary["renamed"]) == 4
+    assert len(summary["renamed"]) == 2
+    assert summary["already_present"] == 0
+    assert summary["failed"] == []
+    assert list(lib.glob("*.partial")) == [] and list(lib.glob(".*.partial")) == []
+
+
+def test_rerun_after_a_clash_copies_nothing(tmp_path, fake_exiftool, no_convert):
+    card = _two_card_clash(tmp_path)
+    lib = tmp_path / "lib"
+    ingest_card(card, lib, date_folders=False)
+    second = ingest_card(card, lib, date_folders=False)
+    assert second["copied"] == 0 and second["renamed"] == []
+    assert second["already_present"] == 4
+    assert len(list(lib.glob("*.CR2"))) == 4
+
+
+def test_existing_library_file_is_never_overwritten(tmp_path):
+    src = tmp_path / "IMG_0001.CR2"
+    src.write_bytes(b"new" * 100)
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "IMG_0001.CR2").write_bytes(b"old" * 100)  # same size, other bytes
+    dest, status = ingest.copy_from_card_ex(src, lib, date_folders=False)
+    assert status == "renamed" and dest.name == "IMG_0001-1.CR2"
+    assert (lib / "IMG_0001.CR2").read_bytes() == b"old" * 100
+    assert dest.read_bytes() == b"new" * 100
+
+
+def test_summary_line_lists_all_four_counts(tmp_path, fake_exiftool, no_convert, capsys):
+    summary = ingest_card(_two_card_clash(tmp_path), tmp_path / "lib", date_folders=False)
+    ingest._report(summary)
+    out = capsys.readouterr().out
+    assert "copied" in out and "skipped as identical" in out
+    assert "renamed" in out and "failed" in out

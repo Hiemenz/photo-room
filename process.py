@@ -9,6 +9,8 @@ Subcommands:
 
 import argparse
 import os
+
+import fsutil
 import subprocess
 import sys
 import threading
@@ -43,15 +45,38 @@ def dng_converter_available() -> bool:
     return DNG_CONVERTER.exists()
 
 
+# A DNG may be the only original (Leica, Pentax, DJI, phones), and exiftool
+# rewrites it non-atomically, so by default DNGs are treated like any other
+# raw: edits, ratings and labels go to the .xmp sidecar. Embedding into the
+# DNG is an explicit opt-in (PHOTO_ROOM_EMBED_DNG=1 or editor.py --embed-dng).
+def embed_dng_enabled() -> bool:
+    return os.environ.get("PHOTO_ROOM_EMBED_DNG", "") == "1"
+
+
+def is_dng(path: Path) -> bool:
+    return path.suffix.lower() == ".dng"
+
+
 def edit_target(path: Path) -> Path:
     """
     The file that carries a photo's metadata edits (develop settings, rating).
 
-    A DNG holds them internally. Every other raw is left byte-for-byte alone
-    and gets a Lightroom-style ``.xmp`` sidecar beside it instead, which is
-    also what Lightroom and Camera Raw read for those formats.
+    Every raw, DNG included, is left byte-for-byte alone and gets a
+    Lightroom-style ``.xmp`` sidecar beside it, which is also what Lightroom
+    and Camera Raw read. Only with the explicit embed opt-in is a DNG itself
+    written to.
     """
-    return path if path.suffix.lower() == ".dng" else path.with_suffix(".xmp")
+    if is_dng(path) and embed_dng_enabled():
+        return path
+    return path.with_suffix(".xmp")
+
+
+def read_target(path: Path) -> Path:
+    """Where to READ metadata from: a DNG without a sidecar is read directly."""
+    t = edit_target(path)
+    if t != path and is_dng(path) and not t.exists():
+        return path
+    return t
 
 
 # The DNG Converter is a GUI application driven from the command line, and it
@@ -396,12 +421,13 @@ def write_sidecar_adjustments(raw_path: Path, adj: dict) -> Path:
     target = raw_path.with_suffix(".xmp")
     values = _auto_xmp_values(adj)
     args = [f"-XMP-crs:{k}={v}" for k, v in values.items()]
-    if target.exists():
-        cmd = ["exiftool"] + args + ["-overwrite_original", str(target)]
-    else:
-        cmd = ["exiftool"] + args + ["-o", str(target), os.devnull]
-    result = run_tool(cmd, timeout=EXIFTOOL_TIMEOUT, what="exiftool",
-                      capture_output=True, text=True)
+    with fsutil.lock_for(target):
+        if target.exists():
+            cmd = ["exiftool"] + args + ["-overwrite_original", str(target)]
+        else:
+            cmd = ["exiftool"] + args + ["-o", str(target), os.devnull]
+        result = run_tool(cmd, timeout=EXIFTOOL_TIMEOUT, what="exiftool",
+                          capture_output=True, text=True)
     # A new sidecar is seeded from an empty source, which exiftool warns about
     # while still succeeding, so the file is the test.
     if not target.exists():
@@ -437,7 +463,7 @@ def detect_foreign_edits(path: Path) -> str | None:
     Saving over them, or stripping them with a revert, destroys editing work
     that exists nowhere else unless the photographer also has a catalogue.
     """
-    target = edit_target(path)
+    target = path if is_dng(path) else edit_target(path)
     if target != path and not target.exists():
         return None
     path = target
@@ -473,12 +499,12 @@ def strip_xmp_adjustments(dng_path: Path) -> None:
     target = edit_target(dng_path)
     if target != dng_path and not target.exists():
         return  # no sidecar means nothing to clear
-    dng_path = target
-    result = run_tool(
-        ["exiftool", "-XMP-crs:all=", "-overwrite_original", str(dng_path)],
-        timeout=EXIFTOOL_TIMEOUT, what="exiftool",
-        capture_output=True, text=True,
-    )
+    with fsutil.lock_for(target):
+        result = run_tool(
+            ["exiftool", "-XMP-crs:all=", "-overwrite_original", str(target)],
+            timeout=EXIFTOOL_TIMEOUT, what="exiftool",
+            capture_output=True, text=True,
+        )
     if result.returncode != 0:
         raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
 

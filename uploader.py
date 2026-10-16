@@ -14,6 +14,7 @@ Amazon Photos setup:
 
 import json
 import os
+import tempfile
 import sys
 import threading
 import urllib.parse
@@ -35,12 +36,23 @@ def _write_secret(path: Path, text: str) -> None:
     machine. The mode is set before any content is written so there is no
     window where the file exists with wider permissions.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(text)
-    # An existing file keeps its old mode through O_CREAT, so set it explicitly.
-    os.chmod(path, 0o600)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # mkstemp creates the file 0600; the rename makes the write all-or-nothing,
+    # so a crash never leaves an empty or partial token file.
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +68,7 @@ _G_BATCH_URL = "https://photoslibrary.googleapis.com/v1/mediaItems:batchCreate"
 
 
 def _google_credentials() -> Credentials:
-    _G_TOKEN.parent.mkdir(parents=True, exist_ok=True)
+    _G_TOKEN.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     creds = None
     if _G_TOKEN.exists():
         creds = Credentials.from_authorized_user_file(str(_G_TOKEN), _G_SCOPES)
