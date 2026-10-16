@@ -1,0 +1,282 @@
+"""
+Export edited photos as PNG or JPEG, keeping the source's metadata.
+
+The raw (or DNG) is never modified. Pixels are rendered from the raw with the
+develop settings stored in its sidecar (or inside the DNG), then every tag
+from the source -- EXIF, GPS, IPTC, XMP and so on -- is copied onto the output
+with exiftool.
+
+Colour: for raw sources the sensor data is decoded straight into the chosen
+output space (sRGB, Adobe RGB or ProPhoto RGB) and a matching ICC profile is
+embedded. For ordinary images (JPEG/TIFF/PNG) the source's own profile is kept
+unless a colour space is requested.
+"""
+
+from __future__ import annotations
+
+import io
+import re
+import struct
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+from PIL import Image, ImageCms, ImageOps
+
+import process
+from process import EXIFTOOL_TIMEOUT, RAW_SUFFIXES, run_tool
+
+FORMATS = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg"}
+COLOR_SPACES = ("srgb", "adobergb", "prophoto")
+
+# Tags that describe the *file* or the rendering rather than the photograph.
+# Copying them would be wrong (dimensions, orientation already applied by the
+# decoder, thumbnails of the unedited frame) or would double-apply edits
+# (Camera Raw develop settings are baked into the pixels by now).
+_NOT_COPIED = [
+    "--ICC_Profile:all",     # the output carries its own profile
+    "--IFD1:all",            # thumbnail of the unedited frame
+    "--ExifImageWidth", "--ExifImageHeight",
+    "--ImageWidth", "--ImageHeight",
+    "--XMP-crs:all",         # edits are baked in; do not apply them twice
+    "--XMP-tiff:Orientation",
+]
+
+
+@dataclass
+class ExportOptions:
+    format: str = "jpeg"
+    quality: int = 92
+    long_edge: int | None = None
+    colorspace: str | None = None  # None: raw -> srgb, other images -> keep source
+    template: str = "{name}"
+    keep_metadata: bool = True
+
+    def validate(self) -> "ExportOptions":
+        fmt = self.format.lower()
+        if fmt not in FORMATS:
+            raise ValueError(f"format must be png or jpeg, not {self.format!r}")
+        self.format = "jpeg" if fmt == "jpg" else fmt
+        if not 1 <= int(self.quality) <= 100:
+            raise ValueError("quality must be between 1 and 100")
+        if self.long_edge is not None and int(self.long_edge) < 16:
+            raise ValueError("long edge must be at least 16 pixels")
+        if self.colorspace is not None:
+            cs = self.colorspace.lower().replace(" ", "").replace("-", "")
+            if cs not in COLOR_SPACES:
+                raise ValueError(f"colour space must be one of {', '.join(COLOR_SPACES)}")
+            self.colorspace = cs
+        return self
+
+
+# ---------------------------------------------------------------------------
+# ICC profiles
+# ---------------------------------------------------------------------------
+
+# D50-adapted RGB->XYZ colorants and gamma for the wide-gamut spaces.
+_MATRIX_SPACES = {
+    "adobergb": ("Adobe RGB (1998)",
+                 [(0.6097559, 0.3111242, 0.0194811),
+                  (0.2052401, 0.6256560, 0.0608902),
+                  (0.1492240, 0.0632197, 0.7448387)], 2.19921875),
+    "prophoto": ("ProPhoto RGB",
+                 [(0.7977, 0.2880, 0.0000),
+                  (0.1352, 0.7119, 0.0000),
+                  (0.0313, 0.0001, 0.8249)], 1.8),
+}
+
+
+def _s15(v: float) -> bytes:
+    return struct.pack(">i", int(round(v * 65536)))
+
+
+def _matrix_profile(name: str, colorants, gamma: float) -> bytes:
+    """A minimal ICC v2 matrix/TRC display profile."""
+    def xyz(v):
+        return b"XYZ \x00\x00\x00\x00" + b"".join(_s15(c) for c in v)
+
+    curve = b"curv\x00\x00\x00\x00" + struct.pack(">I", 1) + struct.pack(">H", int(round(gamma * 256))) + b"\x00\x00"
+    desc_text = name.encode("ascii") + b"\x00"
+    desc = (b"desc\x00\x00\x00\x00" + struct.pack(">I", len(desc_text)) + desc_text
+            + b"\x00" * 4 + b"\x00" * 4 + struct.pack(">H", 0) + b"\x00" + b"\x00" * 67)
+    cprt_text = b"Public domain\x00"
+    tags = [
+        (b"desc", desc),
+        (b"cprt", b"text\x00\x00\x00\x00" + cprt_text),
+        (b"wtpt", xyz((0.9642, 1.0, 0.8249))),
+        (b"rXYZ", xyz(colorants[0])), (b"gXYZ", xyz(colorants[1])), (b"bXYZ", xyz(colorants[2])),
+        (b"rTRC", curve), (b"gTRC", curve), (b"bTRC", curve),
+    ]
+    table = struct.pack(">I", len(tags))
+    offset = 128 + 4 + 12 * len(tags)
+    body = b""
+    for sig, data in tags:
+        pad = (-len(data)) % 4
+        table += sig + struct.pack(">II", offset + len(body), len(data))
+        body += data + b"\x00" * pad
+    size = 128 + len(table) + len(body)
+    header = (struct.pack(">I", size) + b"\x00\x00\x00\x00" + b"\x02\x10\x00\x00"
+              + b"mntr" + b"RGB " + b"XYZ " + b"\x00" * 12 + b"acsp" + b"\x00" * 28
+              + _s15(0.9642) + _s15(1.0) + _s15(0.8249))
+    header = header.ljust(128, b"\x00")
+    return header + table + body
+
+
+def icc_profile_for(space: str) -> bytes:
+    space = space.lower()
+    if space == "srgb":
+        return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    name, colorants, gamma = _MATRIX_SPACES[space]
+    return _matrix_profile(name, colorants, gamma)
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+def _scaled(img: Image.Image, long_edge: int | None) -> Image.Image:
+    if not long_edge or max(img.size) <= long_edge:
+        return img  # never upscale
+    scale = long_edge / max(img.size)
+    size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    return img.resize(size, Image.LANCZOS)
+
+
+def _saved_adjustments(path: Path) -> dict:
+    import editor  # deferred: imports Flask and the preview caches
+
+    saved = editor.read_saved_adjustments(path)
+    return dict(saved) if saved else {}
+
+
+def render(path: Path, opts: ExportOptions) -> tuple[Image.Image, bytes | None]:
+    """Render ``path`` with its saved edits. Returns (8-bit RGB image, ICC bytes)."""
+    import editor
+
+    adj = _saved_adjustments(path)
+
+    if path.suffix.lower() in RAW_SUFFIXES:
+        import rawpy
+
+        space = opts.colorspace or "srgb"
+        color = {"srgb": rawpy.ColorSpace.sRGB, "adobergb": rawpy.ColorSpace.Adobe,
+                 "prophoto": rawpy.ColorSpace.ProPhoto}[space]
+        with rawpy.imread(str(path)) as raw:
+            cam_mul = np.array(raw.camera_whitebalance[:4], dtype=float)
+            cam_mul /= cam_mul[1]
+            rb = cam_mul[0] / cam_mul[2] if cam_mul[2] > 0 else 1.0
+            baseline = int(np.clip(5500 / rb, 2500, 10000))
+            rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True,
+                                  output_bps=8, output_color=color)
+        icc = icc_profile_for(space)
+        img = Image.fromarray(rgb)
+    else:
+        with Image.open(path) as src:
+            src = ImageOps.exif_transpose(src)
+            source_icc = src.info.get("icc_profile")
+            img = src.convert("RGB")
+        baseline = 5500
+        if opts.colorspace and source_icc is None and opts.colorspace != "srgb":
+            raise ValueError("source has no colour profile to convert from")
+        if opts.colorspace:
+            icc = icc_profile_for(opts.colorspace)
+            if source_icc:
+                img = ImageCms.profileToProfile(
+                    img, ImageCms.ImageCmsProfile(io.BytesIO(source_icc)),
+                    ImageCms.ImageCmsProfile(io.BytesIO(icc)), outputMode="RGB")
+        else:
+            icc = source_icc or icc_profile_for("srgb")
+
+    # Resizing first keeps the heavy float passes proportional to the output.
+    # Geometry (crop/straighten) is fractional, so it is unaffected.
+    img = _scaled(img, opts.long_edge)
+    base = np.asarray(img, dtype=np.float32) / 255.0
+
+    adj.setdefault("color_temp", baseline)
+    adj["_baseline_temp"] = baseline
+    adj = editor.effective_adjustments(adj)
+    out = editor.apply_adjustments(base, baseline, adj)
+    result = Image.fromarray((np.clip(out, 0, 1) * 255.0 + 0.5).astype(np.uint8))
+    return result, icc
+
+
+# ---------------------------------------------------------------------------
+# Metadata
+# ---------------------------------------------------------------------------
+
+def copy_metadata(source: Path, dest: Path) -> None:
+    """
+    Copy every tag from ``source`` (and its sidecar, if any) onto ``dest``.
+
+    Group-qualified, so EXIF (including GPS and MakerNotes), IPTC and XMP all
+    travel; the output keeps the ICC profile it was written with.
+    """
+    cmd = ["exiftool", "-TagsFromFile", str(source), "-all:all", *_NOT_COPIED]
+    sidecar = source.with_suffix(".xmp")
+    if source.suffix.lower() != ".xmp" and sidecar.exists():
+        # Rating, keywords and anything else kept in the sidecar. Develop
+        # settings are excluded above.
+        cmd += ["-TagsFromFile", str(sidecar), "-XMP:all", "--XMP-crs:all"]
+    cmd += ["-Orientation#=1", "-overwrite_original", str(dest)]
+    result = run_tool(cmd, timeout=EXIFTOOL_TIMEOUT, what="exiftool",
+                      capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"exiftool failed copying metadata: {result.stderr.strip()}")
+
+
+# ---------------------------------------------------------------------------
+# Filenames and the export itself
+# ---------------------------------------------------------------------------
+
+def _shoot_date(path: Path) -> str:
+    raw = process.get_shoot_date(path)
+    return raw.replace("/", "") if raw else "undated"
+
+
+def output_name(source: Path, template: str, ext: str, seq: int,
+                size: tuple[int, int]) -> str:
+    """
+    Expand a filename template. Tokens: {name} {date} {seq} {width} {height}
+    ({seq:04d} pads). Path separators are rejected so a template cannot
+    write outside the output folder.
+    """
+    needs_date = "{date" in template
+    try:
+        stem = template.format(
+            name=source.stem, seq=seq, width=size[0], height=size[1],
+            date=_shoot_date(source) if needs_date else "",
+        )
+    except (KeyError, IndexError, ValueError) as exc:
+        raise ValueError(f"bad filename template {template!r}: {exc}") from None
+    if not stem or re.search(r"[/\\\x00]", stem) or stem in (".", ".."):
+        raise ValueError(f"filename template {template!r} produced an unusable name")
+    return stem + ext
+
+
+def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1) -> Path:
+    """Export one photo. Returns the written path; never overwrites an existing file."""
+    opts = opts.validate()
+    img, icc = render(source, opts)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ext = FORMATS[opts.format]
+    name = output_name(source, opts.template, ext, seq, img.size)
+    dest = out_dir / name
+    n = 1
+    while dest.exists():
+        dest = out_dir / f"{Path(name).stem}-{n}{ext}"
+        n += 1
+
+    if opts.format == "jpeg":
+        img.save(dest, "JPEG", quality=int(opts.quality), subsampling=0 if opts.quality >= 90 else 2,
+                 optimize=True, icc_profile=icc)
+    else:
+        img.save(dest, "PNG", icc_profile=icc)
+
+    if opts.keep_metadata:
+        try:
+            copy_metadata(source, dest)
+        except Exception:
+            dest.unlink(missing_ok=True)  # never leave a stripped file behind
+            raise
+    return dest

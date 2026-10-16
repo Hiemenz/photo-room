@@ -36,10 +36,12 @@ from process import (
     compute_auto_adjustments,
     convert_cr2_to_dng,
     decode_for_analysis,
+    dng_converter_available,
     embed_xmp_adjustments,
     get_iso,
     get_shoot_date,
     photo_features,
+    write_sidecar_adjustments,
 )
 
 
@@ -194,7 +196,8 @@ def ingest_card(
                 skipped += 1
 
         if convert:
-            dng_path = dest.with_suffix(".dng")
+            dng_path = dest.with_suffix(
+                ".dng" if dng_converter_available() else ".xmp")
             existed = dng_path.exists()
             dng = _convert_with_style(dest, model, verbose, reconvert=reconvert)
             if dng:
@@ -262,10 +265,11 @@ def _convert_with_style(raw: Path, model, verbose: bool, reconvert: bool = False
     improved. Without it, ingest had no route to that at all while convert
     has had --no-skip since the beginning.
     """
-    dng_path = raw.with_suffix(".dng")
+    portable = not dng_converter_available()
+    dng_path = raw.with_suffix(".xmp" if portable else ".dng")
     if dng_path.exists() and not reconvert:
-        return dng_path
-    if dng_path.exists():
+        return raw if portable else dng_path
+    if dng_path.exists() and not portable:
         dng_path.unlink()
 
     decoded = decode_for_analysis(raw)
@@ -280,6 +284,9 @@ def _convert_with_style(raw: Path, model, verbose: bool, reconvert: bool = False
             + ("  [styled]" if adj.get("styled") else "")
         )
 
+    if portable:
+        write_sidecar_adjustments(raw, adj)
+        return raw
     dng = convert_cr2_to_dng(raw, raw.parent)
     embed_xmp_adjustments(dng, adj)
     return dng

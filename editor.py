@@ -37,6 +37,7 @@ from process import (
     EXIFTOOL_TIMEOUT,
     compute_auto_adjustments,
     detect_foreign_edits,
+    edit_target,
     has_sidecar,
     list_photos,
     decode_for_analysis,
@@ -671,6 +672,10 @@ def _version_tuple(value: str) -> tuple[int, ...]:
 
 def existing_process_version(path: Path) -> str | None:
     """The process version already declared in a file, if any."""
+    target = edit_target(path)
+    if target != path and not target.exists():
+        return None
+    path = target
     result = subprocess.run(
         ["exiftool", "-XMP-crs:ProcessVersion", "-s3", "-f", str(path)],
         capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
@@ -785,6 +790,13 @@ def save_adjustments(
         adj = dict(adj)
         adj["crop"] = crop_in_full_frame(adj.get("crop"), angle, *frame_size)
 
+    if edit_target(path) != path:
+        # Not a DNG: the raw is never rewritten, the sidecar is the record.
+        write_sidecar(path, adj)
+        verify_xmp_written(edit_target(path),
+                           {"ColorTemperature": str(int(adj.get("color_temp", 5500)))})
+        return
+
     result = subprocess.run(
         ["exiftool"]
         + _xmp_arguments(adj, process_version=_process_version_for(path))
@@ -813,6 +825,9 @@ def read_saved_adjustments(path: Path, prefer_sidecar: bool = True) -> dict | No
     what Lightroom reads back when sidecar writing is enabled, so it is the
     one that matches what the photographer sees in their catalogue.
     """
+    if edit_target(path) != path:
+        sidecar = edit_target(path)
+        return _read_adjustments_from(sidecar) if sidecar.exists() else None
     if prefer_sidecar:
         sidecar = path.with_suffix(".xmp")
         if sidecar.exists():
@@ -912,6 +927,10 @@ REJECTED = -1
 
 
 def read_rating(path: Path) -> int:
+    target = edit_target(path)
+    if target != path and not target.exists():
+        return 0
+    path = target
     result = subprocess.run(
         ["exiftool", "-XMP-xmp:Rating", "-s3", "-f", str(path)],
         capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
@@ -927,11 +946,19 @@ def read_rating(path: Path) -> int:
 
 def write_rating(path: Path, rating: int) -> None:
     rating = max(REJECTED, min(5, int(rating)))
+    target = edit_target(path)
+    if target != path and not target.exists():
+        cmd = ["exiftool", f"-XMP-xmp:Rating={rating}", "-o", str(target), os.devnull]
+    else:
+        cmd = ["exiftool", f"-XMP-xmp:Rating={rating}", "-overwrite_original", str(target)]
     result = subprocess.run(
-        ["exiftool", f"-XMP-xmp:Rating={rating}", "-overwrite_original", str(path)],
+        cmd,
         capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT,
     )
-    if result.returncode != 0:
+    created_sidecar = "-o" in cmd
+    if (created_sidecar and not target.exists()) or (
+        not created_sidecar and result.returncode != 0
+    ):
         raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
 
 
@@ -951,6 +978,21 @@ def read_ratings(paths: list[Path]) -> dict[str, int]:
     if not paths:
         return {}
 
+    # Non-DNG raws keep their rating in a sidecar; read that instead, and
+    # leave those without one at 0.
+    originals = {str(edit_target(p)): str(p) for p in paths}
+    out_all = {str(p): 0 for p in paths}
+    targets = [edit_target(p) for p in paths
+               if edit_target(p) == p or edit_target(p).exists()]
+    if not targets:
+        return out_all
+    inner = _read_ratings_raw(targets)
+    for tgt, rating in inner.items():
+        out_all[originals.get(tgt, tgt)] = rating
+    return out_all
+
+
+def _read_ratings_raw(paths: list[Path]) -> dict[str, int]:
     result = subprocess.run(
         # -fast2 stops reading once past the metadata header, which is where
         # XMP lives in a DNG or CR2. Measured 1.4x faster over 665 real files

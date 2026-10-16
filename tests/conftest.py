@@ -232,3 +232,18 @@ def clear_preview_cache():
     yield
     editor._base_cache.clear()
     editor._decode_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def converter_present(request, monkeypatch):
+    """
+    The suite predates the portable path and assumes Adobe's converter is
+    installed (it is faked). Tests of the portable path opt out with
+    ``@pytest.mark.no_converter``.
+    """
+    import ingest
+    import process
+
+    present = "no_converter" not in request.keywords
+    monkeypatch.setattr(process, "dng_converter_available", lambda: present)
+    monkeypatch.setattr(ingest, "dng_converter_available", lambda: present)

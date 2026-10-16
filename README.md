@@ -1,18 +1,31 @@
 # Photo Room
 
-Converts Canon CR2 files to DNG with automatic tone and white balance
-adjustments, then lets you refine those adjustments in a local web editor
-and upload the results to Google Photos.
+Imports Canon CR2 (and other raw) files, applies automatic tone and white
+balance adjustments, lets you refine them in a local web editor, and exports
+PNG or JPEG with all the original metadata intact. Runs on Linux and macOS.
 
 Every edit is stored as Camera Raw XMP develop settings. Image pixels are
-never modified, and the source raw is embedded inside each DNG, so any
-edit can be undone and the original recovered exactly.
+never modified. Raws are decoded directly with rawpy/LibRaw, and edits live in
+an `.xmp` sidecar beside each raw, so the original is never touched. If Adobe
+DNG Converter is installed (macOS/Windows) it is used as an optional extra:
+photos are converted to DNG with the raw embedded, and edits go inside the DNG.
 
 ## Requirements
 
-- [Adobe DNG Converter](https://helpx.adobe.com/camera-raw/using/adobe-dng-converter.html) (free)
-- `exiftool` — `brew install exiftool`
+- `exiftool` — `brew install exiftool` (macOS) or `sudo apt install libimage-exiftool-perl` (Debian/Ubuntu/Raspberry Pi OS)
 - Python 3.12+ with [uv](https://docs.astral.sh/uv/)
+- Optional: [Adobe DNG Converter](https://helpx.adobe.com/camera-raw/using/adobe-dng-converter.html)
+  (free, macOS/Windows only). Not needed on Linux; see below.
+
+### Linux and macOS without DNG Converter
+
+Nothing extra to install. `convert`, `watch` and card ingest detect that the
+converter is missing and, instead of making a DNG, leave the raw alone and
+write the automatic adjustments to `IMG_0001.xmp` next to it. The editor reads
+and saves the same sidecar (Camera Raw develop settings, so Lightroom and
+Camera Raw open it with the edits), and ratings go there too. Without a DNG,
+"recover original" and `revert --extract-original` do not apply because
+the raw was never replaced; `revert` clears the sidecar's develop settings.
 
 ```bash
 uv sync
@@ -329,10 +342,45 @@ uv run python process.py convert IMG_0001.CR2 --upload-google -v
 # Watch a folder and convert as files arrive
 uv run python process.py watch ~/Pictures/import/ -o ~/Pictures/dng/
 
+# Export edited photos as JPEG/PNG with all metadata kept (see "Export")
+uv run python process.py export ~/Pictures/shoot/ -o ~/Pictures/out/ --format jpeg --quality 90
+
 # Undo edits, or recover the embedded original
 uv run python process.py revert ~/Pictures/dng/IMG_0001.dng
 uv run python process.py revert ~/Pictures/dng/ --extract-original -o ~/Pictures/recovered/
 ```
+
+## Export
+
+```bash
+uv run python process.py export IMG_0001.CR2 ~/Pictures/shoot2/ -o ~/Pictures/out/ \
+    --format png --long-edge 2048 --colorspace adobergb --template "{date}_{seq:04d}_{name}"
+```
+
+Renders each photo from the raw at full resolution with its saved edits (from
+the sidecar, or inside the DNG), then writes a PNG or JPEG. The raw is never
+modified.
+
+| Option | Meaning |
+|---|---|
+| `--format png\|jpeg` | Output format (default jpeg) |
+| `--quality 1-100` | JPEG quality (default 92; 90 and up uses full-resolution chroma) |
+| `--long-edge N` | Resize so the longer side is N pixels; never upscales |
+| `--colorspace srgb\|adobergb\|prophoto` | Decode into this space and embed a matching ICC profile. Raw default is sRGB; ordinary images keep their own profile unless one is given |
+| `--template` | Filename template with `{name}` `{date}` (shoot date) `{seq}` `{width}` `{height}`; `{seq:04d}` pads. Path separators are rejected. An existing file is never overwritten (`-1`, `-2` ... are appended) |
+| `--no-metadata` | Skip the metadata copy (default is to keep it) |
+
+**Metadata.** Everything is copied from the source with exiftool
+(`-TagsFromFile source -all:all`): EXIF including GPS and maker notes, IPTC and
+XMP, plus rating and keywords from the sidecar. In PNG these land in the
+`eXIf` and XMP chunks. The exceptions are deliberate: dimensions and
+orientation (already applied), the thumbnail of the unedited frame, and
+Camera Raw develop settings, which are baked into the pixels and would be
+applied twice if Lightroom saw them. The output carries its own ICC profile.
+The test suite exports a synthetic photo with EXIF, GPS, IPTC and XMP and
+fails if any tag differs before and after.
+
+The editor has no export dialog yet; export is command-line only for now.
 
 ## What the automatic adjustments do
 
@@ -382,8 +430,10 @@ uv run pytest
 
 Runs on every push and pull request via GitHub Actions.
 
-The suite fakes rawpy, exiftool, and the DNG Converter, so it needs no
-camera files and runs in well under a second. The image-math tests assert
+Most of the suite fakes rawpy, exiftool, and the DNG Converter, so it needs
+no camera files. The export tests (`tests/test_export.py`) use the real
+`exiftool` and are skipped if it is not installed; CI installs it on both
+ubuntu and macOS. The image-math tests assert
 direction and invariants rather than exact pixel values, since the preview
 approximates Camera Raw rather than reproducing it.
 

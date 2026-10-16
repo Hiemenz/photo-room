@@ -7,7 +7,11 @@ on:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -19,8 +23,19 @@ jobs:
         with:
           enable-cache: true
 
-      # The suite fakes rawpy, exiftool and the DNG Converter, so none of
-      # those need to be present on the runner.
+      # The export tests compare tags with the real exiftool. rawpy and the
+      # DNG Converter are still faked, so neither is needed on the runner.
+      - name: Install exiftool (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
+      - name: Install exiftool (macOS)
+        if: runner.os == 'macOS'
+        run: brew install exiftool
+
+      - name: Check exiftool
+        run: exiftool -ver
+
       - name: Install dependencies
         run: uv sync --frozen
 

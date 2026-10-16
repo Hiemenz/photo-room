@@ -37,6 +37,23 @@ DNG_CONVERTER = Path(
     "/Applications/Adobe DNG Converter.app/Contents/MacOS/Adobe DNG Converter"
 )
 
+
+def dng_converter_available() -> bool:
+    """True when Adobe DNG Converter is installed (macOS/Windows only; optional)."""
+    return DNG_CONVERTER.exists()
+
+
+def edit_target(path: Path) -> Path:
+    """
+    The file that carries a photo's metadata edits (develop settings, rating).
+
+    A DNG holds them internally. Every other raw is left byte-for-byte alone
+    and gets a Lightroom-style ``.xmp`` sidecar beside it instead, which is
+    also what Lightroom and Camera Raw read for those formats.
+    """
+    return path if path.suffix.lower() == ".dng" else path.with_suffix(".xmp")
+
+
 # The DNG Converter is a GUI application driven from the command line, and it
 # answers some invocations by opening a window instead of writing to stdout —
 # `-h` does exactly that, producing no output and never exiting. Without a
@@ -333,7 +350,7 @@ def verify_xmp_written(dng_path: Path, expected: dict[str, str]) -> None:
         )
 
 
-def embed_xmp_adjustments(dng_path: Path, adj: dict) -> None:
+def _auto_xmp_values(adj: dict) -> dict[str, str]:
     values = {
         "ProcessVersion": "11.0",
         "WhiteBalance": "Custom",
@@ -355,6 +372,36 @@ def embed_xmp_adjustments(dng_path: Path, adj: dict) -> None:
     ):
         if key in adj:
             values[tag] = str(int(round(float(adj[key]))))
+    return values
+
+
+def write_sidecar_adjustments(raw_path: Path, adj: dict) -> Path:
+    """
+    Store auto-computed develop settings in ``<raw>.xmp``, leaving the raw alone.
+
+    This is the portable counterpart of ``embed_xmp_adjustments`` for when no
+    DNG exists. Existing sidecar content (ratings, other Camera Raw settings)
+    is kept; the file is created if absent.
+    """
+    target = raw_path.with_suffix(".xmp")
+    values = _auto_xmp_values(adj)
+    args = [f"-XMP-crs:{k}={v}" for k, v in values.items()]
+    if target.exists():
+        cmd = ["exiftool"] + args + ["-overwrite_original", str(target)]
+    else:
+        cmd = ["exiftool"] + args + ["-o", str(target), os.devnull]
+    result = run_tool(cmd, timeout=EXIFTOOL_TIMEOUT, what="exiftool",
+                      capture_output=True, text=True)
+    # A new sidecar is seeded from an empty source, which exiftool warns about
+    # while still succeeding, so the file is the test.
+    if not target.exists():
+        raise RuntimeError(f"Could not write {target.name}: {result.stderr.strip()}")
+    verify_xmp_written(target, {"ColorTemperature": values["ColorTemperature"]})
+    return target
+
+
+def embed_xmp_adjustments(dng_path: Path, adj: dict) -> None:
+    values = _auto_xmp_values(adj)
     xmp_args = [f"-XMP-crs:{k}={v}" for k, v in values.items()] + ["-overwrite_original"]
 
     result = run_tool(["exiftool"] + xmp_args + [str(dng_path)],
@@ -380,6 +427,10 @@ def detect_foreign_edits(path: Path) -> str | None:
     Saving over them, or stripping them with a revert, destroys editing work
     that exists nowhere else unless the photographer also has a catalogue.
     """
+    target = edit_target(path)
+    if target != path and not target.exists():
+        return None
+    path = target
     meta = _exiftool_get(path, "XMP-crs:Version", "CreatorTool", "Software")
 
     version = meta.get("XMP-crs:Version", "-")
@@ -408,7 +459,11 @@ def has_sidecar(path: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 def strip_xmp_adjustments(dng_path: Path) -> None:
-    """Remove all Camera Raw develop settings, returning the DNG to a neutral render."""
+    """Remove all Camera Raw develop settings, returning the photo to a neutral render."""
+    target = edit_target(dng_path)
+    if target != dng_path and not target.exists():
+        return  # no sidecar means nothing to clear
+    dng_path = target
     result = run_tool(
         ["exiftool", "-XMP-crs:all=", "-overwrite_original", str(dng_path)],
         timeout=EXIFTOOL_TIMEOUT, what="exiftool",
@@ -433,6 +488,10 @@ def extract_original_raw(dng_path: Path, output_dir: Path) -> Path:
     as stored, which is not a loadable raw file. Adobe's extractor
     reverses its own packing and returns the original bytes exactly.
     """
+    if dng_path.suffix.lower() != ".dng":
+        raise RuntimeError(f"{dng_path.name} is already a raw file, not a DNG")
+    if not dng_converter_available():
+        raise RuntimeError("Recovering an embedded original needs Adobe DNG Converter")
     original_name = get_embedded_original_name(dng_path)
     if not original_name:
         raise RuntimeError(
@@ -489,6 +548,9 @@ def process_file(
     in the photographer's own style while the same files converted by hand
     came out on the plain heuristic.
     """
+    if not dng_converter_available():
+        return process_file_portable(cr2_path, skip_existing, verbose, style_model)
+
     out_dir = resolve_output_dir(cr2_path, base_output, date_folders)
     dng_expected = out_dir / cr2_path.with_suffix(".dng").name
 
@@ -514,6 +576,31 @@ def process_file(
     dng_path = convert_cr2_to_dng(cr2_path, out_dir)
     embed_xmp_adjustments(dng_path, adj)
     return dng_path
+
+
+def process_file_portable(
+    raw_path: Path,
+    skip_existing: bool,
+    verbose: bool,
+    style_model=None,
+) -> Path:
+    """
+    Develop one raw without Adobe DNG Converter: the raw stays where it is and
+    the auto adjustments go into a ``.xmp`` sidecar beside it. Returns the raw.
+    """
+    sidecar = raw_path.with_suffix(".xmp")
+    if skip_existing and sidecar.exists():
+        if verbose:
+            tqdm.write(f"  Skipping   {raw_path.name} (sidecar exists)")
+        return raw_path
+    adj = compute_auto_adjustments(raw_path, style_model=style_model)
+    if verbose:
+        tqdm.write(
+            f"  {raw_path.name}: WB={adj['color_temp']}K EV={adj['exposure']:+.2f} "
+            f"(ISO {adj['iso']})" + ("  [styled]" if adj.get("styled") else "")
+        )
+    write_sidecar_adjustments(raw_path, adj)
+    return raw_path
 
 
 # ---------------------------------------------------------------------------
@@ -755,6 +842,51 @@ def cmd_revert(args: argparse.Namespace) -> None:
         print(".")
 
 
+def cmd_export(args: argparse.Namespace) -> None:
+    _unbuffer_stdout()
+    import exporter
+
+    sources: list[Path] = []
+    for inp in args.inputs:
+        inp = Path(inp)
+        if inp.is_dir():
+            sources.extend(list_photos(inp))
+        elif inp.is_file():
+            sources.append(inp)
+        else:
+            print(f"Skipping {inp} (not found)", file=sys.stderr)
+    sources = sorted(set(sources))
+    if not sources:
+        print("No photos found.", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        opts = exporter.ExportOptions(
+            format=args.format, quality=args.quality, long_edge=args.long_edge,
+            colorspace=args.colorspace, template=args.template,
+            keep_metadata=not args.no_metadata,
+        ).validate()
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    out_dir = Path(args.output) if args.output else Path.cwd() / "export"
+    written, failed = [], []
+    for seq, src in enumerate(tqdm(sources, unit="file", desc="Exporting"), start=1):
+        try:
+            dest = exporter.export_photo(src, out_dir, opts, seq=seq)
+            written.append(dest)
+            if args.verbose:
+                tqdm.write(f"  {src.name} -> {dest}")
+        except Exception as exc:
+            tqdm.write(f"  ERROR {src.name}: {exc}", file=sys.stderr)
+            failed.append(src.name)
+    print(f"\nExported {len(written)} file(s) to {out_dir}", end="")
+    print(f", {len(failed)} failed: {', '.join(failed)}" if failed else ".")
+    if failed:
+        sys.exit(1)
+
+
 def _unbuffer_stdout() -> None:
     """Switch stdout to line buffering, for long-running commands."""
     try:
@@ -952,20 +1084,14 @@ def cmd_watch(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
-    # Only the commands that actually shell out to the converter should
-    # require it. --help and a plain revert (which only calls exiftool) were
-    # exiting 1 on a machine without Adobe's converter installed.
-    argv1 = sys.argv[1] if len(sys.argv) > 1 else ""
-    reads_only = argv1 in ("style", "cull") or argv1.startswith("-")
-    extracting = argv1 == "revert" and "--extract-original" in sys.argv
-    needs_converter = bool(argv1) and (not reads_only) and (argv1 != "revert" or extracting)
-    if needs_converter and not DNG_CONVERTER.exists():
+    # Adobe DNG Converter is optional. Without it, convert/watch/ingest leave
+    # the raw untouched and store edits in an .xmp sidecar (see edit_target).
+    if sys.argv[1:2] in (["convert"], ["watch"]) and not dng_converter_available():
         print(
-            "ERROR: Adobe DNG Converter not found.\n"
-            "Download free from: https://helpx.adobe.com/camera-raw/using/adobe-dng-converter.html",
+            "Note: Adobe DNG Converter not found; developing without DNG "
+            "(edits go to .xmp sidecars beside each raw).",
             file=sys.stderr,
         )
-        sys.exit(1)
 
     parser = argparse.ArgumentParser(
         description="CR2 → DNG converter with automatic tone and white balance adjustments.",
@@ -977,6 +1103,7 @@ def main():
             "  python process.py watch ~/Pictures/import/ -o ~/Pictures/dng/ --upload-google --upload-amazon\n"
             "  python process.py revert ~/Pictures/dng/IMG_0001.dng\n"
             "  python process.py revert ~/Pictures/dng/ --extract-original -o ~/Pictures/recovered/\n"
+            "  python process.py export ~/Pictures/shoot/ -o ~/Pictures/out/ --format jpeg --quality 90\n"
             "  python process.py style\n"
         ),
     )
@@ -1030,6 +1157,20 @@ def main():
     cull.add_argument("--sharpness", action="store_true", help="Also rank frames by detail")
     cull.add_argument("--limit", type=int, default=15, help="How many to list (default: 15)")
 
+    # -- export --
+    ex = subs.add_parser("export", help="Render edited photos to PNG/JPEG, keeping all metadata")
+    ex.add_argument("inputs", nargs="+", help="Raw/DNG file(s) or folder(s)")
+    ex.add_argument("-o", "--output", help="Output folder (default: ./export)")
+    ex.add_argument("--format", choices=["png", "jpeg", "jpg"], default="jpeg")
+    ex.add_argument("--quality", type=int, default=92, help="JPEG quality 1-100 (default: 92)")
+    ex.add_argument("--long-edge", type=int, help="Resize so the longer side is this many pixels (never upscales)")
+    ex.add_argument("--colorspace", choices=["srgb", "adobergb", "prophoto"],
+                    help="Output colour space (raw default: srgb; other images keep their profile)")
+    ex.add_argument("--template", default="{name}",
+                    help="Filename template: {name} {date} {seq} {width} {height} (default: {name})")
+    ex.add_argument("--no-metadata", action="store_true", help="Do not copy EXIF/GPS/IPTC/XMP from the source")
+    ex.add_argument("-v", "--verbose", action="store_true")
+
     # -- style --
     st = subs.add_parser("style", help="Show what has been learned from your edits")
     st.add_argument("--clear", action="store_true", help="Forget every recorded edit")
@@ -1041,6 +1182,9 @@ def main():
         return
     if args.cmd == "cull":
         cmd_cull(args)
+        return
+    if args.cmd == "export":
+        cmd_export(args)
         return
 
     if args.cmd == "convert":
