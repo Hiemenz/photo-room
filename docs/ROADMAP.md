@@ -35,7 +35,7 @@ every panel, export JPEGs, and re-open the files in Lightroom with the edits int
 - [x] M0 Basic develop (exposure, tone, WB, vibrance, clarity, texture, dehaze, sharpen, straighten, crop), ratings, presets, batch apply, ingest, style learning, upload
 - [ ] M1 Portable pipeline: import CR2 from a card/folder, decode with rawpy (no DNG Converter), XMP sidecar edits, export PNG/JPEG with full metadata preserved; Linux + macOS CI
 - [ ] M1b Export dialog basics: format (PNG/JPEG), quality, size, colour space, filename template, "keep metadata" check
-- [ ] M2 Tone curve (parametric + point curve, per-channel) with XMP read/write
+- [x] M2 Tone curve (parametric + point curve, per-channel) with XMP read/write
 - [ ] M3 HSL / colour mixer (8 hue bands) and colour grading (shadows/mids/highlights wheels)
 - [ ] M4 History panel, snapshots, before/after (side by side and split), reset-to-import
 - [ ] M5 Library module: grid view, flags and colour labels, keywords, metadata filter bar, search

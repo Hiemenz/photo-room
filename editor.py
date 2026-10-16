@@ -29,6 +29,8 @@ from PIL import Image, ImageFilter
 import quality
 import style
 import thumbs
+import tonecurve
+from tonecurve import apply_tone_curve
 from process import (
     EXIFTOOL_TIMEOUT,
     compute_auto_adjustments,
@@ -446,6 +448,9 @@ def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.nda
 
     img = np.clip(img, 0.0, 1.0)
 
+    # --- Tone curve ---
+    img = np.clip(apply_tone_curve(img, adj.get("tone_curve")), 0.0, 1.0)
+
     # --- Color ---
     saturation = float(adj.get("saturation", 0))
     vibrance = float(adj.get("vibrance", 0))
@@ -553,6 +558,8 @@ def effective_adjustments(adj: dict) -> dict:
     neutral = {c["key"]: c["default"] for c in CONTROLS}
 
     out = dict(adj)
+    if adj.get("tone_curve"):
+        out["tone_curve"] = tonecurve.scale_toward_identity(adj["tone_curve"], strength)
     for control in CONTROLS:
         key = control["key"]
         if key not in adj:
@@ -683,7 +690,7 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
         f"-XMP-crs:CropBottom={float((adj.get('crop') or {}).get('bottom', 1.0)):.5f}",
         f"-XMP-crs:LuminanceSmoothing={int(adj.get('luminance_nr', 0))}",
         f"-XMP-crs:ConvertToGrayscale={'True' if adj.get('monochrome') else 'False'}",
-    ]
+    ] + tonecurve.xmp_arguments(adj.get("tone_curve"))
 
 
 def _process_version_for(path: Path) -> str:
@@ -810,7 +817,9 @@ def _read_adjustments_from(path: Path) -> dict | None:
     result = subprocess.run(["exiftool"] + args, capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT)
     values = result.stdout.strip().split("\n")
     if len(values) < len(tags) or all(v.strip() in ("-", "") for v in values):
-        return None
+        # No develop settings, but a curve alone is still an edit.
+        curve = _read_tone_curve(path)
+        return {"tone_curve": curve} if curve else None
 
     mapping = {
         "color_temp": 0, "tint": 1, "exposure": 2, "contrast": 3,
@@ -849,7 +858,18 @@ def _read_adjustments_from(path: Path) -> dict | None:
             out[key] = float(raw_value)
         except ValueError:
             continue
+    curve = _read_tone_curve(path)
+    if curve:
+        out["tone_curve"] = curve
     return out or None
+
+
+def _read_tone_curve(path: Path) -> dict | None:
+    args = ["-sep", "|"] + [f"-XMP-crs:{t}" for t in tonecurve.xmp_read_tags()] + ["-s3", "-f", str(path)]
+    result = subprocess.run(["exiftool"] + args, capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT)
+    # Not stripped: an empty line is a tag with no value, and dropping
+    # leading ones would shift every later tag up.
+    return tonecurve.parse_xmp(result.stdout.split("\n"))
 
 
 # ---------------------------------------------------------------------------
@@ -975,6 +995,8 @@ def index():
         "editor.html",
         controls=CONTROLS,
         global_controls=GLOBAL_CONTROLS,
+        curve_presets=tonecurve.PRESETS,
+        curve_parametric=[{"key": k, "label": k.capitalize()} for k in ("highlights", "lights", "darks", "shadows")],
         root=str(LIBRARY_ROOT),
     )
 
@@ -1018,6 +1040,7 @@ def api_open():
         merged = {c["key"]: adj.get(c["key"], c["default"]) for c in CONTROLS + GLOBAL_CONTROLS}
         merged["monochrome"] = bool(adj.get("monochrome", False))
         merged["crop"] = adj.get("crop")
+        merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
 
         base, _ = _load_base_render(path)
         assessment = quality.assess(base)

@@ -55,6 +55,26 @@ preview. The preview is a half-size render, and downsampling already hides
 the noise this removes, so previewing it there would misrepresent the
 full-resolution result in both directions.
 
+### Tone curve
+
+Below the sliders, a Lightroom-style **Tone curve**:
+
+- **Point curve** on a canvas, for **RGB** (master) and separately **R**, **G**,
+  **B**. Click the curve to add a point, drag to move it, double-click an
+  interior point to remove it. The curve is a smooth monotone cubic through
+  the points (no overshoot, never inverts tones); the end points keep their
+  position along the axis and can only be lifted or lowered. **Reset**
+  returns all four curves and the sliders to linear.
+- **Curve preset** menu: Linear, Medium Contrast, Strong Contrast (applied to
+  the RGB curve).
+- **Parametric** sliders: Highlights, Lights, Darks, Shadows (±100). Each moves
+  its own tonal region of the curve; black and white points stay fixed.
+- Stored as Camera Raw XMP (`crs:ToneCurvePV2012` and the `Red`/`Green`/`Blue`
+  variants, `crs:ParametricHighlights/Lights/Darks/Shadows` and the split
+  points), so Lightroom reads the same curve. A neutral curve clears those
+  tags. It is part of presets, copy/paste settings and batch apply, and is
+  scaled by Edit strength like the sliders.
+
 ### Crop
 
 **Crop** opens a draggable overlay with thirds guides. Drag a corner to
