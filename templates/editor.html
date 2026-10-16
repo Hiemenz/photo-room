@@ -1,0 +1,1165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo Room</title>
+<style>
+  :root {
+    --bg: #1a1a1c;
+    --panel: #232327;
+    --panel-2: #2c2c31;
+    --line: #38383f;
+    --text: #e8e8ea;
+    --muted: #9a9aa3;
+    --accent: #6ea8fe;
+    --danger: #e0685f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex;
+    font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+
+  /* ---- File list ---- */
+  #files {
+    width: 220px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  }
+  #files h2 {
+    margin: 0; padding: 14px 16px 10px; font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); font-weight: 600;
+  }
+  #file-list { overflow-y: auto; flex: 1; padding-bottom: 12px; }
+  .file {
+    padding: 7px 16px; cursor: pointer; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; color: var(--muted);
+    border-left: 2px solid transparent;
+  }
+  .file:hover { background: var(--panel-2); color: var(--text); }
+  .file.active {
+    background: var(--panel-2); color: var(--text);
+    border-left-color: var(--accent); font-weight: 500;
+  }
+  .file.selected { background: #2f3a4d; color: var(--text); }
+  .file.selected.active { background: #35435c; }
+  #files-foot {
+    padding: 9px 16px; border-top: 1px solid var(--line);
+    font-size: 11px; color: var(--muted); line-height: 1.5;
+  }
+  #files-foot button { width: 100%; margin-top: 7px; padding: 6px 10px; font-size: 12px; }
+  #crop-layer {
+    position: absolute; inset: 0; display: none; cursor: crosshair;
+  }
+  #crop-layer.on { display: block; }
+  #crop-box {
+    position: absolute; border: 1px solid rgba(255,255,255,.9);
+    box-shadow: 0 0 0 9999px rgba(0,0,0,.5);
+    cursor: move;
+  }
+  /* Thirds guides — the usual reason for cropping in the first place. */
+  #crop-box::before, #crop-box::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-repeat: no-repeat;
+  }
+  #crop-box::before {
+    background-image: linear-gradient(to right, transparent 33.33%, rgba(255,255,255,.35) 33.33%, rgba(255,255,255,.35) 33.53%, transparent 33.53%, transparent 66.66%, rgba(255,255,255,.35) 66.66%, rgba(255,255,255,.35) 66.86%, transparent 66.86%);
+  }
+  #crop-box::after {
+    background-image: linear-gradient(to bottom, transparent 33.33%, rgba(255,255,255,.35) 33.33%, rgba(255,255,255,.35) 33.53%, transparent 33.53%, transparent 66.66%, rgba(255,255,255,.35) 66.66%, rgba(255,255,255,.35) 66.86%, transparent 66.86%);
+  }
+  .handle {
+    position: absolute; width: 16px; height: 16px; background: #fff;
+    border-radius: 2px; border: 1px solid rgba(0,0,0,.35);
+  }
+  .handle.nw { left: -8px;  top: -8px;    cursor: nwse-resize; }
+  .handle.ne { right: -8px; top: -8px;    cursor: nesw-resize; }
+  .handle.sw { left: -8px;  bottom: -8px; cursor: nesw-resize; }
+  .handle.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+  #crop-bar {
+    padding: 9px 18px; border-bottom: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 5px; align-items: center;
+  }
+  #crop-bar button { padding: 4px 9px; font-size: 11px; }
+  #crop-bar button.active { background: var(--accent); border-color: var(--accent); color: #12203a; }
+  #compare-badge {
+    position: absolute; top: 18px; left: 22px; padding: 3px 9px;
+    border-radius: 3px; background: rgba(0,0,0,.7); color: #fff;
+    font-size: 11px; letter-spacing: .04em; opacity: 0;
+    transition: opacity .1s; pointer-events: none;
+  }
+  #compare-badge.on { opacity: 1; }
+  kbd {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px;
+    padding: 0 4px; font: inherit; font-size: 10px; color: var(--text);
+  }
+
+  /* ---- Preview ---- */
+  #grid {
+    position: absolute; inset: 0; overflow-y: auto; padding: 16px;
+    display: none; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px; align-content: start; background: var(--bg);
+  }
+  #grid.on { display: grid; }
+  .cell {
+    position: relative; aspect-ratio: 3/2; background: var(--panel-2);
+    border-radius: 3px; overflow: hidden; cursor: pointer;
+    border: 2px solid transparent;
+  }
+  .cell.active { border-color: var(--accent); }
+  .cell.selected { border-color: #7fa7e8; }
+  .cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cell .name {
+    position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 5px;
+    font-size: 9px; background: rgba(0,0,0,.6); color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cell .stars {
+    position: absolute; left: 0; bottom: 14px; padding: 1px 5px;
+    font-size: 10px; color: #ffd257; text-shadow: 0 1px 2px rgba(0,0,0,.9);
+    letter-spacing: 1px;
+  }
+  .cell.rejected { opacity: .35; }
+  .cell.rejected::after {
+    content: "✕"; position: absolute; top: 4px; left: 6px;
+    color: var(--danger); font-size: 13px; font-weight: 700;
+    text-shadow: 0 1px 3px rgba(0,0,0,.9);
+  }
+  #rating-row {
+    display: flex; align-items: center; gap: 4px; margin-top: 8px;
+  }
+  #rating-row .star {
+    cursor: pointer; font-size: 15px; color: var(--line); line-height: 1;
+  }
+  #rating-row .star.on { color: #ffd257; }
+  #rating-row .reject {
+    margin-left: auto; cursor: pointer; font-size: 11px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 3px; padding: 1px 6px;
+  }
+  #rating-row .reject.on { color: var(--danger); border-color: var(--danger); }
+  .cell .flag {
+    position: absolute; top: 4px; right: 5px; font-size: 10px;
+    background: rgba(224,104,95,.9); color: #fff; border-radius: 2px;
+    padding: 0 4px;
+  }
+  #stage {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 28px; position: relative; min-width: 0;
+  }
+  #preview {
+    max-width: 100%; max-height: 100%; object-fit: contain;
+    border-radius: 3px; box-shadow: 0 6px 32px rgba(0,0,0,.55);
+    transition: opacity .12s;
+  }
+  #empty { color: var(--muted); text-align: center; line-height: 1.7; }
+  #spinner {
+    position: absolute; top: 18px; right: 22px; font-size: 11px;
+    color: var(--muted); opacity: 0; transition: opacity .15s;
+  }
+  #spinner.on { opacity: 1; }
+
+  /* ---- Controls ---- */
+  #controls {
+    width: 280px; flex-shrink: 0; background: var(--panel);
+    border-left: 1px solid var(--line); display: flex; flex-direction: column;
+  }
+  #histogram {
+    width: 100%; height: 76px; display: block;
+    background: #141416; border-bottom: 1px solid var(--line);
+  }
+  #clip {
+    display: flex; justify-content: space-between; padding: 5px 18px 0;
+    font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  #clip .hot { color: var(--danger); }
+  #globals {
+    padding: 4px 18px 14px; border-bottom: 1px solid var(--line);
+  }
+  .toggle {
+    display: flex; align-items: center; gap: 8px; margin-top: 13px;
+    cursor: pointer; user-select: none;
+  }
+  .toggle input { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; }
+  #meta {
+    padding: 14px 18px; border-bottom: 1px solid var(--line);
+    font-size: 11px; color: var(--muted); line-height: 1.6;
+  }
+  #quality {
+    margin-top: 7px; padding: 6px 9px; border-radius: 4px; font-size: 11px;
+    background: rgba(224,104,95,.13); border: 1px solid rgba(224,104,95,.4);
+    color: var(--danger); line-height: 1.5;
+  }
+  #quality b { display: block; text-transform: uppercase; letter-spacing: .06em; }
+  #sharp { margin-top: 6px; font-size: 10px; color: var(--muted); }
+  #meta strong { color: var(--text); font-weight: 600; display: block;
+    font-size: 13px; margin-bottom: 3px; word-break: break-all; }
+  #sliders { flex: 1; overflow-y: auto; padding: 6px 18px 18px; }
+  .ctrl { margin-top: 15px; }
+  .ctrl-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 5px;
+  }
+  .ctrl-head label { color: var(--muted); }
+  .ctrl-head .val {
+    font-variant-numeric: tabular-nums; color: var(--text);
+    cursor: pointer; padding: 1px 4px; border-radius: 3px;
+  }
+  .ctrl-head .val:hover { background: var(--panel-2); }
+  .ctrl.changed .ctrl-head label { color: var(--accent); }
+  input[type=range] {
+    width: 100%; -webkit-appearance: none; background: transparent; margin: 0;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 3px; background: var(--line); border-radius: 2px;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 13px; height: 13px; margin-top: -5px;
+    border-radius: 50%; background: var(--text); cursor: grab;
+  }
+  input[type=range]:active::-webkit-slider-thumb { cursor: grabbing; }
+
+  /* ---- Buttons ---- */
+  #actions {
+    padding: 14px 18px; border-top: 1px solid var(--line);
+    display: grid; gap: 7px;
+  }
+  button {
+    font: inherit; padding: 8px 12px; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+  }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #12203a; font-weight: 600; }
+  button.danger { color: var(--danger); }
+  #status {
+    padding: 0 18px 12px; font-size: 11px; color: var(--muted);
+    min-height: 15px; line-height: 1.5;
+  }
+  #status.err { color: var(--danger); }
+</style>
+</head>
+<body>
+
+<aside id="files">
+  <h2 style="display:flex;justify-content:space-between;align-items:center">
+    <span>Library</span>
+    <button id="view-toggle" style="padding:2px 7px;font-size:10px">Grid</button>
+  </h2>
+  <div style="padding:7px 16px 0">
+    <select id="filter" style="width:100%;font:inherit;font-size:11px;padding:3px 5px;border-radius:4px;background:var(--panel-2);color:var(--text);border:1px solid var(--line)">
+      <option value="all">All photos</option>
+      <option value="unrated">Unrated</option>
+      <option value="picks">Rated 1+</option>
+      <option value="best">Rated 4+</option>
+      <option value="rejected">Rejected</option>
+    </select>
+  </div>
+  <div id="file-list"></div>
+  <div id="files-foot">
+    <span id="sel-count">Click to open &middot; <kbd>cmd</kbd>-click to select</span>
+    <button id="batch" disabled>Apply edit to selected</button>
+  </div>
+</aside>
+
+<main id="stage">
+  <div id="grid"></div>
+  <div id="empty">Select a photo to begin.</div>
+  <img id="preview" hidden alt="">
+  <div id="spinner">rendering…</div>
+  <div id="compare-badge">ORIGINAL</div>
+  <div id="crop-layer">
+    <div id="crop-box">
+      <div class="handle nw" data-corner="nw"></div>
+      <div class="handle ne" data-corner="ne"></div>
+      <div class="handle sw" data-corner="sw"></div>
+      <div class="handle se" data-corner="se"></div>
+    </div>
+  </div>
+</main>
+
+<aside id="controls">
+  <canvas id="histogram" width="560" height="152"></canvas>
+  <div id="clip">
+    <span id="clip-shadows">shadows 0%</span>
+    <span id="clip-highlights">highlights 0%</span>
+  </div>
+  <div id="crop-bar">
+    <button id="crop-toggle" disabled>Crop</button>
+    <button data-ratio="free" class="active">Free</button>
+    <button data-ratio="1">1:1</button>
+    <button data-ratio="1.3333">4:3</button>
+    <button data-ratio="1.5">3:2</button>
+    <button data-ratio="1.7778">16:9</button>
+    <button id="crop-reset">Reset</button>
+  </div>
+  <div id="preset-bar" style="padding:9px 18px;border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center">
+    <select id="preset-list" style="flex:1;min-width:0;font:inherit;font-size:11px;padding:4px 6px;border-radius:4px;background:var(--panel-2);color:var(--text);border:1px solid var(--line)">
+      <option value="">Presets…</option>
+    </select>
+    <button id="preset-save" style="padding:4px 9px;font-size:11px" disabled>Save</button>
+    <button id="preset-del" style="padding:4px 9px;font-size:11px" disabled>×</button>
+  </div>
+  <div id="globals"></div>
+  <div id="meta">
+    <strong>No photo</strong><span id="source"></span>
+    <div id="rating-row">
+      <span class="star" data-star="1">★</span>
+      <span class="star" data-star="2">★</span>
+      <span class="star" data-star="3">★</span>
+      <span class="star" data-star="4">★</span>
+      <span class="star" data-star="5">★</span>
+      <span class="reject" id="reject-btn">reject</span>
+    </div>
+    <div id="quality" hidden></div>
+    <div id="sharp" hidden></div>
+  </div>
+  <div id="sliders"></div>
+  <div id="status"></div>
+  <div id="actions">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
+      <button id="copy" disabled>Copy settings</button>
+      <button id="paste" disabled>Paste settings</button>
+    </div>
+    <button id="save" class="primary" disabled>Save adjustments</button>
+    <button id="reset" disabled>Revert to original</button>
+    <button id="recover" class="danger" disabled>Recover original raw file</button>
+    <div style="font-size:10px;color:var(--muted);line-height:1.7;margin-top:3px">
+      <kbd>&larr;</kbd> <kbd>&rarr;</kbd> photo &middot;
+      <kbd>\</kbd> hold to compare &middot;
+      <kbd>b</kbd> B&amp;W &middot; <kbd>cmd</kbd>+<kbd>s</kbd> save<br>
+      <kbd>cmd</kbd>+<kbd>c</kbd> copy &middot; <kbd>cmd</kbd>+<kbd>v</kbd> paste settings<br>
+      <kbd>0</kbd>–<kbd>5</kbd> rate &middot; <kbd>x</kbd> reject
+    </div>
+  </div>
+</aside>
+
+<script>
+const CONTROLS = {{ controls | tojson }};
+const GLOBAL_CONTROLS = {{ global_controls | tojson }};
+const $ = (id) => document.getElementById(id);
+
+let current = null;      // relative path of the open file
+let values = {};         // live slider values
+let neutral = {};        // values representing "no edits"
+let renderToken = 0;     // guards against out-of-order preview responses
+let files = [];          // library paths, in display order
+let selected = new Set();// paths ticked for a batch apply
+let lastIndex = -1;      // anchor for shift-click ranges
+let comparing = false;   // true while the compare key is held
+let editedSrc = null;    // cached edited preview, restored when compare ends
+let clipboard = null;    // settings copied from one photo, for pasting onto others
+let baselineTemp = null; // this photo's own camera white balance
+let cropping = false;    // crop overlay visible
+let cropRatio = null;    // locked aspect ratio, or null for free
+
+// ---- Build sliders -------------------------------------------------------
+function buildSlider(c, host) {
+  const wrap = document.createElement("div");
+  wrap.className = "ctrl";
+  wrap.id = `ctrl-${c.key}`;
+  wrap.innerHTML = `
+    <div class="ctrl-head">
+      <label for="s-${c.key}">${c.label}</label>
+      <span class="val" id="v-${c.key}" title="Click to reset">0</span>
+    </div>
+    <input type="range" id="s-${c.key}"
+           min="${c.min}" max="${c.max}" step="${c.step}" value="${c.default}">`;
+  host.appendChild(wrap);
+
+  const slider = $(`s-${c.key}`);
+  slider.addEventListener("input", () => {
+    values[c.key] = parseFloat(slider.value);
+    paintValue(c);
+    schedulePreview();
+  });
+  // Click the number to return that one slider to its unedited value.
+  $(`v-${c.key}`).addEventListener("click", () => {
+    if (!current) return;
+    values[c.key] = neutral[c.key];
+    slider.value = neutral[c.key];
+    paintValue(c);
+    schedulePreview();
+  });
+}
+
+for (const c of CONTROLS) buildSlider(c, $("sliders"));
+for (const c of GLOBAL_CONTROLS) buildSlider(c, $("globals"));
+
+// Black and white sits with the global controls: it applies after every
+// other adjustment, so the colour sliders act as channel mixers for it.
+const bwWrap = document.createElement("label");
+bwWrap.className = "toggle";
+bwWrap.innerHTML = `<input type="checkbox" id="s-monochrome"><span>Black &amp; white</span>`;
+$("globals").appendChild(bwWrap);
+$("s-monochrome").addEventListener("change", (e) => {
+  values.monochrome = e.target.checked;
+  schedulePreview();
+});
+
+function paintValue(c) {
+  const v = values[c.key];
+  const el = $(`v-${c.key}`);
+  if (c.key === "color_temp") el.textContent = `${Math.round(v)}K`;
+  else if (c.key === "strength") el.textContent = `${Math.round(v)}%`;
+  else if (c.key === "exposure") el.textContent = (v > 0 ? "+" : "") + v.toFixed(2);
+  else el.textContent = (v > 0 ? "+" : "") + Math.round(v);
+  $(`ctrl-${c.key}`).classList.toggle("changed", Math.abs(v - neutral[c.key]) > 1e-6);
+}
+
+function paintAll() {
+  for (const c of CONTROLS.concat(GLOBAL_CONTROLS)) {
+    $(`s-${c.key}`).value = values[c.key];
+    paintValue(c);
+  }
+  $("s-monochrome").checked = !!values.monochrome;
+}
+
+// ---- Histogram -----------------------------------------------------------
+function drawHistogram(h) {
+  const cv = $("histogram");
+  const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+  if (!h) return;
+
+  // One shared scale across channels so their relative heights stay meaningful.
+  const peak = Math.max(1, ...h.r, ...h.g, ...h.b);
+  const bins = h.r.length;
+  const bw = W / bins;
+
+  // Monochrome collapses the channels; draw one grey curve instead of three.
+  const mono = values.monochrome;
+  const channels = mono
+    ? [["lum", "rgba(210,210,215,.85)"]]
+    : [["r", "rgba(224,104,95,.75)"], ["g", "rgba(120,200,130,.75)"], ["b", "rgba(110,168,254,.75)"]];
+
+  ctx.globalCompositeOperation = mono ? "source-over" : "lighter";
+  for (const [key, color] of channels) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let i = 0; i < bins; i++) {
+      // sqrt keeps small counts visible without letting the peak dominate.
+      const y = H - Math.sqrt(h[key][i] / peak) * H;
+      ctx.lineTo(i * bw, y);
+      ctx.lineTo((i + 1) * bw, y);
+    }
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
+
+  const sh = $("clip-shadows"), hi = $("clip-highlights");
+  sh.textContent = `shadows ${h.clipped_shadows}%`;
+  hi.textContent = `highlights ${h.clipped_highlights}%`;
+  sh.classList.toggle("hot", h.clipped_shadows > 1);
+  hi.classList.toggle("hot", h.clipped_highlights > 1);
+}
+
+function setStatus(msg, isError = false) {
+  $("status").textContent = msg;
+  $("status").classList.toggle("err", isError);
+}
+
+// ---- Preview -------------------------------------------------------------
+// Slider drags fire continuously; coalesce them so only the latest render runs.
+let pending = null;
+function schedulePreview() {
+  clearTimeout(pending);
+  pending = setTimeout(renderPreview, 140);
+}
+
+async function renderPreview() {
+  if (!current) return;
+  const token = ++renderToken;
+  $("spinner").classList.add("on");
+  try {
+    const res = await fetch("/api/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: current, adjustments: values }),
+    });
+    const data = await res.json();
+    if (token !== renderToken) return;   // a newer render already superseded this
+    if (data.error) { setStatus(data.error, true); return; }
+    drawHistogram(data.histogram);
+    if (comparing) {
+      editedSrc = data.preview;   // hold it until the compare key is released
+    } else {
+      $("preview").src = data.preview;
+    }
+  } catch (e) {
+    if (token === renderToken) setStatus(String(e), true);
+  } finally {
+    if (token === renderToken) $("spinner").classList.remove("on");
+  }
+}
+
+// ---- Open a file ---------------------------------------------------------
+async function openFile(path) {
+  current = path;
+  comparing = false;
+  editedSrc = null;
+  $("compare-badge").classList.remove("on");
+  document.querySelectorAll(".file").forEach(f => {
+    f.classList.toggle("active", f.dataset.path === path);
+  });
+  const active = document.querySelector(".file.active");
+  if (active) active.scrollIntoView({ block: "nearest" });
+  syncGridState();
+  // Opening a photo from the contact sheet should show it.
+  if (gridOn) $("view-toggle").click();
+
+  setStatus("Loading…");
+  $("spinner").classList.add("on");
+  ++renderToken;   // discard any in-flight render for the previous photo
+
+  try {
+    const res = await fetch("/api/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json();
+    if (data.error) { setStatus(data.error, true); return; }
+
+    values = data.adjustments;
+    drawHistogram(data.histogram);
+    paintCropBox();
+    // "Unedited" means the neutral defaults, but keyed to this camera's own
+    // white balance so reverting doesn't throw the photo to a fixed 5500K.
+    neutral = Object.fromEntries(
+      CONTROLS.concat(GLOBAL_CONTROLS).map(c => [c.key, c.default]));
+    // The camera's own white balance, not the saved one. Using the saved
+    // value meant hold-to-compare rendered the "before" at the edited
+    // temperature, hiding the whole white-balance part of the edit.
+    baselineTemp = data.baseline_temp ?? data.adjustments.color_temp;
+    neutral.color_temp = baselineTemp;
+
+    paintAll();
+    $("preview").src = data.preview;
+    $("preview").hidden = false;
+    $("empty").hidden = true;
+    $("meta").querySelector("strong").textContent = path.split("/").pop();
+    // Warn before the photographer overwrites work done elsewhere.
+    if (data.foreign_editor) {
+      const where = data.has_sidecar ? " and has an .xmp sidecar" : "";
+      setStatus(`Edited in ${data.foreign_editor}${where} — saving will replace those settings`, true);
+    }
+
+    const q = data.quality || {};
+    const badge = $("quality");
+    if (q.verdict) {
+      badge.innerHTML = `<b>${q.verdict}</b>${q.reason} — no adjustment recovers this.`;
+      badge.hidden = false;
+    } else {
+      badge.hidden = true;
+    }
+    // Reported without a verdict on purpose: this measures how much detail a
+    // scene contains, not whether focus was missed.
+    $("sharp").textContent =
+      `detail ${q.sharpness ?? "–"} · clipping ${q.clipped_high ?? 0}% high / ${q.clipped_low ?? 0}% low`;
+    $("sharp").hidden = false;
+    if (typeof data.rating === "number") ratings[current] = data.rating;
+    paintRating();
+
+    $("source").textContent = data.source === "saved"
+      ? "Showing previously saved edits"
+      : "Showing auto-computed edits (not yet saved)";
+
+    for (const id of ["save", "reset", "copy", "crop-toggle", "preset-save"]) $(id).disabled = false;
+    $("paste").disabled = !clipboard;
+    updateSelectionUI();
+    $("recover").disabled = !data.has_original;
+    $("recover").title = data.has_original
+      ? "Write the embedded original raw back out as a file"
+      : "This file has no embedded original raw";
+    setStatus("");
+  } catch (e) {
+    setStatus(String(e), true);
+  } finally {
+    $("spinner").classList.remove("on");
+  }
+}
+
+// ---- Actions -------------------------------------------------------------
+async function post(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
+$("save").addEventListener("click", async () => {
+  if (!current) return;
+  setStatus("Saving…");
+  const data = await post("/api/save", {
+    path: current, adjustments: { ...values, _baseline_temp: baselineTemp },
+  });
+  if (data.error) return setStatus(data.error, true);
+  $("source").textContent = "Showing previously saved edits";
+  setStatus(data.message);
+});
+
+$("reset").addEventListener("click", async () => {
+  if (!current) return;
+  setStatus("Reverting…");
+  const data = await post("/api/reset", { path: current });
+  if (data.error) return setStatus(data.error, true);
+  values = data.adjustments;
+  neutral = { ...data.adjustments };
+  paintAll();
+  $("preview").src = data.preview;
+  drawHistogram(data.histogram);
+  $("source").textContent = "No saved edits";
+  setStatus(data.message);
+});
+
+$("recover").addEventListener("click", async () => {
+  if (!current) return;
+  setStatus("Extracting embedded original…");
+  const data = await post("/api/recover", { path: current });
+  if (data.error) return setStatus(data.error, true);
+  setStatus(data.message);
+  loadFiles();   // the recovered raw is a new file in the library
+});
+
+// ---- Ratings -------------------------------------------------------------
+async function loadRatings() {
+  try {
+    const data = await (await fetch("/api/ratings")).json();
+    ratings = data.ratings || {};
+  } catch { ratings = {}; }
+}
+
+function paintRating() {
+  const r = current ? (ratings[current] ?? 0) : 0;
+  document.querySelectorAll("#rating-row .star").forEach(s => {
+    s.classList.toggle("on", r >= parseInt(s.dataset.star, 10));
+  });
+  $("reject-btn").classList.toggle("on", r === REJECTED);
+}
+
+async function setRating(rating) {
+  if (!current) return;
+  // Repaint immediately; the write is confirmed afterwards. Rating is a
+  // rapid-fire action while culling and must not feel like it waits.
+  const previous = ratings[current] ?? 0;
+  ratings[current] = rating;
+  paintRating();
+  syncGridState();
+
+  const data = await post("/api/rate", { path: current, rating });
+  if (data.error) {
+    ratings[current] = previous;      // put it back if the write failed
+    paintRating();
+    syncGridState();
+    return setStatus(data.error, true);
+  }
+  setStatus(data.message);
+  if (filterMode !== "all") applyFilter();
+}
+
+document.querySelectorAll("#rating-row .star").forEach(s => {
+  s.addEventListener("click", () => {
+    const value = parseInt(s.dataset.star, 10);
+    // Clicking the current rating clears it, as in every photo tool.
+    setRating((ratings[current] ?? 0) === value ? 0 : value);
+  });
+});
+$("reject-btn").addEventListener("click", () => {
+  setRating((ratings[current] ?? 0) === REJECTED ? 0 : REJECTED);
+});
+
+// ---- Filtering -----------------------------------------------------------
+function passesFilter(path) {
+  const r = ratings[path] ?? 0;
+  switch (filterMode) {
+    case "unrated":  return r === 0;
+    case "picks":    return r >= 1;
+    case "best":     return r >= 4;
+    case "rejected": return r === REJECTED;
+    default:         return true;
+  }
+}
+
+function applyFilter() {
+  document.querySelectorAll(".file").forEach(el => {
+    el.hidden = !passesFilter(el.dataset.path);
+  });
+  document.querySelectorAll(".cell").forEach(el => {
+    el.hidden = !passesFilter(el.dataset.path);
+  });
+  const shown = files.filter(passesFilter).length;
+  if (filterMode !== "all") setStatus(`${shown} of ${files.length} shown`);
+}
+
+$("filter").addEventListener("change", (e) => {
+  filterMode = e.target.value;
+  applyFilter();
+});
+
+// ---- Contact sheet -------------------------------------------------------
+let gridOn = false;
+let lazyLoader = null;
+let ratings = {};        // path -> -1 (rejected) .. 5
+let filterMode = "all";
+const REJECTED = -1;
+
+// Thumbnails load only as cells scroll into view. A shoot can run to
+// hundreds of frames, and fetching every one up front would stall the
+// browser on work the photographer may never look at.
+function makeLazyLoader() {
+  if (lazyLoader) lazyLoader.disconnect();
+  lazyLoader = new IntersectionObserver((entries, obs) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const img = entry.target;
+      if (!img.dataset.src) continue;
+      img.src = img.dataset.src;
+      delete img.dataset.src;
+      obs.unobserve(img);
+    }
+  }, { root: $("grid"), rootMargin: "300px" });
+  return lazyLoader;
+}
+
+function buildGrid() {
+  const grid = $("grid");
+  grid.innerHTML = "";
+  const obs = makeLazyLoader();
+
+  files.forEach((path, i) => {
+    const cell = document.createElement("div");
+    cell.className = "cell"
+      + (path === current ? " active" : "")
+      + (selected.has(path) ? " selected" : "");
+    cell.dataset.path = path;
+
+    const img = document.createElement("img");
+    img.alt = path;
+    img.loading = "lazy";
+    img.dataset.src = `/api/thumb?path=${encodeURIComponent(path)}`;
+    // A file with no readable preview must not leave a broken-image icon.
+    img.addEventListener("error", () => { img.style.visibility = "hidden"; });
+
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = path.split("/").pop();
+
+    const stars = document.createElement("div");
+    stars.className = "stars";
+
+    cell.append(img, stars, name);
+    cell.addEventListener("click", (e) => handleFileClick(e, path, i));
+    grid.appendChild(cell);
+    obs.observe(img);
+  });
+}
+
+function syncGridState() {
+  document.querySelectorAll(".cell").forEach(cell => {
+    const path = cell.dataset.path;
+    const r = ratings[path] ?? 0;
+    cell.classList.toggle("active", path === current);
+    cell.classList.toggle("selected", selected.has(path));
+    cell.classList.toggle("rejected", r === REJECTED);
+    const stars = cell.querySelector(".stars");
+    if (stars) stars.textContent = r > 0 ? "★".repeat(r) : "";
+  });
+}
+
+$("view-toggle").addEventListener("click", () => {
+  gridOn = !gridOn;
+  $("grid").classList.toggle("on", gridOn);
+  $("view-toggle").textContent = gridOn ? "Edit" : "Grid";
+  $("crop-layer").classList.remove("on");
+  if (gridOn) { buildGrid(); applyFilter(); }
+});
+
+// ---- Presets -------------------------------------------------------------
+async function loadPresets(selected) {
+  const data = await (await fetch("/api/presets")).json();
+  const sel = $("preset-list");
+  sel.innerHTML = `<option value="">Presets…</option>`;
+  for (const name of data.presets || []) {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    sel.appendChild(opt);
+  }
+  if (selected) sel.value = selected;
+  $("preset-del").disabled = !sel.value;
+}
+
+$("preset-list").addEventListener("change", async (e) => {
+  const name = e.target.value;
+  $("preset-del").disabled = !name;
+  if (!name || !current) return;
+
+  const data = await post("/api/preset_get", {
+    name, baseline_temp: baselineTemp || 5500,
+  });
+  if (data.error) return setStatus(data.error, true);
+
+  // A preset is tone and colour only; whatever crop this photo has stays.
+  values = { ...values, ...data.adjustments };
+  paintAll();
+  schedulePreview();
+  setStatus(`Applied preset '${name}' — not saved yet`);
+});
+
+$("preset-save").addEventListener("click", async () => {
+  if (!current) return;
+  const name = prompt("Name this preset:");
+  if (!name) return;
+  const data = await post("/api/preset_save", {
+    name, adjustments: values, baseline_temp: baselineTemp || 5500,
+  });
+  if (data.error) return setStatus(data.error, true);
+  await loadPresets(name);
+  setStatus(data.message);
+});
+
+$("preset-del").addEventListener("click", async () => {
+  const name = $("preset-list").value;
+  if (!name) return;
+  const data = await post("/api/preset_delete", { name });
+  await loadPresets();
+  setStatus(data.message);
+});
+
+// ---- Crop ----------------------------------------------------------------
+// The crop is stored as fractions of the frame rather than pixels, so it
+// survives the preview being a different size from the full-resolution file.
+function cropRectOnScreen() {
+  const img = $("preview");
+  const stage = $("stage").getBoundingClientRect();
+  const r = img.getBoundingClientRect();
+  return { left: r.left - stage.left, top: r.top - stage.top, width: r.width, height: r.height };
+}
+
+function paintCropBox() {
+  if (!cropping) return;
+  const frame = cropRectOnScreen();
+  const c = values.crop || { left: 0, top: 0, right: 1, bottom: 1 };
+  const box = $("crop-box");
+  box.style.left   = `${frame.left + c.left * frame.width}px`;
+  box.style.top    = `${frame.top + c.top * frame.height}px`;
+  box.style.width  = `${(c.right - c.left) * frame.width}px`;
+  box.style.height = `${(c.bottom - c.top) * frame.height}px`;
+}
+
+function setCrop(c) {
+  const EPS = 0.0005;
+  const full = c.left <= EPS && c.top <= EPS && c.right >= 1 - EPS && c.bottom >= 1 - EPS;
+  values.crop = full ? null : c;   // a full-frame crop is no crop at all
+  paintCropBox();
+  schedulePreview();
+}
+
+$("crop-toggle").addEventListener("click", () => {
+  cropping = !cropping;
+  $("crop-layer").classList.toggle("on", cropping);
+  $("crop-toggle").classList.toggle("active", cropping);
+  if (cropping) {
+    if (!values.crop) values.crop = { left: 0, top: 0, right: 1, bottom: 1 };
+    paintCropBox();
+  }
+});
+
+$("crop-reset").addEventListener("click", () => {
+  setCrop({ left: 0, top: 0, right: 1, bottom: 1 });
+});
+
+document.querySelectorAll("#crop-bar button[data-ratio]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#crop-bar button[data-ratio]")
+      .forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    cropRatio = btn.dataset.ratio === "free" ? null : parseFloat(btn.dataset.ratio);
+    if (cropRatio) applyRatio();
+  });
+});
+
+function applyRatio() {
+  // Ratios are in screen terms, so the frame's own proportions have to be
+  // divided out before the fractional crop can honour them.
+  const frame = cropRectOnScreen();
+  const frameRatio = frame.width / frame.height;
+  let w = 1, h = 1;
+  if (cropRatio > frameRatio) h = frameRatio / cropRatio;
+  else w = cropRatio / frameRatio;
+
+  setCrop({
+    left: (1 - w) / 2, right: (1 + w) / 2,
+    top: (1 - h) / 2,  bottom: (1 + h) / 2,
+  });
+}
+
+// Drag the corners, or the box itself to reposition.
+(function enableCropDrag() {
+  let mode = null, startX = 0, startY = 0, origin = null;
+
+  function begin(e, newMode) {
+    mode = newMode;
+    startX = e.clientX; startY = e.clientY;
+    origin = { ...(values.crop || { left: 0, top: 0, right: 1, bottom: 1 }) };
+    e.preventDefault(); e.stopPropagation();
+  }
+
+  $("crop-box").addEventListener("mousedown", (e) => begin(e, "move"));
+  document.querySelectorAll(".handle").forEach(h => {
+    h.addEventListener("mousedown", (e) => begin(e, h.dataset.corner));
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!mode) return;
+    const frame = cropRectOnScreen();
+    const dx = (e.clientX - startX) / frame.width;
+    const dy = (e.clientY - startY) / frame.height;
+    const c = { ...origin };
+    const MIN = 0.05;
+
+    if (mode === "move") {
+      const w = origin.right - origin.left, h = origin.bottom - origin.top;
+      c.left = Math.min(Math.max(0, origin.left + dx), 1 - w);
+      c.top = Math.min(Math.max(0, origin.top + dy), 1 - h);
+      c.right = c.left + w;
+      c.bottom = c.top + h;
+    } else {
+      if (mode.includes("w")) c.left = Math.min(Math.max(0, origin.left + dx), origin.right - MIN);
+      if (mode.includes("e")) c.right = Math.max(Math.min(1, origin.right + dx), origin.left + MIN);
+      if (mode.includes("n")) c.top = Math.min(Math.max(0, origin.top + dy), origin.bottom - MIN);
+      if (mode.includes("s")) c.bottom = Math.max(Math.min(1, origin.bottom + dy), origin.top + MIN);
+
+      if (cropRatio) {
+        // Keep the locked ratio by driving height from the new width.
+        const frameRatio = frame.width / frame.height;
+        const w = c.right - c.left;
+        const h = Math.min(1, (w * frameRatio) / cropRatio);
+        if (mode.includes("n")) c.top = Math.max(0, c.bottom - h);
+        else c.bottom = Math.min(1, c.top + h);
+      }
+    }
+    setCrop(c);
+  });
+
+  document.addEventListener("mouseup", () => { mode = null; });
+})();
+
+window.addEventListener("resize", paintCropBox);
+$("preview").addEventListener("load", paintCropBox);
+
+// ---- Copy / paste settings -----------------------------------------------
+// Temperature is stored as a ratio of the source photo's own white balance,
+// so pasting onto a frame shot in different light keeps the intent ("a bit
+// warmer than neutral") rather than forcing an absolute Kelvin value.
+$("copy").addEventListener("click", () => {
+  if (!current) return;
+  const baseline = baselineTemp || values.color_temp || 5500;
+  clipboard = {
+    values: { ...values },
+    tempRatio: (values.color_temp || baseline) / baseline,
+    from: current.split("/").pop(),
+  };
+  $("paste").disabled = false;
+  updateSelectionUI();
+  setStatus(`Copied settings from ${clipboard.from}`);
+});
+
+$("paste").addEventListener("click", () => {
+  if (!clipboard || !current) return;
+  const baseline = baselineTemp || 5500;
+  values = { ...clipboard.values, color_temp: Math.round(baseline * clipboard.tempRatio) };
+  paintAll();
+  schedulePreview();
+  setStatus(`Pasted settings from ${clipboard.from} — not saved yet`);
+});
+
+// ---- Selection -----------------------------------------------------------
+function updateSelectionUI() {
+  document.querySelectorAll(".file").forEach(el => {
+    el.classList.toggle("selected", selected.has(el.dataset.path));
+  });
+  syncGridState();
+  const n = selected.size;
+  $("batch").disabled = n === 0 || !current;
+  $("batch").textContent = n
+    ? (clipboard ? `Paste settings to ${n} selected` : `Apply edit to ${n} selected`)
+    : "Apply edit to selected";
+  $("sel-count").innerHTML = n
+    ? `${n} selected &middot; <a href="#" id="clear-sel" style="color:var(--accent)">clear</a>`
+    : `Click to open &middot; <kbd>cmd</kbd>-click to select`;
+  const clear = $("clear-sel");
+  if (clear) clear.addEventListener("click", (e) => {
+    e.preventDefault(); selected.clear(); updateSelectionUI();
+  });
+}
+
+function handleFileClick(e, path, index) {
+  if (e.metaKey || e.ctrlKey) {
+    e.preventDefault();
+    selected.has(path) ? selected.delete(path) : selected.add(path);
+    lastIndex = index;
+    updateSelectionUI();
+  } else if (e.shiftKey && lastIndex >= 0) {
+    e.preventDefault();
+    const [a, b] = [Math.min(lastIndex, index), Math.max(lastIndex, index)];
+    for (let i = a; i <= b; i++) selected.add(files[i]);
+    updateSelectionUI();
+  } else {
+    openFile(path);
+  }
+}
+
+$("batch").addEventListener("click", async () => {
+  if (!current || !selected.size) return;
+  const n = selected.size;
+  const source = clipboard ? clipboard.values : values;
+  setStatus(`Applying to ${n} file(s)…`);
+  const data = await post("/api/batch_apply", {
+    paths: [...selected], adjustments: source, baseline_temp: baselineTemp,
+  });
+  if (data.error) return setStatus(data.error, true);
+  setStatus(data.message, data.failed.length > 0);
+  if (data.failed.length) {
+    console.warn("Batch apply failures:", data.failed);
+  }
+  selected.clear();
+  updateSelectionUI();
+});
+
+// ---- Before / after ------------------------------------------------------
+// Renders the unedited photo by asking for neutral values, so the comparison
+// goes through exactly the same pipeline as the edit rather than a
+// separately-cached image that might drift from it.
+async function showOriginal() {
+  if (!current || comparing) return;
+  comparing = true;
+  editedSrc = $("preview").src;
+  $("compare-badge").classList.add("on");
+
+  const res = await fetch("/api/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: current, adjustments: { ...neutral, monochrome: false } }),
+  });
+  const data = await res.json();
+  // The key may already have been released while this was in flight.
+  if (comparing && !data.error) $("preview").src = data.preview;
+}
+
+function showEdited() {
+  if (!comparing) return;
+  comparing = false;
+  $("compare-badge").classList.remove("on");
+  if (editedSrc) $("preview").src = editedSrc;
+}
+
+// ---- Keyboard ------------------------------------------------------------
+function step(delta) {
+  // Navigate within whatever the filter is showing, so culling down to the
+  // picks and then arrowing through does not jump back to hidden frames.
+  const visible = files.filter(passesFilter);
+  if (!visible.length) return;
+  const i = visible.indexOf(current);
+  const next = i < 0 ? 0 : Math.min(visible.length - 1, Math.max(0, i + delta));
+  if (visible[next] !== current) openFile(visible[next]);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" && e.target.type !== "range") return;
+
+  if (e.metaKey || e.ctrlKey) {
+    // Let the browser handle these when the user is selecting page text.
+    if (!window.getSelection().isCollapsed) return;
+    if (e.key === "s") {
+      e.preventDefault();
+      if (!$("save").disabled) $("save").click();
+      return;
+    }
+    if (e.key === "c" && current) {
+      e.preventDefault(); $("copy").click(); return;
+    }
+    if (e.key === "v" && clipboard) {
+      e.preventDefault(); $("paste").click(); return;
+    }
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  if (current && e.key >= "0" && e.key <= "5") {
+    e.preventDefault();
+    return setRating(parseInt(e.key, 10));
+  }
+  if (current && (e.key === "x" || e.key === "X")) {
+    e.preventDefault();
+    return setRating((ratings[current] ?? 0) === REJECTED ? 0 : REJECTED);
+  }
+
+  switch (e.key) {
+    case "ArrowRight": e.preventDefault(); step(1); break;
+    case "ArrowLeft":  e.preventDefault(); step(-1); break;
+    case "\\":
+      e.preventDefault();
+      if (!e.repeat) showOriginal();   // ignore auto-repeat while held
+      break;
+    case "b":
+    case "B": {
+      if (!current) break;
+      e.preventDefault();
+      const box = $("s-monochrome");
+      box.checked = !box.checked;
+      box.dispatchEvent(new Event("change"));
+      break;
+    }
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  if (e.key === "\\") showEdited();
+});
+
+// Releasing the key outside the window never fires keyup; recover on blur.
+window.addEventListener("blur", showEdited);
+
+// ---- Library -------------------------------------------------------------
+async function loadFiles() {
+  const res = await fetch("/api/files");
+  const data = await res.json();
+  const list = $("file-list");
+  list.innerHTML = "";
+
+  if (!data.files.length) {
+    list.innerHTML = `<div class="file" style="cursor:default">No DNG or CR2 files found</div>`;
+    return;
+  }
+  files = data.files;
+  data.files.forEach((f, i) => {
+    const el = document.createElement("div");
+    el.className = "file" + (f === current ? " active" : "");
+    el.textContent = f;
+    el.title = f;
+    el.dataset.path = f;
+    el.addEventListener("click", (e) => handleFileClick(e, f, i));
+    list.appendChild(el);
+  });
+  updateSelectionUI();
+}
+
+// The file list is instant; reading every rating means one exiftool pass
+// over the whole shoot and took 7.5s on a 665-frame library. Show the
+// library first and paint the ratings in when they arrive.
+loadFiles();
+loadRatings().then(() => {
+  syncGridState();
+  paintRating();
+  if (filterMode !== "all") applyFilter();
+});
+loadPresets();
+</script>
+</body>
+</html>

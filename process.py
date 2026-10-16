@@ -8,9 +8,12 @@ Subcommands:
 """
 
 import argparse
+import os
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -18,9 +21,42 @@ import rawpy
 from tqdm import tqdm
 
 
+# Conversion is dominated by the DNG Converter subprocess and by raw decoding,
+# both of which release the GIL, so threads parallelise it as well as processes
+# (measured within a few percent of each other) without pickling work across a
+# pool.
+#
+# The realistic speedup is about 2.4x: 30 frames read cold from an external
+# drive took 54s serial and 23s with twelve workers on a 14-core machine. A
+# warm-cache microbenchmark suggested 6x, which is what disk and DNG Converter
+# contention cost in practice — worth knowing before raising this further.
+DEFAULT_JOBS = min(12, (os.cpu_count() or 4))
+
+
 DNG_CONVERTER = Path(
     "/Applications/Adobe DNG Converter.app/Contents/MacOS/Adobe DNG Converter"
 )
+
+# The DNG Converter is a GUI application driven from the command line, and it
+# answers some invocations by opening a window instead of writing to stdout —
+# `-h` does exactly that, producing no output and never exiting. Without a
+# deadline one such file would stall an entire shoot with nothing to show for
+# it. Generous enough for a large raw on a slow external drive.
+CONVERTER_TIMEOUT = 300
+
+# Metadata reads and writes are fast; this only bounds a hang.
+EXIFTOOL_TIMEOUT = 120
+
+
+def run_tool(cmd: list[str], *, timeout: int, what: str, **kwargs):
+    """Run a helper program with a deadline, reporting a hang as a failure."""
+    try:
+        return subprocess.run(cmd, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"{what} did not finish within {timeout}s and was stopped. "
+            "It may be waiting on a dialog — try running it once by hand."
+        ) from None
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +66,8 @@ DNG_CONVERTER = Path(
 def _exiftool_get(path: Path, *tags: str) -> dict[str, str]:
     """Return a dict of {tag: value} from exiftool for the given file."""
     args = [f"-{t}" for t in tags] + ["-s3", "-f", str(path)]
-    result = subprocess.run(["exiftool"] + args, capture_output=True, text=True)
+    result = run_tool(["exiftool"] + args, timeout=EXIFTOOL_TIMEOUT,
+                      what="exiftool", capture_output=True, text=True)
     values = result.stdout.strip().split("\n")
     return {tag: (values[i] if i < len(values) else "-") for i, tag in enumerate(tags)}
 
@@ -60,40 +97,80 @@ def get_iso(cr2_path: Path) -> int:
 # Auto-adjustment analysis
 # ---------------------------------------------------------------------------
 
-def compute_auto_adjustments(cr2_path: Path) -> dict:
-    """
-    Analyze raw image data and compute Camera Raw-style XMP adjustment values.
-    Returns: exposure, shadows, highlights, color_temp, tint, luminance_nr
-    """
-    iso = get_iso(cr2_path)
+# Analysis only needs the shape of the histogram, not every pixel, so tone
+# statistics are taken from a strided sample. At stride 4 that is ~20x faster
+# than the full frame and moves the resulting values by well under one unit.
+ANALYSIS_STRIDE = 4
 
+
+def decode_for_analysis(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
+    """
+    Decode a raw file once, returning (8-bit RGB, baseline temp in K, wb multipliers).
+
+    Unpacking the sensor data is the dominant cost of an import, so callers that
+    need both a preview and its statistics should decode through here and pass
+    the result around rather than opening the file twice.
+    """
     with rawpy.imread(str(cr2_path)) as raw:
-        # --- White Balance ---
         cam_mul = np.array(raw.camera_whitebalance[:4], dtype=float)
         cam_mul /= cam_mul[1]
 
         # R/B ratio → color temperature (empirical mapping)
-        rb_ratio = cam_mul[0] / cam_mul[2]
-        color_temp = int(np.clip(5500 / rb_ratio, 2500, 10000))
+        rb_ratio = cam_mul[0] / cam_mul[2] if cam_mul[2] > 0 else 1.0
+        baseline_temp = int(np.clip(5500 / rb_ratio, 2500, 10000))
 
-        # Tint from G1/G2 channel imbalance
-        tint = 0
-        if len(cam_mul) >= 4 and cam_mul[3] > 0:
-            tint = int(np.clip((cam_mul[1] - cam_mul[3]) * 20, -50, 50))
-
-        # --- Render preview for tone analysis ---
         rgb = raw.postprocess(
             use_camera_wb=True,
             half_size=True,
             no_auto_bright=True,
-            output_bps=16,
+            output_bps=8,
         )
+    return rgb, baseline_temp, cam_mul
 
-    img = rgb.astype(np.float32) / 65535.0
-    lum = 0.2126 * img[:, :, 0] + 0.7152 * img[:, :, 1] + 0.0722 * img[:, :, 2]
+
+def _tone_statistics(rgb: np.ndarray) -> tuple[float, float, float]:
+    """Return (median, 10th, 90th percentile) luminance from a strided sample."""
+    sample = rgb[::ANALYSIS_STRIDE, ::ANALYSIS_STRIDE]
+    lum = (
+        0.2126 * sample[:, :, 0]
+        + 0.7152 * sample[:, :, 1]
+        + 0.0722 * sample[:, :, 2]
+    ).astype(np.float32) * (1.0 / 255.0)
+    # One sort for all three cut points rather than three separate passes.
+    p10, p50, p90 = np.percentile(lum, (10, 50, 90))
+    return float(p50), float(p10), float(p90)
+
+
+def compute_auto_adjustments(
+    cr2_path: Path,
+    decoded: tuple[np.ndarray, int, np.ndarray] | None = None,
+    iso: int | None = None,
+    style_model=None,
+) -> dict:
+    """
+    Analyze raw image data and compute Camera Raw-style XMP adjustment values.
+    Returns: exposure, shadows, highlights, color_temp, tint, luminance_nr
+
+    Pass ``decoded`` (from decode_for_analysis) and ``iso`` to reuse work a
+    caller has already done instead of paying for a second decode.
+
+    ``style_model`` applies a learned correction on top of these heuristics.
+    It only ever adjusts the result — with no training data the output is
+    identical to the plain heuristic.
+    """
+    if iso is None:
+        iso = get_iso(cr2_path)
+
+    rgb, color_temp, cam_mul = decoded if decoded is not None else decode_for_analysis(cr2_path)
+
+    # Tint from G1/G2 channel imbalance
+    tint = 0
+    if len(cam_mul) >= 4 and cam_mul[3] > 0:
+        tint = int(np.clip((cam_mul[1] - cam_mul[3]) * 20, -50, 50))
+
+    median_lum, p10, p90 = _tone_statistics(rgb)
 
     # Exposure: shift median toward 0.40
-    median_lum = float(np.median(lum))
     if median_lum > 0.001:
         ev_shift = np.log2(0.40 / median_lum)
         exposure = round(float(np.clip(ev_shift, -2.0, 2.0)) * 4) / 4
@@ -101,7 +178,6 @@ def compute_auto_adjustments(cr2_path: Path) -> dict:
         exposure = 0.0
 
     # Shadows: lift based on 10th-percentile darkness
-    p10 = float(np.percentile(lum, 10))
     if p10 < 0.05:
         shadows = int(np.clip((0.10 - p10) / 0.10 * 60, 0, 80))
     elif p10 < 0.12:
@@ -110,7 +186,6 @@ def compute_auto_adjustments(cr2_path: Path) -> dict:
         shadows = 0
 
     # Highlights: pull back based on 90th-percentile brightness
-    p90 = float(np.percentile(lum, 90))
     if p90 > 0.92:
         highlights = int(np.clip((p90 - 0.92) / 0.08 * -80, -100, 0))
     elif p90 > 0.80:
@@ -127,7 +202,7 @@ def compute_auto_adjustments(cr2_path: Path) -> dict:
     elif iso >= 800:
         luminance_nr = 5
 
-    return {
+    result = {
         "exposure": exposure,
         "shadows": shadows,
         "highlights": highlights,
@@ -137,20 +212,94 @@ def compute_auto_adjustments(cr2_path: Path) -> dict:
         "iso": iso,
     }
 
+    if style_model is not None and getattr(style_model, "is_trained", False):
+        import style
+
+        features = style.extract_features(rgb, iso, cam_mul)
+        result = style.apply_style(result, features, style_model)
+        result["iso"] = iso
+        result["styled"] = True
+
+    return result
+
+
+def photo_features(cr2_path: Path, decoded=None, iso: int | None = None) -> dict:
+    """Feature vector describing a photo, for recording or predicting an edit."""
+    import style
+
+    rgb, _, cam_mul = decoded if decoded is not None else decode_for_analysis(cr2_path)
+    if iso is None:
+        iso = get_iso(cr2_path)
+    return style.extract_features(rgb, iso, cam_mul)
+
+
+# ---------------------------------------------------------------------------
+# Library listing
+# ---------------------------------------------------------------------------
+
+# Every raw format the DNG Converter and LibRaw both handle. Defined once
+# here because convert, watch, cull, the library listing and the card ingest
+# must agree: a narrower list in one of them silently skips files. Before
+# this was shared, pointing convert at a folder holding a second body's CR3
+# and NEF files converted the CR2s and said nothing about the rest.
+RAW_SUFFIXES = (".cr2", ".cr3", ".nef", ".arw", ".raf", ".orf", ".rw2", ".dng")
+
+RAW_PATTERNS = tuple(
+    f"**/*{ext}" for suffix in RAW_SUFFIXES for ext in (suffix, suffix.upper())
+)
+
+# Directories that hold generated files, never photographs.
+LIBRARY_EXCLUDED = {".photo-room-thumbs"}
+
+
+def list_photos(root: Path) -> list[Path]:
+    """
+    Every photograph under ``root``, once each.
+
+    After conversion a library holds both IMG_0001.CR2 and IMG_0001.dng.
+    They are one photograph, so the DNG is listed and the source raw hidden:
+    the DNG carries the edits and embeds the original anyway. Listing both
+    showed every frame twice and made a 431-frame shoot look like 862.
+    """
+    found: dict[tuple[Path, str], Path] = {}
+
+    for pattern in RAW_PATTERNS:
+        for path in root.glob(pattern):
+            if LIBRARY_EXCLUDED & set(path.parts):
+                continue
+            key = (path.parent, path.stem)
+            existing = found.get(key)
+            if existing is None or (
+                existing.suffix.lower() != ".dng" and path.suffix.lower() == ".dng"
+            ):
+                found[key] = path
+
+    return sorted(found.values())
+
 
 # ---------------------------------------------------------------------------
 # Conversion pipeline
 # ---------------------------------------------------------------------------
 
 def convert_cr2_to_dng(cr2_path: Path, output_dir: Path) -> Path:
+    """
+    Convert one raw file to DNG. Named for CR2 but format-agnostic: the
+    converter handles every format in RAW_SUFFIXES.
+    """
     cmd = [
         str(DNG_CONVERTER),
         "-d", str(output_dir),
-        "-l",   # linear DNG (preserves raw data)
+        # Mosaic rather than linear (-l): the sensor data is identical, but a
+        # linear DNG stores it demosaiced at roughly twice the size. On a
+        # 431-frame shoot that is 56GB against 26GB, and it converts faster.
         "-e",   # embed original raw
         str(cr2_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = run_tool(
+        cmd, timeout=CONVERTER_TIMEOUT,
+        what=f"DNG Converter on {cr2_path.name}",
+        capture_output=True, text=True,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"DNG Converter failed: {result.stderr.strip()}")
     dng_path = output_dir / cr2_path.with_suffix(".dng").name
@@ -159,21 +308,155 @@ def convert_cr2_to_dng(cr2_path: Path, output_dir: Path) -> Path:
     return dng_path
 
 
-def embed_xmp_adjustments(dng_path: Path, adj: dict) -> None:
-    xmp_args = [
-        "-XMP-crs:ProcessVersion=11.0",
-        "-XMP-crs:WhiteBalance=Custom",
-        f"-XMP-crs:ColorTemperature={adj['color_temp']}",
-        f"-XMP-crs:Tint={adj['tint']}",
-        f"-XMP-crs:Exposure2012={adj['exposure']:.2f}",
-        f"-XMP-crs:Shadows2012={adj['shadows']}",
-        f"-XMP-crs:Highlights2012={adj['highlights']}",
-        f"-XMP-crs:LuminanceSmoothing={adj['luminance_nr']}",
-        "-overwrite_original",
+def verify_xmp_written(dng_path: Path, expected: dict[str, str]) -> None:
+    """
+    Confirm tags actually landed in the file.
+
+    exiftool has been observed returning success while silently dropping
+    XMP-crs tags — white balance in particular — so an exit code of 0 is not
+    sufficient evidence that an edit was saved.
+    """
+    tags = list(expected)
+    args = [f"-XMP-crs:{t}" for t in tags] + ["-s3", "-f", str(dng_path)]
+    result = run_tool(["exiftool"] + args, timeout=EXIFTOOL_TIMEOUT,
+                      what="exiftool", capture_output=True, text=True)
+    values = result.stdout.strip().split("\n")
+
+    missing = [
+        tag for i, tag in enumerate(tags)
+        if i >= len(values) or values[i].strip() in ("-", "")
     ]
-    result = subprocess.run(["exiftool"] + xmp_args + [str(dng_path)], capture_output=True, text=True)
+    if missing:
+        raise RuntimeError(
+            f"exiftool reported success but did not write {', '.join(missing)} "
+            f"to {dng_path.name}"
+        )
+
+
+def embed_xmp_adjustments(dng_path: Path, adj: dict) -> None:
+    values = {
+        "ProcessVersion": "11.0",
+        "WhiteBalance": "Custom",
+        "ColorTemperature": str(adj["color_temp"]),
+        "Tint": str(adj["tint"]),
+        "Exposure2012": f"{adj['exposure']:.2f}",
+        "Shadows2012": str(adj["shadows"]),
+        "Highlights2012": str(adj["highlights"]),
+        "LuminanceSmoothing": str(adj["luminance_nr"]),
+    }
+
+    # A learned style can add settings the heuristic never produces. Writing
+    # only the eight above meant ingest reported "[styled]" while discarding
+    # the contrast, vibrance and saturation it had just computed.
+    for key, tag in (
+        ("contrast", "Contrast2012"), ("whites", "Whites2012"),
+        ("blacks", "Blacks2012"), ("vibrance", "Vibrance"),
+        ("saturation", "Saturation"),
+    ):
+        if key in adj:
+            values[tag] = str(int(round(float(adj[key]))))
+    xmp_args = [f"-XMP-crs:{k}={v}" for k, v in values.items()] + ["-overwrite_original"]
+
+    result = run_tool(["exiftool"] + xmp_args + [str(dng_path)],
+                      timeout=EXIFTOOL_TIMEOUT, what="exiftool",
+                      capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
+
+    # Colour temperature is the tag seen to vanish, so prove the write stuck.
+    verify_xmp_written(dng_path, {"ColorTemperature": values["ColorTemperature"]})
+
+
+# ---------------------------------------------------------------------------
+# Edits made elsewhere
+# ---------------------------------------------------------------------------
+
+def detect_foreign_edits(path: Path) -> str | None:
+    """
+    Return the name of the software that last edited this file, if it was
+    not this tool.
+
+    A DNG exported from Lightroom carries its develop settings internally.
+    Saving over them, or stripping them with a revert, destroys editing work
+    that exists nowhere else unless the photographer also has a catalogue.
+    """
+    meta = _exiftool_get(path, "XMP-crs:Version", "CreatorTool", "Software")
+
+    version = meta.get("XMP-crs:Version", "-")
+    creator = meta.get("CreatorTool", "-")
+    software = meta.get("Software", "-")
+
+    for value in (creator, software):
+        if value and value != "-" and any(
+            name in value for name in ("Lightroom", "Camera Raw", "Photoshop", "Bridge")
+        ):
+            return value
+
+    # crs:Version without a recognised creator still means foreign settings.
+    if version and version != "-":
+        return "another Camera Raw application"
+    return None
+
+
+def has_sidecar(path: Path) -> bool:
+    """True when a Lightroom-style .xmp sidecar sits beside this file."""
+    return path.with_suffix(".xmp").exists()
+
+
+# ---------------------------------------------------------------------------
+# Revert to original
+# ---------------------------------------------------------------------------
+
+def strip_xmp_adjustments(dng_path: Path) -> None:
+    """Remove all Camera Raw develop settings, returning the DNG to a neutral render."""
+    result = run_tool(
+        ["exiftool", "-XMP-crs:all=", "-overwrite_original", str(dng_path)],
+        timeout=EXIFTOOL_TIMEOUT, what="exiftool",
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"exiftool failed: {result.stderr.strip()}")
+
+
+def get_embedded_original_name(dng_path: Path) -> str | None:
+    """Return the filename of the raw embedded by DNG Converter's -e flag, or None."""
+    name = _exiftool_get(dng_path, "OriginalRawFileName").get("OriginalRawFileName", "-")
+    return name if name and name != "-" else None
+
+
+def extract_original_raw(dng_path: Path, output_dir: Path) -> Path:
+    """
+    Recover the untouched original raw file embedded inside the DNG.
+
+    Extraction goes through the DNG Converter's own -x flag rather than
+    exiftool: OriginalRawFileData hands back the compressed, chunked blob
+    as stored, which is not a loadable raw file. Adobe's extractor
+    reverses its own packing and returns the original bytes exactly.
+    """
+    original_name = get_embedded_original_name(dng_path)
+    if not original_name:
+        raise RuntimeError(
+            f"{dng_path.name} has no embedded original "
+            "(was it converted without the -e flag?)"
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    result = run_tool(
+        [str(DNG_CONVERTER), "-x", "-d", str(output_dir), str(dng_path)],
+        timeout=CONVERTER_TIMEOUT,
+        what=f"DNG Converter extracting {dng_path.name}",
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"DNG Converter extraction failed: {result.stderr.strip()}")
+
+    out_path = output_dir / original_name
+    if not out_path.exists():
+        raise RuntimeError(
+            f"Could not extract embedded original from {dng_path.name}: "
+            f"expected {original_name}"
+        )
+    return out_path
 
 
 def resolve_output_dir(cr2_path: Path, base_output: Path | None, date_folders: bool) -> Path:
@@ -196,7 +479,16 @@ def process_file(
     date_folders: bool,
     skip_existing: bool,
     verbose: bool,
+    style_model=None,
 ) -> Path | None:
+    """
+    Convert one raw file and write its adjustments.
+
+    ``style_model`` applies the learned correction, as the card ingest does.
+    Without it the two paths disagreed: a shoot copied off a card came out
+    in the photographer's own style while the same files converted by hand
+    came out on the plain heuristic.
+    """
     out_dir = resolve_output_dir(cr2_path, base_output, date_folders)
     dng_expected = out_dir / cr2_path.with_suffix(".dng").name
 
@@ -207,7 +499,7 @@ def process_file(
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    adj = compute_auto_adjustments(cr2_path)
+    adj = compute_auto_adjustments(cr2_path, style_model=style_model)
 
     if verbose:
         tqdm.write(
@@ -216,6 +508,7 @@ def process_file(
             f"EV={adj['exposure']:+.2f} shadows={adj['shadows']:+d} "
             f"highlights={adj['highlights']:+d} NR={adj['luminance_nr']} "
             f"(ISO {adj['iso']})"
+            + ("  [styled]" if adj.get("styled") else "")
         )
 
     dng_path = convert_cr2_to_dng(cr2_path, out_dir)
@@ -228,34 +521,82 @@ def process_file(
 # ---------------------------------------------------------------------------
 
 def cmd_convert(args: argparse.Namespace) -> None:
+    # Setup instructions and errors go to stderr, which is unbuffered, while
+    # stdout is block-buffered when piped — so without this the upload
+    # instructions appeared above the conversion summary that precedes them.
+    _unbuffer_stdout()
+
     cr2_files: list[Path] = []
     for inp in args.inputs:
         inp = Path(inp)
         if inp.is_dir():
-            cr2_files.extend(sorted(inp.glob("**/*.CR2")) + sorted(inp.glob("**/*.cr2")))
-        elif inp.suffix.lower() == ".cr2":
+            # Already-converted DNGs are skipped: converting a DNG to a DNG
+            # is not what anyone means by pointing this at a folder.
+            cr2_files.extend(
+                p for p in list_photos(inp) if p.suffix.lower() != ".dng"
+            )
+        elif inp.suffix.lower() in RAW_SUFFIXES:
             cr2_files.append(inp)
         else:
-            print(f"Skipping {inp} (not a CR2 file or directory)", file=sys.stderr)
+            print(f"Skipping {inp} (not a raw file or directory)", file=sys.stderr)
 
+    cr2_files = sorted(set(cr2_files))
     if not cr2_files:
-        print("No CR2 files found.", file=sys.stderr)
+        print("No raw files found.", file=sys.stderr)
         sys.exit(1)
 
     output = Path(args.output) if args.output else None
     converted: list[Path] = []
     failed: list[str] = []
 
-    with tqdm(cr2_files, unit="file", desc="Converting") as bar:
-        for cr2 in bar:
-            bar.set_postfix_str(cr2.name)
-            try:
-                dng = process_file(cr2, output, args.date_folders, args.skip_existing, args.verbose)
-                if dng:
-                    converted.append(dng)
-            except Exception as exc:
-                tqdm.write(f"  ERROR {cr2.name}: {exc}", file=sys.stderr)
-                failed.append(cr2.name)
+    # Fitted once for the whole run rather than per file.
+    style_model = _load_style_model(verbose=args.verbose)
+
+    jobs = max(1, int(getattr(args, "jobs", DEFAULT_JOBS)))
+    jobs = min(jobs, len(cr2_files))
+
+    if jobs == 1:
+        with tqdm(cr2_files, unit="file", desc="Converting") as bar:
+            for cr2 in bar:
+                bar.set_postfix_str(cr2.name)
+                try:
+                    dng = process_file(cr2, output, args.date_folders,
+                                       args.skip_existing, args.verbose,
+                                       style_model=style_model)
+                    if dng:
+                        converted.append(dng)
+                except Exception as exc:
+                    tqdm.write(f"  ERROR {cr2.name}: {exc}", file=sys.stderr)
+                    failed.append(cr2.name)
+    else:
+        # Results are collected as they finish, then sorted, so the summary
+        # does not depend on which worker happened to get there first.
+        lock = threading.Lock()
+        with tqdm(total=len(cr2_files), unit="file", desc=f"Converting x{jobs}") as bar:
+            with ThreadPoolExecutor(max_workers=jobs) as pool:
+                futures = {
+                    pool.submit(
+                        process_file, cr2, output,
+                        args.date_folders, args.skip_existing, args.verbose,
+                        style_model,
+                    ): cr2
+                    for cr2 in cr2_files
+                }
+                for future in as_completed(futures):
+                    cr2 = futures[future]
+                    try:
+                        dng = future.result()
+                        if dng:
+                            with lock:
+                                converted.append(dng)
+                    except Exception as exc:
+                        tqdm.write(f"  ERROR {cr2.name}: {exc}", file=sys.stderr)
+                        with lock:
+                            failed.append(cr2.name)
+                    bar.update(1)
+                    bar.set_postfix_str(cr2.name)
+        converted.sort()
+        failed.sort()
 
     print(f"\nConverted {len(converted)} file(s)", end="")
     if failed:
@@ -264,6 +605,28 @@ def cmd_convert(args: argparse.Namespace) -> None:
         print(".")
 
     _do_uploads(converted, args)
+
+
+def _load_style_model(verbose: bool = False):
+    """
+    The learned style, or None when nothing has been learned yet.
+
+    A failure here must not stop a conversion: an unreadable store means
+    the plain heuristic, not a lost shoot.
+    """
+    try:
+        import style
+
+        model = style.load_model()
+    except Exception:
+        return None
+
+    if model.is_trained:
+        if verbose:
+            print(f"  Using learned style ({model.n_samples} edits, "
+                  f"{model.confidence:.0%} confidence)")
+        return model
+    return None
 
 
 def _do_uploads(dngs: list[Path], args: argparse.Namespace) -> None:
@@ -286,25 +649,234 @@ def _upload_google(dngs: list[Path], verbose: bool) -> None:
         n = upload_to_google_photos(dngs, verbose=verbose)
         print(f"Uploaded {n} file(s) to Google Photos.")
     except FileNotFoundError:
-        pass
+        # The setup instructions have already gone to stderr, but saying
+        # nothing here leaves "Uploading..." as the last word and looks like
+        # the upload is still running.
+        print("Google Photos upload skipped — credentials.json not found "
+              "(setup steps above).")
     except Exception as exc:
+        print(f"Google Photos upload failed: {exc}")
         print(f"Google Photos upload failed: {exc}", file=sys.stderr)
 
 
 def _upload_amazon(dngs: list[Path], verbose: bool) -> None:
     try:
+        import uploader
         from uploader import upload_to_amazon_photos
     except ImportError:
         print("uploader.py not found.", file=sys.stderr)
         return
-    print(f"\nUploading {len(dngs)} DNG(s) to Amazon Photos...")
     try:
         n = upload_to_amazon_photos(dngs, verbose=verbose)
-        print(f"Uploaded {n} file(s) to Amazon Photos.")
+        print(f"\nUploaded {n} file(s) to Amazon Photos.")
+    except uploader.AmazonUnavailable as exc:
+        # Announced before the attempt rather than after, so the message is
+        # not preceded by an "Uploading..." line that never completes.
+        print(f"\nAmazon Photos: {exc}")
+        return
     except FileNotFoundError:
-        pass
+        print("\nAmazon Photos upload skipped — amazon_credentials.json not found "
+              "(setup steps above).")
     except Exception as exc:
+        print(f"Amazon Photos upload failed: {exc}")
         print(f"Amazon Photos upload failed: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: revert
+# ---------------------------------------------------------------------------
+
+def cmd_revert(args: argparse.Namespace) -> None:
+    _unbuffer_stdout()
+
+    dng_files: list[Path] = []
+    for inp in args.inputs:
+        inp = Path(inp)
+        if inp.is_dir():
+            dng_files.extend(sorted(inp.glob("**/*.dng")) + sorted(inp.glob("**/*.DNG")))
+        elif inp.suffix.lower() == ".dng":
+            dng_files.append(inp)
+        else:
+            print(f"Skipping {inp} (not a DNG file or directory)", file=sys.stderr)
+
+    if not dng_files:
+        print("No DNG files found.", file=sys.stderr)
+        sys.exit(1)
+
+    # Refuse to strip settings this tool did not write, unless told to.
+    if not args.extract_original and not args.force:
+        foreign = []
+        for dng in dng_files:
+            who = detect_foreign_edits(dng)
+            if who:
+                foreign.append((dng, who))
+
+        if foreign:
+            print(f"\n{len(foreign)} of {len(dng_files)} file(s) carry edits made "
+                  "in other software:", file=sys.stderr)
+            for dng, who in foreign[:5]:
+                print(f"  {dng.name}: {who}", file=sys.stderr)
+            if len(foreign) > 5:
+                print(f"  ...and {len(foreign) - 5} more", file=sys.stderr)
+            print(
+                "\nReverting would discard that work. Re-run with --force to do it "
+                "anyway,\nor use --extract-original, which only writes the embedded "
+                "raw back out\nand changes nothing.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    reverted = 0
+    failed: list[str] = []
+
+    with tqdm(dng_files, unit="file", desc="Reverting") as bar:
+        for dng in bar:
+            bar.set_postfix_str(dng.name)
+            try:
+                if args.extract_original:
+                    out_dir = Path(args.output) if args.output else dng.parent
+                    recovered = extract_original_raw(dng, out_dir)
+                    if args.verbose:
+                        tqdm.write(f"  {dng.name} → {recovered}")
+                else:
+                    strip_xmp_adjustments(dng)
+                    if args.verbose:
+                        tqdm.write(f"  {dng.name}: adjustments cleared")
+                reverted += 1
+            except Exception as exc:
+                tqdm.write(f"  ERROR {dng.name}: {exc}", file=sys.stderr)
+                failed.append(dng.name)
+
+    action = "Recovered original raw for" if args.extract_original else "Reverted"
+    print(f"\n{action} {reverted} file(s)", end="")
+    if failed:
+        print(f", {len(failed)} failed: {', '.join(failed)}")
+    else:
+        print(".")
+
+
+def _unbuffer_stdout() -> None:
+    """Switch stdout to line buffering, for long-running commands."""
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):  # pragma: no cover - exotic streams
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: cull
+# ---------------------------------------------------------------------------
+
+def cmd_cull(args: argparse.Namespace) -> None:
+    import quality
+
+    # Errors go to stderr, which is unbuffered, while stdout is block-buffered
+    # when piped — so without this the failures appeared above the summary that
+    # was supposed to introduce them.
+    _unbuffer_stdout()
+
+    paths: list[Path] = []
+    for inp in args.inputs:
+        p = Path(inp)
+        if p.is_dir():
+            paths.extend(list_photos(p))
+        elif p.suffix.lower() in RAW_SUFFIXES:
+            paths.append(p)
+    paths = sorted(set(paths))
+
+    if not paths:
+        print("No raw files found.", file=sys.stderr)
+        sys.exit(1)
+
+    assessments: dict[str, dict] = {}
+    failed: list[str] = []
+
+    with tqdm(paths, unit="file", desc="Assessing") as bar:
+        for p in bar:
+            bar.set_postfix_str(p.name)
+            try:
+                rgb, _, _ = decode_for_analysis(p)
+                # Keyed by full path: two shoots both containing IMG_0001
+                # silently overwrote each other, under-reporting the count.
+                assessments[str(p)] = quality.assess(rgb)
+            except Exception as exc:
+                tqdm.write(f"  ERROR {p.name}: {exc}", file=sys.stderr)
+                failed.append(p.name)
+
+    unusable = {n: a for n, a in assessments.items() if a["verdict"]}
+
+    total = len(assessments) + len(failed)
+    if failed:
+        # Saying "1 frame assessed" of four hides three files rather than
+        # reporting them.
+        print(f"\n{len(assessments)} of {total} frame(s) assessed "
+              f"— {len(failed)} could not be read")
+    else:
+        print(f"\n{len(assessments)} frame(s) assessed")
+
+    if unusable:
+        print(f"\n{len(unusable)} unusable — no adjustment recovers these:")
+        for name, a in sorted(unusable.items()):
+            print(f"  {Path(name).name:<20} {a['verdict']:<6} {a['reason']}")
+    else:
+        print("\nNo unusable frames.")
+
+    if args.sharpness:
+        ranked = quality.rank_by_sharpness(assessments)
+        shown = ranked[:args.limit]
+        print(f"\nLeast detailed {len(shown)} of {len(ranked)} usable frames:")
+        print(f"  {'frame':<20} {'score':>8} {'percentile':>11}")
+        for name, score, pct in shown:
+            print(f"  {Path(name).name:<20} {score:8.1f} {pct:>10.0f}%")
+        print("\nThis ranks how much fine detail each frame contains, which is not")
+        print("the same as whether focus was missed — a sharp subject against smooth")
+        print("grass scores low. Use it to decide what to look at, not what to delete.")
+
+    if failed:
+        shown = ", ".join(failed[:5])
+        more = f" and {len(failed) - 5} more" if len(failed) > 5 else ""
+        print(f"\nUnreadable: {shown}{more}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: style
+# ---------------------------------------------------------------------------
+
+def cmd_style(args: argparse.Namespace) -> None:
+    import style as style_mod
+
+    if args.clear:
+        removed = style_mod.clear_history()
+        print(f"Forgot {removed} recorded edit(s).")
+        return
+
+    summary = style_mod.summarize()
+    if summary.get("error"):
+        print(f"Could not read the style store: {summary['error']}", file=sys.stderr)
+        sys.exit(1)
+
+    n = summary["n_samples"]
+    if n == 0:
+        print("No edits recorded yet.")
+        print("Save some edits in the editor and your style will be learned from them.")
+        return
+
+    print(f"{n} edit(s) recorded")
+    if not summary["trained"]:
+        print(f"Not enough yet to predict — needs {style_mod.MIN_SAMPLES}.")
+        return
+
+    print(f"Confidence: {summary['confidence']:.0%} "
+          f"(share of the learned correction currently applied)\n")
+    print(f"  {'adjustment':<12} {'tendency':>10}  {'consistency':>11}  {'edits':>6}")
+    for key, t in sorted(
+        summary["tendencies"].items(),
+        key=lambda kv: -abs(kv[1]["mean_correction"]),
+    ):
+        print(f"  {key:<12} {t['mean_correction']:>+10.2f}  "
+              f"{t['consistency']:>11.2f}  {t['samples']:>6}")
+    print("\nTendency is the average amount you move a slider past the automatic value.")
+    print("Consistency near 1.0 means you do it the same way every time.")
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +884,11 @@ def _upload_amazon(dngs: list[Path], verbose: bool) -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_watch(args: argparse.Namespace) -> None:
+    # A watcher runs for hours, usually with its output redirected to a log or
+    # a pipe — where Python block-buffers stdout and nothing appears until the
+    # process exits. Line buffering makes progress visible as it happens.
+    _unbuffer_stdout()
+
     try:
         from watchdog.observers import Observer
         from watchdog.events import FileSystemEventHandler, FileCreatedEvent
@@ -325,13 +902,14 @@ def cmd_watch(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     output = Path(args.output) if args.output else None
+    watch_style_model = _load_style_model(verbose=args.verbose)
 
     class CR2Handler(FileSystemEventHandler):
         def on_created(self, event: FileCreatedEvent):
             if event.is_directory:
                 return
             path = Path(event.src_path)
-            if path.suffix.lower() != ".cr2":
+            if path.suffix.lower() not in RAW_SUFFIXES or path.suffix.lower() == ".dng":
                 return
 
             # Wait for the file to finish writing (size stabilizes)
@@ -348,7 +926,9 @@ def cmd_watch(args: argparse.Namespace) -> None:
 
             print(f"\nNew file detected: {path.name}")
             try:
-                dng = process_file(path, output, args.date_folders, args.skip_existing, args.verbose)
+                dng = process_file(path, output, args.date_folders,
+                                   args.skip_existing, args.verbose,
+                                   style_model=watch_style_model)
                 if dng:
                     print(f"Done → {dng}")
                     _do_uploads([dng], args)
@@ -372,7 +952,14 @@ def cmd_watch(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
-    if not DNG_CONVERTER.exists():
+    # Only the commands that actually shell out to the converter should
+    # require it. --help and a plain revert (which only calls exiftool) were
+    # exiting 1 on a machine without Adobe's converter installed.
+    argv1 = sys.argv[1] if len(sys.argv) > 1 else ""
+    reads_only = argv1 in ("style", "cull") or argv1.startswith("-")
+    extracting = argv1 == "revert" and "--extract-original" in sys.argv
+    needs_converter = bool(argv1) and (not reads_only) and (argv1 != "revert" or extracting)
+    if needs_converter and not DNG_CONVERTER.exists():
         print(
             "ERROR: Adobe DNG Converter not found.\n"
             "Download free from: https://helpx.adobe.com/camera-raw/using/adobe-dng-converter.html",
@@ -388,13 +975,18 @@ def main():
             "  python process.py convert ~/Pictures/shoot/ -o ~/Pictures/dng/ --date-folders\n"
             "  python process.py convert IMG_0001.CR2 --upload-google --upload-amazon -v\n"
             "  python process.py watch ~/Pictures/import/ -o ~/Pictures/dng/ --upload-google --upload-amazon\n"
+            "  python process.py revert ~/Pictures/dng/IMG_0001.dng\n"
+            "  python process.py revert ~/Pictures/dng/ --extract-original -o ~/Pictures/recovered/\n"
+            "  python process.py style\n"
         ),
     )
     subs = parser.add_subparsers(dest="cmd")
 
     def _add_upload_flags(p: argparse.ArgumentParser) -> None:
         p.add_argument("--upload-google", action="store_true", help="Upload DNGs to Google Photos")
-        p.add_argument("--upload-amazon", action="store_true", help="Upload DNGs to Amazon Photos")
+        p.add_argument("--upload-amazon", action="store_true",
+                       help="Upload DNGs to Amazon Photos (NOT POSSIBLE — Amazon "
+                            "retired the API; see README)")
 
     # -- convert --
     conv = subs.add_parser("convert", help="Convert CR2 file(s) or folder(s) to DNG")
@@ -404,6 +996,10 @@ def main():
     conv.add_argument("--skip-existing", action="store_true", default=True, help="Skip already-converted files (default: on)")
     conv.add_argument("--no-skip", dest="skip_existing", action="store_false", help="Re-convert even if DNG exists")
     conv.add_argument("-v", "--verbose", action="store_true", help="Print adjustment values per file")
+    conv.add_argument(
+        "-j", "--jobs", type=int, default=DEFAULT_JOBS,
+        help=f"Files to convert at once (default: {DEFAULT_JOBS}; 1 disables parallelism)",
+    )
     _add_upload_flags(conv)
 
     # -- watch --
@@ -415,12 +1011,44 @@ def main():
     watch.add_argument("-v", "--verbose", action="store_true")
     _add_upload_flags(watch)
 
+    # -- revert --
+    rev = subs.add_parser("revert", help="Undo edits on DNG(s) or recover the original raw")
+    rev.add_argument("inputs", nargs="+", help="DNG file(s) or folder(s)")
+    rev.add_argument(
+        "--extract-original",
+        action="store_true",
+        help="Write out the untouched original raw embedded at conversion time",
+    )
+    rev.add_argument("-o", "--output", help="Where to write recovered originals (default: alongside the DNG)")
+    rev.add_argument("-v", "--verbose", action="store_true", help="Print each file as it is reverted")
+    rev.add_argument("--force", action="store_true",
+                     help="Revert even files carrying edits made in other software")
+
+    # -- cull --
+    cull = subs.add_parser("cull", help="Find unusable frames and rank the rest by detail")
+    cull.add_argument("inputs", nargs="+", help="Raw file(s) or folder(s)")
+    cull.add_argument("--sharpness", action="store_true", help="Also rank frames by detail")
+    cull.add_argument("--limit", type=int, default=15, help="How many to list (default: 15)")
+
+    # -- style --
+    st = subs.add_parser("style", help="Show what has been learned from your edits")
+    st.add_argument("--clear", action="store_true", help="Forget every recorded edit")
+
     args = parser.parse_args()
+
+    if args.cmd == "style":
+        cmd_style(args)
+        return
+    if args.cmd == "cull":
+        cmd_cull(args)
+        return
 
     if args.cmd == "convert":
         cmd_convert(args)
     elif args.cmd == "watch":
         cmd_watch(args)
+    elif args.cmd == "revert":
+        cmd_revert(args)
     else:
         parser.print_help()
 

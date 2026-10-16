@@ -13,6 +13,7 @@ Amazon Photos setup:
 """
 
 import json
+import os
 import sys
 import threading
 import urllib.parse
@@ -24,6 +25,22 @@ import requests
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+
+
+def _write_secret(path: Path, text: str) -> None:
+    """
+    Write a file containing live OAuth tokens, readable only by this user.
+
+    The default 0644 would expose the token to every other account on the
+    machine. The mode is set before any content is written so there is no
+    window where the file exists with wider permissions.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    # An existing file keeps its old mode through O_CREAT, so set it explicitly.
+    os.chmod(path, 0o600)
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +77,7 @@ def _google_credentials() -> Credentials:
                 raise FileNotFoundError("credentials.json not found")
             flow = InstalledAppFlow.from_client_secrets_file(str(_G_CREDS), _G_SCOPES)
             creds = flow.run_local_server(port=0)
-        _G_TOKEN.write_text(creds.to_json())
+        _write_secret(_G_TOKEN, creds.to_json())
     return creds
 
 
@@ -97,8 +114,35 @@ def upload_to_google_photos(paths: list[Path], verbose: bool = False) -> int:
     resp = session.post(_G_BATCH_URL, json={"newMediaItems": new_items})
     resp.raise_for_status()
 
+    # Since March 2025 batchCreate answers 207 MULTI-STATUS when only some
+    # items were created. That is a 2xx, so it does not raise — without
+    # reading the per-item results a partial upload looks like a smaller
+    # successful one, and the photos that failed are never mentioned.
     results = resp.json().get("newMediaItemResults", [])
-    return sum(1 for r in results if r.get("mediaItem"))
+    by_token = {token: name for name, token in upload_tokens}
+
+    created = 0
+    failures: list[tuple[str, str]] = []
+    for item in results:
+        name = by_token.get(item.get("uploadToken", ""), "unknown file")
+        if item.get("mediaItem"):
+            created += 1
+        else:
+            reason = (item.get("status") or {}).get("message", "no reason given")
+            failures.append((name, reason))
+
+    if failures:
+        print(
+            f"  {len(failures)} of {len(results)} item(s) were not created by "
+            "Google Photos:",
+            file=sys.stderr,
+        )
+        for name, reason in failures[:10]:
+            print(f"    {name}: {reason}", file=sys.stderr)
+        if len(failures) > 10:
+            print(f"    ...and {len(failures) - 10} more", file=sys.stderr)
+
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -210,17 +254,46 @@ def _amazon_token() -> tuple[str, str, str]:
         )
         if resp.ok:
             token_data.update(resp.json())
-            _A_TOKEN_FILE.write_text(json.dumps(token_data))
+            _write_secret(_A_TOKEN_FILE, json.dumps(token_data))
             return token_data["access_token"], client_id, client_secret
 
     # Full OAuth flow
     token_data = _amazon_oauth_flow(client_id, client_secret)
-    _A_TOKEN_FILE.write_text(json.dumps(token_data))
+    _write_secret(_A_TOKEN_FILE, json.dumps(token_data))
     return token_data["access_token"], client_id, client_secret
 
 
+class AmazonUnavailable(RuntimeError):
+    """Raised because there is no API left to upload to."""
+
+
 def upload_to_amazon_photos(paths: list[Path], verbose: bool = False) -> int:
-    """Upload DNG files to Amazon Photos. Returns count of successes."""
+    """
+    Upload DNG files to Amazon Photos. Returns count of successes.
+
+    Currently raises instead: there is no API to upload to.
+
+    Amazon closed the Drive API to third parties in August 2019 and shut the
+    Drive service down entirely in December 2023. The endpoint this uses,
+    content-na.drive.amazonaws.com/cdproxy/nodes, answers 404, and the
+    clouddrive:write scope can no longer be granted. Amazon Photos has no
+    public API that replaces it.
+
+    The code below is left intact rather than deleted, so that if Amazon
+    ever publishes an API this is a change of endpoint rather than a
+    rewrite. But running it would send the photographer through a browser
+    authorisation that cannot succeed, so it stops here.
+    """
+    raise AmazonUnavailable(
+        "Amazon Photos uploads are not possible: Amazon closed the Drive API "
+        "to third parties in 2019 and shut the service down in 2023, and "
+        "Amazon Photos has no public API. Nothing this tool can do will make "
+        "this work — the upload endpoint returns 404."
+    )
+
+
+def _upload_to_amazon_photos_unreachable(paths: list[Path], verbose: bool = False) -> int:
+    """Preserved for the day Amazon publishes a replacement API."""
     access_token, _, _ = _amazon_token()
     session = requests.Session()
     session.headers["Authorization"] = f"Bearer {access_token}"
