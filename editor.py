@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 import rawpy
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, url_for
 from PIL import Image, ImageFilter
 
 try:                       # optional: only used for faster resizing
@@ -62,7 +62,38 @@ from process import (
 )
 
 
-app = Flask(__name__)
+# Static assets (static/css, static/js) are resolved relative to this file, not
+# the working directory, so the editor can be launched from anywhere.
+app = Flask(
+    __name__,
+    static_folder=str(Path(__file__).resolve().parent / "static"),
+    template_folder=str(Path(__file__).resolve().parent / "templates"),
+)
+
+
+@app.context_processor
+def _asset_helper():
+    """``asset('js/x.js')`` -> /static/js/x.js?v=<mtime>, so edits bust the cache."""
+    def asset(path: str) -> str:
+        try:
+            version = int((Path(app.static_folder) / path).stat().st_mtime)
+        except OSError:
+            version = 0
+        return url_for("static", filename=path, v=version)
+    return {"asset": asset}
+
+
+@app.after_request
+def _cache_static(response):
+    # Versioned URLs never change content, so they can be cached for good;
+    # an unversioned request must revalidate (Flask sends an ETag).
+    if request.endpoint == "static":
+        if request.args.get("v"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache"
+    return response
+
 
 import export_api  # noqa: E402  (the Export dialog's endpoints)
 

@@ -78,6 +78,11 @@ def mean_rgb(path):
 
 def test_page_has_export_button_dialog_and_shortcut(client):
     html = client.get("/").get_data(as_text=True)
+    # The page is a shell now; scripts and styles are static files.
+    from pathlib import Path
+    for p in sorted((Path(__file__).resolve().parent.parent / "static").rglob("*")):
+        if p.is_file():
+            html += p.read_text()
     for needle in ('id="export-open"', 'id="export-dialog"', "Keep all metadata (EXIF, GPS, IPTC, XMP)",
                    'id="ex-meta" checked', "shiftKey"):
         assert needle in html, needle

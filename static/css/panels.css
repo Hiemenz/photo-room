@@ -1,0 +1,53 @@
+/* ---- Tone curve ---- */
+#curve-panel { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+#curve-panel h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .06em; }
+#curve-canvas { width: 100%; aspect-ratio: 1; display: block; background: var(--scope);
+  border: 1px solid var(--line); border-radius: 3px; cursor: crosshair; touch-action: none; }
+.curve-row { display: flex; gap: 5px; margin-top: 7px; align-items: center; }
+.curve-row button { padding: 3px 8px; font-size: 11px; }
+.curve-row button.active { color: var(--accent); border-color: var(--accent); }
+.curve-row select { flex: 1; min-width: 0; font: inherit; font-size: 11px; padding: 3px 5px;
+  border-radius: 4px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+.ctrl { margin-top: 15px; }
+.ctrl-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 5px;
+}
+.ctrl-head label { color: var(--muted); }
+.ctrl-head .val {
+  font-variant-numeric: tabular-nums; color: var(--text);
+  cursor: pointer; padding: 1px 4px; border-radius: 3px;
+}
+.ctrl-head .val:hover { background: var(--panel-2); }
+.ctrl.changed .ctrl-head label { color: var(--accent); }
+input[type=range] {
+  width: 100%; -webkit-appearance: none; background: transparent; margin: 0;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 3px; background: var(--line); border-radius: 2px;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 13px; height: 13px; margin-top: -5px;
+  border-radius: 50%; background: var(--text); cursor: grab;
+}
+input[type=range]:active::-webkit-slider-thumb { cursor: grabbing; }
+
+/* ---- Buttons ---- */
+#actions {
+  padding: 14px 18px; border-top: 1px solid var(--line);
+  display: grid; gap: 7px;
+}
+button {
+  font: inherit; padding: 8px 12px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+}
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+button.danger { color: var(--danger); }
+#status {
+  padding: 0 18px 12px; font-size: 11px; color: var(--muted);
+  min-height: 15px; line-height: 1.5;
+}
+#status.err { color: var(--danger); }

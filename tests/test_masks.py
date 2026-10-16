@@ -436,6 +436,11 @@ def test_mask_overlay_endpoint(client, library, fake_rawpy, fake_exiftool):
 
 def test_index_page_exposes_local_controls(client):
     body = client.get("/").get_data(as_text=True)
+    # The page is a shell now; scripts and styles are static files.
+    from pathlib import Path
+    for p in sorted((Path(__file__).resolve().parent.parent / "static").rglob("*")):
+        if p.is_file():
+            body += p.read_text()
     for c in masks.LOCAL_CONTROLS:
         assert c["label"] in body
     assert "mask-panel" in body and 'id="mask-layer"' in body

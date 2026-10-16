@@ -1,0 +1,42 @@
+/* Dark by default: neutral grey panels like Lightroom. The light theme
+   overrides the same tokens; the choice is remembered in localStorage. */
+:root {
+  color-scheme: dark;
+  --bg: #1c1c1c;
+  --panel: #2a2a2a;
+  --panel-2: #353535;
+  --inset: #171717;
+  --scope: #171717;     /* histogram and curve canvases stay dark in both themes */
+  --line: #444444;
+  --text: #e0e0e0;
+  --muted: #a3a3a3;
+  --accent: #6ea8fe;
+  --on-accent: #0f1c33;
+  --danger: #e8776e;
+  --sel: #3a4559;
+  --sel-2: #44526b;
+  --focus: #8ab8ff;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #d9d9d9;
+  --panel: #f0f0f0;
+  --panel-2: #e2e2e2;
+  --inset: #ffffff;
+  --line: #b4b4b4;
+  --text: #1d1d1d;
+  --muted: #55555a;
+  --accent: #1f62c8;
+  --on-accent: #ffffff;
+  --danger: #b3261e;
+  --sel: #c6d6f0;
+  --sel-2: #b3c9ea;
+  --focus: #1f62c8;
+}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; height: 100vh; display: flex;
+  font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg); color: var(--text);
+}

@@ -1,0 +1,31 @@
+/* ---- File list ---- */
+#files {
+  width: 220px; flex-shrink: 0; background: var(--panel);
+  border-right: 1px solid var(--line); display: flex; flex-direction: column;
+}
+#files h2 {
+  margin: 0; padding: 14px 16px 10px; font-size: 11px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--muted); font-weight: 600;
+}
+#file-list { overflow-y: auto; flex: 1; padding-bottom: 12px; }
+.file {
+  padding: 7px 16px; cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; color: var(--muted);
+  border-left: 2px solid transparent;
+}
+.file:hover { background: var(--panel-2); color: var(--text); }
+.file.active {
+  background: var(--panel-2); color: var(--text);
+  border-left-color: var(--accent); font-weight: 500;
+}
+.file.selected { background: var(--sel); color: var(--text); }
+.file.selected.active { background: var(--sel-2); }
+#files-foot {
+  padding: 9px 16px; border-top: 1px solid var(--line);
+  font-size: 11px; color: var(--muted); line-height: 1.5;
+}
+#files-foot button { width: 100%; margin-top: 7px; padding: 6px 10px; font-size: 12px; }
+#crop-layer {
+  position: absolute; inset: 0; display: none; cursor: crosshair;
+}
+#crop-layer.on { display: block; }
