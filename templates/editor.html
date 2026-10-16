@@ -323,6 +323,59 @@
   #lib-foot .swatch { width: 16px; height: 16px; border-radius: 3px; padding: 0; border: 1px solid var(--line); cursor: pointer; }
   #lib-foot .swatch.none { background: none; }
   #lib-sentinel { grid-column: 1 / -1; height: 1px; }
+  #lib-body { flex: 1; display: flex; min-height: 0; }
+  #lib-body #lib-grid { flex: 1; }
+  #lib-side {
+    width: 190px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--line);
+    overflow-y: auto; font-size: 11px;
+  }
+  #lib-side h3 {
+    margin: 0; padding: 9px 12px 5px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; align-items: center;
+  }
+  #lib-side h3 button { padding: 1px 6px; font-size: 10px; margin-left: 3px; }
+  .col { display: flex; align-items: center; gap: 4px; padding: 5px 12px; cursor: pointer; color: var(--muted); }
+  .col:hover { background: var(--panel-2); color: var(--text); }
+  .col.active { background: var(--panel-2); color: var(--text); border-left: 2px solid var(--accent); padding-left: 10px; }
+  .col.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
+  .col .nm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .col .ct { opacity: .6; }
+  .col .act { display: none; background: none; border: 0; color: var(--muted); padding: 0 2px; cursor: pointer; }
+  .col:hover .act { display: inline; }
+  /* Virtual copy: a folded page corner, top right */
+  .lcell.virtual::after {
+    content: ""; position: absolute; top: 0; right: 0; width: 24px; height: 24px;
+    background: linear-gradient(225deg, var(--bg) 0 50%, #e9e9ee 50% 72%, #9a9aa3 100%);
+    box-shadow: -2px 2px 3px rgba(0,0,0,.45); pointer-events: none;
+  }
+  #cmp, #svy {
+    position: fixed; top: 30px; left: 0; right: 0; bottom: 0; z-index: 40;
+    background: #101012; display: none; flex-direction: column;
+  }
+  #cmp.on, #svy.on { display: flex; }
+  .ov-bar { display: flex; gap: 10px; align-items: center; padding: 6px 12px; background: var(--panel);
+            border-bottom: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+  .ov-bar .sep { flex: 1; }
+  #cmp-panes { flex: 1; display: flex; gap: 2px; min-height: 0; }
+  .cpane { flex: 1; position: relative; overflow: hidden; background: #000; cursor: grab; min-width: 0; }
+  .cpane img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain;
+               transform-origin: 0 0; user-select: none; -webkit-user-drag: none; }
+  .cpane .tag { position: absolute; left: 8px; top: 6px; z-index: 2; font-size: 11px; color: #fff;
+                background: rgba(0,0,0,.6); padding: 2px 7px; border-radius: 3px; }
+  #svy-grid { flex: 1; display: grid; gap: 4px; padding: 4px; min-height: 0; }
+  .scell { position: relative; background: #000; min-width: 0; min-height: 0; cursor: pointer; overflow: hidden; }
+  .scell img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .scell .nm { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px; font-size: 10px;
+               color: #fff; background: rgba(0,0,0,.6); }
+  #smart-dlg { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.6); display: none;
+               align-items: center; justify-content: center; }
+  #smart-dlg.on { display: flex; }
+  #smart-dlg .box { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+                    padding: 16px; width: 520px; max-width: 94vw; font-size: 12px; }
+  #smart-dlg .rule { display: flex; gap: 6px; margin: 6px 0; }
+  #smart-dlg select, #smart-dlg input { font: inherit; font-size: 11px; padding: 3px 5px; border-radius: 4px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
+  #smart-dlg .rule input { flex: 1; min-width: 0; }
   /* ---- History / snapshots (left panel) ---- */
   #history-panel { border-top: 1px solid var(--line); max-height: 40%; display: flex; flex-direction: column; }
   #history-panel h3 {
@@ -396,9 +449,23 @@
     <select id="lf-dir"><option value="asc">Ascending</option><option value="desc">Descending</option></select>
     <button id="lf-clear">Clear filters</button>
   </div>
-  <div id="lib-grid"></div>
+  <div id="lib-body">
+    <aside id="lib-side" aria-label="Collections">
+      <div class="col active" id="col-all" data-id=""><span class="nm">All photographs</span><span class="ct" id="col-all-ct"></span></div>
+      <h3><span>Collections</span><span>
+        <button id="col-new" title="New collection (from the selection, if any)">+</button><button id="col-smart" title="New smart collection">+ Smart</button></span></h3>
+      <div id="col-list"></div>
+    </aside>
+    <div id="lib-grid"></div>
+  </div>
   <div id="lib-foot">
     <span id="lib-count"></span>
+    <button id="lib-vc" title="Virtual copy of the selected photo (V)">Virtual copy</button>
+    <button id="lib-vc-del" title="Delete the selected virtual copies; the raw is never touched">Delete copy</button>
+    <select id="lib-addto" title="Add the selection to a collection"><option value="">Add to collection…</option></select>
+    <button id="lib-rmcol" title="Remove the selection from this collection" hidden>Remove from collection</button>
+    <button id="lib-compare" title="Compare: a select beside a candidate (C)">Compare</button>
+    <button id="lib-survey" title="Survey the selected photos (N)">Survey</button>
     <span class="sep" style="flex:1"></span>
     <span>Label:</span>
     <button class="swatch lbl-Red" data-label="Red" title="Red (6)"></button>
@@ -412,6 +479,42 @@
     <button id="lib-kw-del" title="Remove the typed keywords from the selection">Remove</button>
   </div>
 </section>
+
+<section id="cmp" aria-label="Compare">
+  <div class="ov-bar">
+    <b>Compare</b>
+    <span id="cmp-info"></span>
+    <span class="sep"></span>
+    <span>Left/Right: next candidate &middot; Up: make candidate the select &middot; wheel: zoom both &middot; drag: pan both &middot; double-click: fit / 100% &middot; C or Esc: close</span>
+    <button id="cmp-close">Close</button>
+  </div>
+  <div id="cmp-panes">
+    <div class="cpane" id="cmp-a"><span class="tag">Select</span><img alt="select" draggable="false"></div>
+    <div class="cpane" id="cmp-b"><span class="tag">Candidate</span><img alt="candidate" draggable="false"></div>
+  </div>
+</section>
+
+<section id="svy" aria-label="Survey">
+  <div class="ov-bar">
+    <b>Survey</b><span id="svy-info"></span><span class="sep"></span>
+    <span>Click: drop a photo from the survey &middot; double-click or Enter: open in Develop &middot; N or Esc: close</span>
+    <button id="svy-close">Close</button>
+  </div>
+  <div id="svy-grid"></div>
+</section>
+
+<div id="smart-dlg" role="dialog" aria-label="Smart collection">
+  <div class="box">
+    <h3 style="margin:0 0 8px" id="sd-title">New smart collection</h3>
+    <input id="sd-name" placeholder="Name" style="width:100%;box-sizing:border-box;margin-bottom:8px">
+    <div>Match <select id="sd-match"><option value="all">all</option><option value="any">any</option></select> of these rules:</div>
+    <div id="sd-rules"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button id="sd-add-rule">+ Rule</button><span style="flex:1"></span>
+      <button id="sd-cancel">Cancel</button><button id="sd-save">Save</button>
+    </div>
+  </div>
+</div>
 
 <aside id="files">
   <h2 style="display:flex;justify-content:space-between;align-items:center">
@@ -845,7 +948,8 @@ async function openFile(path) {
     $("preview").src = data.preview;
     $("preview").hidden = false;
     $("empty").hidden = true;
-    $("meta").querySelector("strong").textContent = path.split("/").pop();
+    $("meta").querySelector("strong").textContent =
+      (typeof libItem === "function" && libItem(path)?.name) || path.split("/").pop();
     // Warn before the photographer overwrites work done elsewhere.
     if (data.foreign_editor) {
       const where = data.has_sidecar ? " and has an .xmp sidecar" : "";
@@ -1780,6 +1884,7 @@ window.addEventListener("blur", () => { latched = false; showEdited(); });
 const LABEL_KEYS = { "6": "Red", "7": "Yellow", "8": "Green", "9": "Blue" };
 let module_ = "develop";
 let libState = { items: [], total: 0, libraryTotal: 0, loading: false, gen: 0 };
+let libCollection = "";      // active collection id, "" for the whole library
 let libActive = null;        // path of the keyboard cursor
 let libMulti = new Set();    // extra selected paths
 let libThumbObs = null, libPageObs = null;
@@ -1788,6 +1893,7 @@ const LIB_PAGE = 200;
 function libQuery(offset) {
   const q = new URLSearchParams({ offset, limit: LIB_PAGE,
     sort: $("lf-sort").value, dir: $("lf-dir").value });
+  if (libCollection) q.set("collection", libCollection);
   const [rmin, rop] = $("lf-rating").value.split("|");
   if (rmin) { q.set("rating_min", rmin); if (rop) q.set("rating_op", rop); }
   for (const [id, key] of [["lf-flag","flag"],["lf-label","label"],["lf-keyword","keyword"],
@@ -1830,12 +1936,19 @@ async function libLoad(reset) {
   libAppend(data.items);
   $("lib-count").textContent = `${libState.total} of ${libState.libraryTotal} photos`
     + (libMulti.size > 1 ? ` · ${libMulti.size} selected` : "");
+  $("lib-rmcol").hidden = !(libCollection && !collectionById(libCollection)?.smart);
 }
 
 function libCell(it) {
   const cell = document.createElement("div");
-  cell.className = "lcell";
+  cell.className = "lcell" + (it.virtual ? " virtual" : "");
   cell.dataset.path = it.path;
+  cell.draggable = true;
+  cell.addEventListener("dragstart", (e) => {
+    if (!libMulti.has(it.path)) { libActive = it.path; libMulti = new Set(); libPaintAll(); }
+    e.dataTransfer.setData("text/plain", "photo-room:" + JSON.stringify(libTargets()));
+    e.dataTransfer.effectAllowed = "copy";
+  });
   const img = document.createElement("img");
   img.alt = it.name;
   img.dataset.src = `/api/thumb?path=${encodeURIComponent(it.path)}`;
@@ -1970,7 +2083,7 @@ async function libKeywords(remove) {
 // the current filter, re-query (debounced so rapid culling does not thrash).
 let libRefilterTimer = null;
 function libRefilterSoon() {
-  const filtering = ["lf-rating","lf-flag","lf-label","lf-keyword","lf-camera","lf-q"].some(id => $(id).value)
+  const filtering = libCollection || ["lf-rating","lf-flag","lf-label","lf-keyword","lf-camera","lf-q"].some(id => $(id).value)
     || $("lf-sort").value !== "name";
   if (!filtering) return;
   clearTimeout(libRefilterTimer);
@@ -1982,9 +2095,11 @@ function setModule(name) {
   $("lib").classList.toggle("on", name === "library");
   $("mod-library").classList.toggle("on", name === "library");
   $("mod-develop").classList.toggle("on", name === "develop");
+  closeOverlays();
   if (name === "library") {
     if (current && !libActive) libActive = current;
     libLoad(true);
+    colLoad();
   }
 }
 
@@ -2024,7 +2139,11 @@ $("lib-kw-del").addEventListener("click", () => libKeywords(true));
 // Library keys. Returns true when the key was handled.
 function libraryKey(e) {
   const k = e.key.toLowerCase();
+  if (module_ === "library" && overlayKey(e, k)) return true;
   if (module_ === "library") {
+    if (k === "c") { e.preventDefault(); openCompare(); return true; }
+    if (k === "n") { e.preventDefault(); openSurvey(); return true; }
+    if (k === "v") { e.preventDefault(); libVirtualCopy(); return true; }
     if (k === "e" || k === "d" || k === "enter") { e.preventDefault(); openInDevelop(libActive); return true; }
     if (k === "g") return true;
     if (k === "p") { libFlag("pick"); return true; }
@@ -2039,6 +2158,363 @@ function libraryKey(e) {
   }
   if (k === "g") { e.preventDefault(); if (current) libActive = current; setModule("library"); return true; }
   return false;
+}
+
+// ---- Collections ---------------------------------------------------------
+let collections = [];
+const collectionById = (id) => collections.find(c => c.id === id);
+
+async function colLoad() {
+  let data;
+  try { data = await (await fetch("/api/collections")).json(); } catch { return; }
+  if (data.error) return;
+  colApply(data);
+}
+
+function colApply(data) {
+  collections = data.collections || [];
+  if (libCollection && !collectionById(libCollection)) { libCollection = ""; libLoad(true); }
+  const list = $("col-list");
+  list.innerHTML = "";
+  for (const c of collections) {
+    const el = document.createElement("div");
+    el.className = "col" + (c.id === libCollection ? " active" : "");
+    el.dataset.id = c.id;
+    el.innerHTML = `<span>${c.smart ? "◆" : "▤"}</span><span class="nm"></span><span class="ct"></span>`
+      + `<button class="act" data-a="edit" title="${c.smart ? "Edit rules" : "Rename"}">✎</button>`
+      + `<button class="act" data-a="del" title="Delete collection (photos stay)">✕</button>`;
+    el.querySelector(".nm").textContent = c.name;
+    el.querySelector(".ct").textContent = c.count;
+    el.addEventListener("click", (e) => {
+      const a = e.target.dataset?.a;
+      if (a === "del") return colDelete(c);
+      if (a === "edit") return c.smart ? openSmartDialog(c) : colRename(c);
+      colSelect(c.id);
+    });
+    if (!c.smart) {
+      el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("drop"); });
+      el.addEventListener("dragleave", () => el.classList.remove("drop"));
+      el.addEventListener("drop", (e) => {
+        e.preventDefault(); el.classList.remove("drop");
+        const t = e.dataTransfer.getData("text/plain");
+        if (t.startsWith("photo-room:")) colAdd(c.id, JSON.parse(t.slice(11)));
+      });
+    }
+    list.appendChild(el);
+  }
+  $("col-all").classList.toggle("active", !libCollection);
+  $("col-all-ct").textContent = "";
+  const sel = $("lib-addto");
+  sel.innerHTML = `<option value="">Add to collection…</option>`;
+  for (const c of collections.filter(c => !c.smart)) {
+    const o = document.createElement("option");
+    o.value = c.id; o.textContent = c.name;
+    sel.appendChild(o);
+  }
+}
+
+function colSelect(id) {
+  libCollection = id; libActive = null; libMulti = new Set();
+  libLoad(true); colApply({ collections });
+}
+$("col-all").addEventListener("click", () => colSelect(""));
+
+async function colNew() {
+  const name = prompt("Collection name");
+  if (!name) return;
+  const photos = libTargets();
+  const data = await post("/api/collections/create", { name, photos });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data);
+  setStatus(`Created collection ${name}` + (photos.length ? ` with ${photos.length} photo(s)` : ""));
+}
+async function colRename(c) {
+  const name = prompt("Rename collection", c.name);
+  if (!name || name === c.name) return;
+  const data = await post("/api/collections/rename", { id: c.id, name });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data);
+}
+async function colDelete(c) {
+  if (!confirm(`Delete the collection "${c.name}"? The photos themselves are not deleted.`)) return;
+  const data = await post("/api/collections/delete", { id: c.id });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data);
+  setStatus(`Deleted collection ${c.name}`);
+}
+async function colAdd(id, photos) {
+  if (!photos.length) return;
+  const data = await post("/api/collections/add", { id, photos });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data);
+  setStatus(`Added ${photos.length} photo(s) to ${collectionById(id)?.name}`);
+}
+$("col-new").addEventListener("click", colNew);
+$("lib-addto").addEventListener("change", (e) => {
+  const id = e.target.value; e.target.value = ""; e.target.blur();
+  if (id) colAdd(id, libTargets());
+});
+$("lib-rmcol").addEventListener("click", async () => {
+  const photos = libTargets();
+  if (!libCollection || !photos.length) return;
+  const data = await post("/api/collections/remove", { id: libCollection, photos });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data); libLoad(true);
+});
+
+// Smart collection rule editor
+const RULE_FIELDS = {
+  rating: { ops: [["ge", "at least"], ["le", "at most"], ["eq", "exactly"]], type: "num" },
+  flag: { ops: [["is", "is"]], choices: ["pick", "reject", "unflagged"] },
+  label: { ops: [["is", "is"]], choices: ["Red", "Yellow", "Green", "Blue", "Purple", "none"] },
+  keyword: { ops: [["has", "has"], ["not_has", "does not have"]], type: "text" },
+  camera: { ops: [["is", "is"], ["contains", "contains"]], type: "text" },
+  date: { ops: [["after", "after"], ["before", "before"], ["on", "on"]], type: "date" },
+};
+let smartEditing = null;
+
+function addRuleRow(rule) {
+  rule = rule || { field: "rating", op: "ge", value: 3 };
+  const row = document.createElement("div");
+  row.className = "rule";
+  const f = document.createElement("select");
+  f.innerHTML = Object.keys(RULE_FIELDS).map(k => `<option>${k}</option>`).join("");
+  const op = document.createElement("select");
+  const val = document.createElement("span"); val.style.flex = "1"; val.style.display = "flex";
+  const rm = document.createElement("button"); rm.textContent = "✕";
+  rm.addEventListener("click", () => row.remove());
+  function fill(keepOp, keepVal) {
+    const d = RULE_FIELDS[f.value];
+    op.innerHTML = d.ops.map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+    if (keepOp) op.value = keepOp;
+    val.innerHTML = "";
+    let input;
+    if (d.choices) {
+      input = document.createElement("select");
+      input.innerHTML = d.choices.map(c => `<option>${c}</option>`).join("");
+    } else {
+      input = document.createElement("input");
+      input.type = d.type === "num" ? "number" : d.type === "date" ? "date" : "text";
+      if (d.type === "num") { input.min = -1; input.max = 5; input.value = 3; }
+    }
+    input.style.flex = "1";
+    if (keepVal !== undefined) input.value = keepVal;
+    val.appendChild(input);
+  }
+  f.addEventListener("change", () => fill());
+  f.value = rule.field; fill(rule.op, rule.value === "none" && rule.field === "flag" ? "unflagged" : rule.value);
+  row.append(f, op, val, rm);
+  $("sd-rules").appendChild(row);
+}
+
+function openSmartDialog(col) {
+  smartEditing = col || null;
+  $("sd-title").textContent = col ? `Edit rules: ${col.name}` : "New smart collection";
+  $("sd-name").value = col ? col.name : "";
+  $("sd-name").disabled = !!col;
+  $("sd-match").value = col?.match || "all";
+  $("sd-rules").innerHTML = "";
+  (col?.rules?.length ? col.rules : [null]).forEach(addRuleRow);
+  $("smart-dlg").classList.add("on");
+}
+function readRules() {
+  return [...$("sd-rules").children].map(row => {
+    const [f, op] = row.querySelectorAll("select");
+    const input = row.querySelector("span").firstChild;
+    return { field: f.value, op: op.value, value: input.value };
+  });
+}
+$("col-smart").addEventListener("click", () => openSmartDialog(null));
+$("sd-add-rule").addEventListener("click", () => addRuleRow());
+$("sd-cancel").addEventListener("click", () => $("smart-dlg").classList.remove("on"));
+$("sd-save").addEventListener("click", async () => {
+  const rules = readRules(), match = $("sd-match").value;
+  const data = smartEditing
+    ? await post("/api/collections/rules", { id: smartEditing.id, rules, match })
+    : await post("/api/collections/create", { name: $("sd-name").value, smart: true, rules, match });
+  if (data.error) return setStatus(data.error, true);
+  $("smart-dlg").classList.remove("on");
+  colApply(data);
+  if (libCollection) libLoad(true);
+});
+
+// ---- Virtual copies ------------------------------------------------------
+async function libVirtualCopy() {
+  const paths = libTargets();
+  if (!paths.length) return setStatus("Select a photo first", true);
+  let made = 0;
+  for (const p of paths) {
+    const data = await post("/api/virtual/create", { path: p });
+    if (data.error) return setStatus(data.error, true);
+    made++;
+  }
+  setStatus(`Created ${made} virtual cop${made === 1 ? "y" : "ies"}`);
+  libLoad(true); colLoad();
+}
+async function libDeleteCopies() {
+  const copies = libTargets().filter(p => libItem(p)?.virtual);
+  if (!copies.length) return setStatus("Select a virtual copy (page-curl badge) to delete", true);
+  if (!confirm(`Delete ${copies.length} virtual cop${copies.length === 1 ? "y" : "ies"}? The raw files are not touched.`)) return;
+  for (const p of copies) {
+    const data = await post("/api/virtual/delete", { path: p });
+    if (data.error) return setStatus(data.error, true);
+  }
+  libMulti = new Set(); libActive = null;
+  setStatus(`Deleted ${copies.length} virtual cop${copies.length === 1 ? "y" : "ies"}`);
+  libLoad(true); colLoad();
+}
+$("lib-vc").addEventListener("click", libVirtualCopy);
+$("lib-vc-del").addEventListener("click", libDeleteCopies);
+
+// ---- Compare and Survey --------------------------------------------------
+const cmp = { sel: null, cand: null, scale: 1, x: 0, y: 0, token: 0, cache: new Map() };
+let overlay = null;
+
+function closeOverlays() {
+  overlay = null;
+  $("cmp").classList.remove("on"); $("svy").classList.remove("on");
+}
+
+async function viewPreview(path) {
+  if (cmp.cache.has(path)) return cmp.cache.get(path);
+  const data = await post("/api/view_preview", { path });
+  if (data.error) throw new Error(data.error);
+  cmp.cache.set(path, data.preview);
+  if (cmp.cache.size > 6) cmp.cache.delete(cmp.cache.keys().next().value);
+  return data.preview;
+}
+
+function cmpTransform() {
+  for (const id of ["cmp-a", "cmp-b"]) {
+    $(id).querySelector("img").style.transform = `translate(${cmp.x}px, ${cmp.y}px) scale(${cmp.scale})`;
+  }
+}
+function cmpResetZoom() { cmp.scale = 1; cmp.x = 0; cmp.y = 0; cmpTransform(); }
+
+async function cmpShow() {
+  const token = ++cmp.token;
+  const name = (p) => libItem(p)?.name || p;
+  $("cmp-info").textContent = `${name(cmp.sel)}  vs  ${cmp.cand ? name(cmp.cand) : "(no candidate)"}`;
+  const set = async (id, path) => {
+    const img = $(id).querySelector("img");
+    if (!path) { img.removeAttribute("src"); return; }
+    try {
+      const src = await viewPreview(path);
+      if (token === cmp.token) img.src = src;
+    } catch (err) { setStatus(err.message, true); }
+  };
+  await Promise.all([set("cmp-a", cmp.sel), set("cmp-b", cmp.cand)]);
+}
+
+function cmpStep(delta) {
+  const items = libState.items.filter(i => i.path !== cmp.sel);
+  if (!items.length) return;
+  let i = items.findIndex(x => x.path === cmp.cand);
+  i = (i + delta + items.length) % items.length;
+  cmp.cand = items[i].path; cmpShow();
+}
+
+function openCompare() {
+  if (!libState.items.length) return;
+  cmp.sel = libActive || libState.items[0].path;
+  const idx = libState.items.findIndex(i => i.path === cmp.sel);
+  const next = libState.items[idx + 1] || libState.items[idx - 1];
+  cmp.cand = next ? next.path : null;
+  overlay = "cmp"; $("cmp").classList.add("on");
+  cmpResetZoom(); cmpShow();
+}
+
+for (const id of ["cmp-a", "cmp-b"]) {
+  const pane = $(id);
+  pane.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = pane.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const f = Math.exp(-e.deltaY * 0.0015);
+    const s = Math.max(1, Math.min(16, cmp.scale * f));
+    const k = s / cmp.scale;
+    // Zoom about the pointer; both panes share the same transform so they stay in step.
+    cmp.x = px - (px - cmp.x) * k; cmp.y = py - (py - cmp.y) * k; cmp.scale = s;
+    if (s === 1) { cmp.x = 0; cmp.y = 0; }
+    cmpTransform();
+  }, { passive: false });
+  let drag = null;
+  pane.addEventListener("pointerdown", (e) => {
+    drag = { x: e.clientX - cmp.x, y: e.clientY - cmp.y };
+    pane.setPointerCapture(e.pointerId); pane.style.cursor = "grabbing";
+  });
+  pane.addEventListener("pointermove", (e) => {
+    if (!drag || cmp.scale === 1) return;
+    cmp.x = e.clientX - drag.x; cmp.y = e.clientY - drag.y; cmpTransform();
+  });
+  pane.addEventListener("pointerup", () => { drag = null; pane.style.cursor = ""; });
+  pane.addEventListener("dblclick", (e) => {
+    if (cmp.scale > 1) return cmpResetZoom();
+    const r = pane.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top, s = 4;
+    cmp.x = px - px * s; cmp.y = py - py * s; cmp.scale = s; cmpTransform();
+  });
+}
+$("cmp-close").addEventListener("click", closeOverlays);
+
+let survey = [];
+function openSurvey() {
+  const picked = libMulti.size > 1 ? [...libMulti] : [];
+  if (picked.length < 2) return setStatus("Select two or more photos (Shift/Ctrl-click) to survey", true);
+  survey = libState.items.map(i => i.path).filter(p => picked.includes(p));
+  overlay = "svy"; $("svy").classList.add("on");
+  surveyDraw();
+}
+function surveyDraw() {
+  const grid = $("svy-grid");
+  grid.innerHTML = "";
+  const n = survey.length;
+  const cols = Math.ceil(Math.sqrt(n * (grid.clientWidth || 1200) / (grid.clientHeight || 700)));
+  const c = Math.max(1, Math.min(n, cols));
+  grid.style.gridTemplateColumns = `repeat(${c}, 1fr)`;
+  grid.style.gridTemplateRows = `repeat(${Math.ceil(n / c)}, 1fr)`;
+  $("svy-info").textContent = `${n} photos`;
+  for (const p of survey) {
+    const cell = document.createElement("div");
+    cell.className = "scell"; cell.dataset.path = p;
+    const it = libItem(p);
+    cell.innerHTML = `<img alt=""><div class="nm"></div>`;
+    cell.querySelector("img").src = `/api/thumb?path=${encodeURIComponent(p)}`;
+    cell.querySelector(".nm").textContent = (it?.name || p) + (it?.rating > 0 ? "  " + "★".repeat(it.rating) : "");
+    cell.addEventListener("click", () => surveyRemove(p));
+    cell.addEventListener("dblclick", () => { closeOverlays(); openInDevelop(p); });
+    grid.appendChild(cell);
+  }
+}
+function surveyRemove(p) {
+  survey = survey.filter(x => x !== p);
+  libMulti = new Set(survey);
+  if (survey.length < 2) { closeOverlays(); return; }
+  surveyDraw();
+}
+$("svy-close").addEventListener("click", closeOverlays);
+$("lib-compare").addEventListener("click", openCompare);
+$("lib-survey").addEventListener("click", openSurvey);
+
+// Keys while Compare or Survey is open. Returns true when handled.
+function overlayKey(e, k) {
+  if (!overlay) return false;
+  e.preventDefault();
+  if (k === "escape" || k === "g" || (overlay === "cmp" && k === "c") || (overlay === "svy" && k === "n")) {
+    closeOverlays(); return true;
+  }
+  if (overlay === "cmp") {
+    if (k === "arrowright" || k === "arrowdown") cmpStep(1);
+    else if (k === "arrowleft") cmpStep(-1);
+    else if (k === "arrowup" && cmp.cand) { libActive = cmp.sel = cmp.cand; cmpStep(1); libPaintAll(); }
+    else if (k >= "0" && k <= "5" && k.length === 1) {
+      libRate(parseInt(k, 10), [cmp.cand || cmp.sel]);
+    }
+    else if (k === "p" || k === "x") { const keep = libActive; libActive = cmp.cand || cmp.sel; libMulti = new Set(); libFlag(k === "p" ? "pick" : "reject").then(() => { libActive = keep; }); }
+  } else {
+    if (k === "enter") { const p = survey[0]; closeOverlays(); openInDevelop(p); }
+  }
+  return true;
 }
 
 // ---- Library -------------------------------------------------------------

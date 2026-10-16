@@ -13,6 +13,7 @@ Run:
 import argparse
 import base64
 import os
+import re
 import io
 import json
 from collections import OrderedDict
@@ -26,6 +27,7 @@ import rawpy
 from flask import Flask, Response, jsonify, render_template, request
 from PIL import Image, ImageFilter
 
+import catalog
 import colormix
 import library
 import history
@@ -1061,6 +1063,49 @@ def _safe_path(raw_path: str) -> Path:
     return candidate
 
 
+# ---------------------------------------------------------------------------
+# Virtual copies (catalog.py): a copy has its own id, "<raw>#vc-<hex>". The raw
+# is rendered with the copy's stored settings; history for the copy lives in a
+# sidecar named after a pseudo path that sits beside the raw but never exists.
+# ---------------------------------------------------------------------------
+
+def _virtual(raw_id) -> tuple[Path, dict] | None:
+    """(source raw, store entry) when ``raw_id`` names a virtual copy, else None."""
+    if not catalog.is_virtual_id(raw_id):
+        return None
+    try:
+        entry = catalog.get_virtual(LIBRARY_ROOT, raw_id)
+    except KeyError as exc:
+        raise ValueError(exc.args[0]) from None
+    return _safe_path(entry["source"]), entry
+
+
+def _history_key(source: Path, entry: dict) -> Path:
+    return source.with_name(f"{source.name}.{entry['vid']}")
+
+
+def _unpseudo(path: Path) -> Path:
+    """The raw behind a virtual copy's history key (a real path passes through)."""
+    stem, _, tail = path.name.rpartition(".")
+    if stem and re.fullmatch(r"vc-[0-9a-f]{8}", tail):
+        return path.with_name(stem)
+    return path
+
+
+def _split_virtual(payload: dict) -> list[str]:
+    """Remove virtual-copy ids from the payload's path(s) and return them."""
+    raw = payload.get("paths")
+    if raw is None and "path" in payload:
+        raw = [payload["path"]]
+    if not isinstance(raw, list):
+        return []
+    vids = [r for r in raw if catalog.is_virtual_id(r)]
+    if vids:
+        payload.pop("path", None)
+        payload["paths"] = [r for r in raw if not catalog.is_virtual_id(r)]
+    return vids
+
+
 @app.route("/")
 def index():
     return render_template(
@@ -1100,16 +1145,20 @@ def api_open():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        vc = _virtual(payload["path"])
+        path = vc[0] if vc else _safe_path(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
+    # A virtual copy keeps its history under a pseudo path and its settings,
+    # rating and so on in the catalog; the raw itself is never written.
+    hkey = _history_key(*vc) if vc else path
 
     try:
         # Decode first so the auto analysis below can reuse the result rather
         # than unpacking the sensor data a second time.
         _, baseline_temp = _load_base_render(path)
 
-        saved = read_saved_adjustments(path)
+        saved = (vc[1].get("adjustments") or None) if vc else read_saved_adjustments(path)
         if saved:
             source = "saved"
             adj = saved
@@ -1128,7 +1177,7 @@ def api_open():
 
         # The as-imported state: the auto (or styled) proposal, remembered the
         # first time the photo is opened. Drives Before and reset-to-import.
-        hist = history.load(path)
+        hist = history.load(hkey)
         if hist["original"] is None:
             if source != "saved":
                 imported = merged   # already the auto proposal
@@ -1139,10 +1188,10 @@ def api_open():
                     path, decoded=decoded, style_model=get_style_model())
                 auto = {k: v for k, v in auto.items() if k not in ("iso", "styled")}
                 imported = complete_adjustments(auto, baseline_temp)
-            hist = history.set_original(path, imported)
+            hist = history.set_original(hkey, imported)
         if not hist["entries"]:
             hist, _ = history.record(
-                path, "Import" if source != "saved" else "Opened with saved edits", merged)
+                hkey, "Import" if source != "saved" else "Opened with saved edits", merged)
 
         rendered = render_with_histogram(path, merged)
         return jsonify({
@@ -1154,9 +1203,10 @@ def api_open():
             "adjustments": merged,
             "source": source,
             "has_original": get_embedded_original_name(path) is not None,
-            "rating": read_rating(path),
+            "rating": vc[1].get("rating", 0) if vc else read_rating(path),
+            "virtual": bool(vc),
             "baseline_temp": baseline_temp,
-            "foreign_editor": detect_foreign_edits(path),
+            "foreign_editor": None if vc else detect_foreign_edits(path),
             "has_sidecar": has_sidecar(path),
         })
     except Exception as exc:
@@ -1170,7 +1220,8 @@ def api_preview():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        vc = _virtual(payload["path"])
+        path = vc[0] if vc else _safe_path(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -1188,9 +1239,18 @@ def api_save():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        vc = _virtual(payload["path"])
+        path = vc[0] if vc else _safe_path(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
+
+    if vc:
+        chosen = payload.get("adjustments", {})
+        if not isinstance(chosen, dict):
+            return jsonify({"error": "adjustments must be an object"}), 400
+        catalog.update_virtual(LIBRARY_ROOT, vc[1]["id"], adjustments=chosen)
+        return jsonify({"ok": True, "message": f"Saved virtual copy of {path.name}",
+                        "warning": None, "style": None})
 
     try:
         chosen = payload.get("adjustments", {})
@@ -1294,12 +1354,16 @@ def api_rate():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        vc = _virtual(payload["path"])
+        path = vc[0] if vc else _safe_path(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
 
     try:
         rating = int(payload.get("rating", 0))
+        if vc:
+            catalog.update_virtual(LIBRARY_ROOT, vc[1]["id"], rating=rating)
+            return jsonify({"ok": True, "rating": rating, "message": f"{vc[1]['id']}: {rating}"})
         write_rating(path, rating)
         library.update_cached(path, rating=rating)
         label = "rejected" if rating == REJECTED else (
@@ -1347,10 +1411,16 @@ def api_library():
                 "camera", "date_from", "date_to", "q")
         criteria = {k: args.get(k, "") for k in keys}
         everything = library.build_items(LIBRARY_ROOT, list_photos(LIBRARY_ROOT))
+        everything += catalog.virtual_items(LIBRARY_ROOT, everything)
         matched = library.filter_items(everything, criteria)
+        if args.get("collection"):
+            matched = catalog.collection_items(
+                catalog.get_collection(LIBRARY_ROOT, args["collection"]), matched)
         matched = library.sort_items(
             matched, args.get("sort", "name"), args.get("dir", "asc") == "desc"
         )
+    except KeyError as exc:
+        return jsonify({"error": exc.args[0]}), 404
     except (ValueError, TypeError) as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
@@ -1381,12 +1451,19 @@ def api_flag():
     if err:
         return err
     try:
-        paths = _paths_from(payload)
+        vids = _split_virtual(payload)
+        paths = _paths_from(payload) if (payload.get("paths") or not vids) else []
         flag = payload.get("flag")
         if flag not in library.FLAGS:
             raise ValueError(f"flag must be one of {', '.join(library.FLAGS)}")
+        for vid in vids:
+            entry = catalog.get_virtual(LIBRARY_ROOT, vid)
+            rating = entry.get("rating", 0)
+            catalog.update_virtual(
+                LIBRARY_ROOT, vid, flag="pick" if flag == "pick" else "none",
+                rating=REJECTED if flag == "reject" else (0 if rating == REJECTED else rating))
     except (ValueError, KeyError) as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc.args[0] if isinstance(exc, KeyError) else exc)}), 400
     try:
         current = library.read_metadata(paths)
         for p in paths:
@@ -1397,9 +1474,10 @@ def api_flag():
             elif flag != "reject" and was_rejected:
                 write_rating(p, 0)
                 library.update_cached(p, rating=0)
-        library.set_picks(LIBRARY_ROOT, [_rel(p) for p in paths], flag == "pick")
-        return jsonify({"ok": True, "flag": flag, "count": len(paths),
-                        "message": f"{len(paths)} photo(s): {flag}"})
+        if paths:
+            library.set_picks(LIBRARY_ROOT, [_rel(p) for p in paths], flag == "pick")
+        n = len(paths) + len(vids)
+        return jsonify({"ok": True, "flag": flag, "count": n, "message": f"{n} photo(s): {flag}"})
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
 
@@ -1411,10 +1489,13 @@ def api_label():
     if err:
         return err
     try:
-        paths = _paths_from(payload)
+        vids = _split_virtual(payload)
+        paths = _paths_from(payload) if (payload.get("paths") or not vids) else []
         label = library.normalize_label(payload.get("label"))
+        for vid in vids:
+            catalog.update_virtual(LIBRARY_ROOT, vid, label=label)
     except (ValueError, KeyError) as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc.args[0] if isinstance(exc, KeyError) else exc)}), 400
     failed = []
     for p in paths:
         try:
@@ -1424,8 +1505,8 @@ def api_label():
             failed.append(f"{p.name}: {describe_error(exc)}")
     if failed:
         return jsonify({"error": "; ".join(failed[:3])}), 500
-    return jsonify({"ok": True, "label": label, "count": len(paths),
-                    "message": f"{len(paths)} photo(s): " + (label.lower() + " label" if label else "label cleared")})
+    return jsonify({"ok": True, "label": label, "count": len(paths) + len(vids),
+                    "message": f"{len(paths) + len(vids)} photo(s): " + (label.lower() + " label" if label else "label cleared")})
 
 
 @app.route("/api/keywords", methods=["POST"])
@@ -1435,15 +1516,21 @@ def api_keywords():
     if err:
         return err
     try:
-        paths = _paths_from(payload)
+        vids = _split_virtual(payload)
+        paths = _paths_from(payload) if (payload.get("paths") or not vids) else []
         replace = payload.get("set")
         add = library.normalize_keywords(payload.get("add", []))
         remove = {k.lower() for k in library.normalize_keywords(payload.get("remove", []))}
         if replace is None and not add and not remove:
             raise ValueError("Nothing to change")
-        existing = library.read_metadata(paths)
+        existing = library.read_metadata(paths) if paths else {}
+        for vid in vids:
+            have = catalog.get_virtual(LIBRARY_ROOT, vid).get("keywords", [])
+            new = library.normalize_keywords(replace) if replace is not None else \
+                library.normalize_keywords([k for k in have if k.lower() not in remove] + add)
+            catalog.update_virtual(LIBRARY_ROOT, vid, keywords=new)
     except (ValueError, KeyError) as exc:
-        return jsonify({"error": str(exc)}), 400
+        return jsonify({"error": str(exc.args[0] if isinstance(exc, KeyError) else exc)}), 400
     failed = []
     for p in paths:
         try:
@@ -1460,14 +1547,230 @@ def api_keywords():
             failed.append(f"{p.name}: {describe_error(exc)}")
     if failed:
         return jsonify({"error": "; ".join(failed[:3])}), 500
-    return jsonify({"ok": True, "count": len(paths), "message": f"Keywords updated on {len(paths)} photo(s)"})
+    n = len(paths) + len(vids)
+    return jsonify({"ok": True, "count": n, "message": f"Keywords updated on {n} photo(s)"})
+
+
+# ---------------------------------------------------------------------------
+# Collections, smart collections, virtual copies, compare/survey previews
+# ---------------------------------------------------------------------------
+
+def _all_items() -> list[dict]:
+    items = library.build_items(LIBRARY_ROOT, list_photos(LIBRARY_ROOT))
+    return items + catalog.virtual_items(LIBRARY_ROOT, items)
+
+
+def _collections_body() -> dict:
+    counts = catalog.collection_counts(LIBRARY_ROOT, _all_items())
+    return {"collections": [{**c, "count": counts.get(c["id"], 0)}
+                            for c in catalog.list_collections(LIBRARY_ROOT)]}
+
+
+def _catalog_call(fn):
+    """Run a catalog mutation; map its errors onto HTTP statuses."""
+    try:
+        return fn()
+    except KeyError as exc:
+        return jsonify({"error": exc.args[0]}), 404
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+def _known_ids(raw) -> list[str]:
+    """Validate photo ids from the client: real photos or existing copies."""
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("No photos given")
+    for r in raw:
+        if not isinstance(r, str):
+            raise ValueError("Photo ids must be strings")
+        if catalog.is_virtual_id(r):
+            catalog.get_virtual(LIBRARY_ROOT, r)
+        else:
+            _safe_path(r)
+    return raw
+
+
+@app.route("/api/collections")
+def api_collections():
+    return jsonify(_collections_body())
+
+
+@app.route("/api/collections/create", methods=["POST"])
+def api_collection_create():
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        smart = bool(payload.get("smart"))
+        photos = _known_ids(payload["photos"]) if payload.get("photos") else []
+        col = catalog.create_collection(
+            LIBRARY_ROOT, payload.get("name"), smart=smart, rules=payload.get("rules"),
+            match=payload.get("match", "all"), photos=photos)
+        return jsonify({"ok": True, "collection": col, **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/rename", methods=["POST"])
+def api_collection_rename():
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        catalog.rename_collection(LIBRARY_ROOT, str(payload.get("id", "")), payload.get("name"))
+        return jsonify({"ok": True, **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/delete", methods=["POST"])
+def api_collection_delete():
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        catalog.delete_collection(LIBRARY_ROOT, str(payload.get("id", "")))
+        return jsonify({"ok": True, **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/rules", methods=["POST"])
+def api_collection_rules():
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        catalog.update_rules(LIBRARY_ROOT, str(payload.get("id", "")),
+                             payload.get("rules"), payload.get("match"))
+        return jsonify({"ok": True, **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/add", methods=["POST"])
+def api_collection_add():
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        ids = _known_ids(payload.get("photos"))
+        catalog.add_photos(LIBRARY_ROOT, str(payload.get("id", "")), ids)
+        return jsonify({"ok": True, **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/remove", methods=["POST"])
+def api_collection_remove():
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        ids = payload.get("photos")
+        if not isinstance(ids, list):
+            raise ValueError("No photos given")
+        catalog.remove_photos(LIBRARY_ROOT, str(payload.get("id", "")), ids)
+        return jsonify({"ok": True, **_collections_body()})
+    return _catalog_call(run)
+
+
+def _current_adjustments(path: Path) -> dict:
+    """What opening the photo would show: saved edits, else the auto proposal."""
+    _, baseline_temp = _load_base_render(path)
+    saved = read_saved_adjustments(path)
+    if saved:
+        return complete_adjustments(saved, baseline_temp)
+    with _cache_lock:
+        decoded = _decode_cache.get(str(path.resolve()))
+    auto = compute_auto_adjustments(path, decoded=decoded, style_model=get_style_model())
+    auto = {k: v for k, v in auto.items() if k not in ("iso", "styled")}
+    return complete_adjustments(auto, baseline_temp)
+
+
+@app.route("/api/virtual/create", methods=["POST"])
+def api_virtual_create():
+    """Make a virtual copy: own settings, rating, label, keywords; no second raw."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        src_id = catalog.split_id(str(payload.get("path", "")))[0]
+        source = _safe_path(src_id)
+        parent = catalog.get_virtual(LIBRARY_ROOT, payload["path"]) \
+            if catalog.is_virtual_id(payload["path"]) else None
+        if parent is not None:
+            adj, meta = parent["adjustments"], parent
+        else:
+            adj = payload.get("adjustments")
+            if not isinstance(adj, dict) or not adj:
+                adj = _current_adjustments(source)
+            meta = library.read_metadata([source]).get(str(source), {})
+            meta = {**meta, "flag": "pick" if library.get_pick(LIBRARY_ROOT, src_id) else "none"}
+        rating = meta.get("rating", 0)
+        entry = catalog.create_virtual(
+            LIBRARY_ROOT, src_id, adj, rating=max(0, rating), label=meta.get("label", ""),
+            keywords=meta.get("keywords", []), flag=meta.get("flag", "none"))
+        return jsonify({"ok": True, "virtual": entry,
+                        "message": f"Created virtual copy {entry['copy_no']} of {source.name}"})
+    return _catalog_call(run)
+
+
+@app.route("/api/virtual/delete", methods=["POST"])
+def api_virtual_delete():
+    """Delete a copy. Only the catalog entry and the copy's history file go; never the raw."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        vid = str(payload.get("path", ""))
+        if not catalog.is_virtual_id(vid):
+            raise ValueError("Only virtual copies can be deleted here")
+        entry = catalog.delete_virtual(LIBRARY_ROOT, vid)
+        try:
+            source = _safe_path(entry["source"])
+            history.history_path(_history_key(source, entry)).unlink(missing_ok=True)
+        except (ValueError, OSError):
+            pass
+        return jsonify({"ok": True, "message": f"Deleted virtual copy {entry['copy_no']}"})
+    return _catalog_call(run)
+
+
+@app.route("/api/view_preview", methods=["POST"])
+def api_view_preview():
+    """
+    A preview of a photo (or virtual copy) as currently edited, for the compare
+    view. Read-only: it opens no history and records nothing.
+    """
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        vc = _virtual(payload.get("path"))
+        path = vc[0] if vc else _safe_path(payload.get("path", ""))
+        adj = (vc[1].get("adjustments") or None) if vc else None
+        if adj is None:
+            adj = _current_adjustments(path)
+        else:
+            adj = complete_adjustments(adj, _load_base_render(path)[1])
+        rendered = render_with_histogram(path, adj)
+        return jsonify({"preview": rendered["preview"]})
+    return _catalog_call(run)
 
 
 @app.route("/api/thumb")
 def api_thumb():
     """Serve a cached thumbnail for one file."""
     try:
-        path = _safe_path(request.args.get("path", ""))
+        raw = request.args.get("path", "")
+        vc = _virtual(raw)
+        path = vc[0] if vc else _safe_path(raw)    # a copy shows its raw's thumbnail
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -1639,7 +1942,8 @@ def api_reset():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        path = _safe_path(payload["path"])
+        vc = _virtual(payload["path"])
+        path = vc[0] if vc else _safe_path(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -1647,7 +1951,7 @@ def api_reset():
         # Reset clears the whole XMP-crs group. On a Lightroom-managed file
         # that destroys develop settings this tool never wrote — the same
         # damage cmd_revert and batch apply already refuse to do.
-        if not payload.get("overwrite_foreign", False):
+        if not vc and not payload.get("overwrite_foreign", False):
             who = detect_foreign_edits(path)
             if who:
                 return jsonify({
@@ -1656,13 +1960,16 @@ def api_reset():
                     "foreign_editor": who,
                 }), 409
 
-        strip_xmp_adjustments(path)
+        if not vc:
+            strip_xmp_adjustments(path)
         _, baseline_temp = _load_base_render(path)
         neutral = {c["key"]: c["default"] for c in CONTROLS + GLOBAL_CONTROLS}
         neutral.update(colormix.COLOR_DEFAULTS)
         neutral["color_temp"] = baseline_temp
         neutral["monochrome"] = False
         neutral["crop"] = None
+        if vc:
+            catalog.update_virtual(LIBRARY_ROOT, vc[1]["id"], adjustments=neutral)
         rendered = render_with_histogram(path, neutral)
         return jsonify({
             "ok": True,
@@ -1687,13 +1994,15 @@ def _history_request():
     except ValueError as exc:
         return None, None, (jsonify({"error": str(exc)}), 415)
     try:
-        return payload, _safe_path(payload["path"]), None
+        vc = _virtual(payload["path"])
+        return payload, (_history_key(*vc) if vc else _safe_path(payload["path"])), None
     except (ValueError, KeyError) as exc:
         return None, None, (jsonify({"error": str(exc)}), 400)
 
 
 def _state_response(path: Path, adjustments: dict, hist: dict, **extra):
     """A full adjustment set rendered, as the client needs after a jump/apply."""
+    path = _unpseudo(path)
     _, baseline_temp = _load_base_render(path)
     merged = complete_adjustments(adjustments, baseline_temp)
     rendered = render_with_histogram(path, merged)

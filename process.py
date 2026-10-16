@@ -847,10 +847,12 @@ def cmd_export(args: argparse.Namespace) -> None:
     import exporter
 
     sources: list[Path] = []
+    roots: list[Path] = []      # library folders, whose virtual copies are exported too
     for inp in args.inputs:
         inp = Path(inp)
         if inp.is_dir():
             sources.extend(list_photos(inp))
+            roots.append(inp.resolve())
         elif inp.is_file():
             sources.append(inp)
         else:
@@ -872,9 +874,19 @@ def cmd_export(args: argparse.Namespace) -> None:
 
     out_dir = Path(args.output) if args.output else Path.cwd() / "export"
     written, failed = [], []
-    for seq, src in enumerate(tqdm(sources, unit="file", desc="Exporting"), start=1):
+    # (raw, virtual copy or None): each virtual copy exports as its own file.
+    jobs: list[tuple[Path, dict | None]] = []
+    for src in sources:
+        jobs.append((src, None))
+        for root in roots:
+            if root in src.resolve().parents:
+                import catalog
+                rel = src.resolve().relative_to(root).as_posix()
+                jobs.extend((src, v) for v in catalog.virtuals_of(root, rel))
+                break
+    for seq, (src, virt) in enumerate(tqdm(jobs, unit="file", desc="Exporting"), start=1):
         try:
-            dest = exporter.export_photo(src, out_dir, opts, seq=seq)
+            dest = exporter.export_photo(src, out_dir, opts, seq=seq, virtual=virt)
             written.append(dest)
             if args.verbose:
                 tqdm.write(f"  {src.name} -> {dest}")

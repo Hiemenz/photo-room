@@ -149,11 +149,17 @@ def _saved_adjustments(path: Path) -> dict:
     return dict(saved) if saved else {}
 
 
-def render(path: Path, opts: ExportOptions) -> tuple[Image.Image, bytes | None]:
-    """Render ``path`` with its saved edits. Returns (8-bit RGB image, ICC bytes)."""
+def render(path: Path, opts: ExportOptions,
+           adjustments: dict | None = None) -> tuple[Image.Image, bytes | None]:
+    """
+    Render ``path`` with its saved edits. Returns (8-bit RGB image, ICC bytes).
+
+    ``adjustments`` overrides the saved edits; a virtual copy exports with its
+    own settings this way.
+    """
     import editor
 
-    adj = _saved_adjustments(path)
+    adj = dict(adjustments) if adjustments is not None else _saved_adjustments(path)
 
     if path.suffix.lower() in RAW_SUFFIXES:
         import rawpy
@@ -224,6 +230,20 @@ def copy_metadata(source: Path, dest: Path) -> None:
         raise RuntimeError(f"exiftool failed copying metadata: {result.stderr.strip()}")
 
 
+def _apply_virtual_metadata(dest: Path, virtual: dict) -> None:
+    """Put the copy's own rating, colour label and keywords on the exported file."""
+    import library
+
+    args = [f"-XMP-xmp:Rating={max(0, int(virtual.get('rating', 0)))}"]
+    args += library.xmp_args(label=virtual.get("label", ""),
+                             keywords=virtual.get("keywords", []))
+    result = run_tool(["exiftool", *args, "-overwrite_original", str(dest)],
+                      timeout=EXIFTOOL_TIMEOUT, what="exiftool",
+                      capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"exiftool failed writing copy metadata: {result.stderr.strip()}")
+
+
 # ---------------------------------------------------------------------------
 # Filenames and the export itself
 # ---------------------------------------------------------------------------
@@ -234,16 +254,17 @@ def _shoot_date(path: Path) -> str:
 
 
 def output_name(source: Path, template: str, ext: str, seq: int,
-                size: tuple[int, int]) -> str:
+                size: tuple[int, int], stem: str | None = None) -> str:
     """
     Expand a filename template. Tokens: {name} {date} {seq} {width} {height}
     ({seq:04d} pads). Path separators are rejected so a template cannot
-    write outside the output folder.
+    write outside the output folder. ``stem`` replaces the source's file stem
+    for {name} (a virtual copy passes ``IMG_0001-copy2``).
     """
     needs_date = "{date" in template
     try:
         stem = template.format(
-            name=source.stem, seq=seq, width=size[0], height=size[1],
+            name=stem or source.stem, seq=seq, width=size[0], height=size[1],
             date=_shoot_date(source) if needs_date else "",
         )
     except (KeyError, IndexError, ValueError) as exc:
@@ -253,14 +274,27 @@ def output_name(source: Path, template: str, ext: str, seq: int,
     return stem + ext
 
 
-def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1) -> Path:
-    """Export one photo. Returns the written path; never overwrites an existing file."""
+def virtual_stem(source: Path, virtual: dict) -> str:
+    """Export name for a virtual copy: IMG_0001-copy2, so it never clashes with the original."""
+    return f"{source.stem}-copy{virtual['copy_no']}"
+
+
+def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
+                 virtual: dict | None = None) -> Path:
+    """
+    Export one photo. Returns the written path; never overwrites an existing file.
+
+    With ``virtual`` (a catalog entry) the raw is rendered with the copy's own
+    adjustments and the output is named ``<stem>-copy<N>``. Metadata still comes
+    from the raw, with the copy's rating, colour label and keywords on top.
+    """
     opts = opts.validate()
-    img, icc = render(source, opts)
+    img, icc = render(source, opts, adjustments=virtual["adjustments"] if virtual else None)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     ext = FORMATS[opts.format]
-    name = output_name(source, opts.template, ext, seq, img.size)
+    name = output_name(source, opts.template, ext, seq, img.size,
+                       stem=virtual_stem(source, virtual) if virtual else None)
     dest = out_dir / name
     n = 1
     while dest.exists():
@@ -276,6 +310,8 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1)
     if opts.keep_metadata:
         try:
             copy_metadata(source, dest)
+            if virtual:
+                _apply_virtual_metadata(dest, virtual)
         except Exception:
             dest.unlink(missing_ok=True)  # never leave a stripped file behind
             raise

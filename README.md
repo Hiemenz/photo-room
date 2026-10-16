@@ -216,6 +216,61 @@ visible. Endpoints: `GET /api/library` (filters, `sort`, `dir`, `offset`,
 `limit`), `POST /api/flag`, `/api/label`, `/api/keywords` (each accepts `path`
 or `paths`).
 
+### Collections, virtual copies, Compare and Survey
+
+**Collections.** The Library has a left panel listing collections. `+` makes
+a collection (holding the current selection, if any); `+ Smart` opens a rule
+editor. Add photos by dragging grid cells onto a collection, or with the
+**Add to collection** menu in the footer; **Remove from collection** takes
+the selection back out. Click a collection to browse it (the filter bar still
+applies inside it). The pencil renames a collection (or edits a smart one's
+rules); the cross deletes the collection only, never the photos.
+
+A **smart collection** holds rules joined by "all" or "any" and is
+recalculated each time it is shown: rating (at least / at most / exactly),
+flag, colour label (or none), keyword (has / does not have), camera (is /
+contains) and capture date (on / after / before). Smart collections cannot be
+filled by hand.
+
+Collections and virtual copies are stored in `.photo-room-catalog.json` in the
+library root (next to `.photo-room-library.json`). Names are unique,
+ignoring case.
+
+**Virtual copies.** Select a photo and press `v` (or **Virtual copy**) to
+make a second version of it with its own edit stack, rating, colour label,
+keywords and pick flag, and no second raw file. A new copy starts from the
+photo's current edits and metadata, then the two are independent. Copies show
+a folded page-corner badge, appear in the grid and in collections, open in
+Develop with their own history and snapshots, and are named
+`IMG_0001 (copy 1).dng`. Edits are saved in the catalog, not into the raw's
+XMP, so Lightroom does not see them; ratings, labels and keywords on a copy
+are likewise catalog-only. **Delete copy** removes the copy, its history file
+and its collection entries; the raw is never touched. Deleting the raw's
+file hides its copies.
+
+Export honours copies: `process.py export <folder>` exports each virtual copy
+of every photo in the folder as its own file rendered with the copy's
+settings, named `<stem>-copy<N>` (for example `IMG_0001-copy2.jpg`) so it
+never overwrites the original. Metadata comes from the raw, with the copy's
+rating, colour label and keywords applied on top.
+
+**Compare (`c`).** Opens the active photo (the "select") beside a candidate.
+Left/Right step the candidate through the grid, Up promotes the candidate to
+select, `0`-`5`/`p`/`x` rate and flag the candidate. The mouse wheel zooms
+both panes together about the pointer, dragging pans both, double-click
+toggles 100% (4x here) and fit. `c` or Esc closes.
+
+**Survey (`n`).** Select two or more photos and press `n` to see them all at
+once, sized to fit. Click a photo to drop it from the survey, double-click
+to open it in Develop. `n` or Esc closes.
+
+Endpoints: `GET /api/collections`, `POST /api/collections/create|rename|
+delete|rules|add|remove`, `GET /api/library?collection=<id>`,
+`POST /api/virtual/create|delete`, `POST /api/view_preview` (a read-only
+preview used by Compare). Rate, flag, label, keyword, thumbnail, open,
+preview, save, reset and history endpoints accept a virtual copy's id
+(`<raw path>#vc-<hex>`) wherever they accept a path.
+
 ### Presets
 
 Save the current sliders under a name, then pick it from the dropdown to
@@ -429,6 +484,7 @@ The test suite exports a synthetic photo with EXIF, GPS, IPTC and XMP and
 fails if any tag differs before and after.
 
 The editor has no export dialog yet; export is command-line only for now.
+Virtual copies are exported too (see Collections, virtual copies, Compare and Survey).
 
 ## What the automatic adjustments do
 
