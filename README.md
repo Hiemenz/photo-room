@@ -975,3 +975,7 @@ scope removals; `photoslibrary.readonly`, `.sharing` and the full
 
 Saving uses `exiftool -overwrite_original`, so no `.dng_original` backup
 is kept. The embedded raw is the safety net.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
