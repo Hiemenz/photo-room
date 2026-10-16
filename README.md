@@ -122,6 +122,54 @@ Below the sliders, a Lightroom-style **Tone curve**:
   tags. It is part of presets, copy/paste settings and batch apply, and is
   scaled by Edit strength like the sliders.
 
+### Local adjustments (masks)
+
+Open the **Masks** panel below the colour grading. Pick a tool, then drag on
+the photo:
+
+- **Graduated** - drag from where the effect is full to where it fades out.
+  Pins let you move the centre or either end; **Angle** and **Feather**
+  sliders refine it.
+- **Radial** - drag out from the centre. Pins move the centre and resize the
+  width and height; sliders set angle and feather. The effect is inside the
+  ellipse; **Invert** swaps it.
+- **Brush** - paint. Each stroke has its own **Size**, **Feather**, **Flow**
+  (how fast repeated passes build up) and **Density** (the most a stroke can
+  reach); **Erase** (or hold Alt) subtracts paint. Strokes are kept as compact
+  point lists and rasterised on demand, never as a bitmap.
+
+Every mask has its own local sliders: Exposure, Contrast, Highlights, Shadows,
+Temp, Tint, Saturation, Clarity, Texture, Dehaze and Sharpness. The local
+adjustment is rendered over the whole picture and blended through the soft
+mask, so outside the mask the pixels are exactly the unmasked render, and a
+mask whose sliders are all zero changes nothing. A photo can have up to 16
+masks; the list lets you select, enable/disable, **Duplicate**, **Invert** and
+**Delete** (the Delete key) them. Press **O** (or tick *Show mask*) for a red
+tint of the selected mask.
+
+Mask positions are fractions of the cropped, straightened picture, so they are
+the same in the preview and in the full-resolution export. Masks are part of
+the settings: they go into presets, copy/paste, batch apply and the history
+panel, and they are scaled by Edit strength like the sliders. Code:
+`masks.py`.
+
+**What is saved, and what Lightroom can read.** Graduated and radial masks are
+written as `crs:MaskGroupBasedCorrections` (`Mask/Gradient`,
+`Mask/CircularGradient`, with the `crs:Local*` sliders) and brush masks as
+`crs:PaintBasedCorrections` (`Mask/Brush` with `Dabs`, `Radius`, `Flow`,
+`CenterWeight`, `MaskValue`). The XMP cannot carry everything, so the full
+set is also written to `IMG_0001.dng.masks.json` beside the photo (mask order,
+this tool's feather model, brush density on erase strokes, disabled masks). On
+open the JSON is used while the XMP still holds the same number of masks of
+each kind; if Lightroom has since changed the XMP, the XMP wins and the masks
+are rebuilt from it, approximately. Treat the XMP side as a best-effort
+mapping: the structure is the one Camera Raw writes and exiftool round-trips
+it, but it has not been opened in Lightroom, so gradient feather, radial
+`Flipped`/`Feather` and the brush dab encoding may differ from what Lightroom
+draws. Masks Lightroom itself makes (AI, range, colour, luminance) are not
+imported, and saving from here replaces the mask lists in the file. A save
+that sends no `masks` key leaves the file's masks alone.
+
 ### Crop
 
 **Crop** opens a draggable overlay with thirds guides. Drag a corner to
@@ -400,6 +448,8 @@ back (tap to latch, or hold to peek). *Before* is the as-imported state.
 | `←` `→` | Previous / next photo |
 | `\` (hold or tap) | Show the as-imported "Before"; tap to latch |
 | `b` | Toggle black and white |
+| `o` | Show / hide the selected mask (red tint), with the Masks panel open |
+| `Delete` | Delete the selected mask |
 | `cmd`+`s` | Save adjustments |
 | `cmd`+`c` / `cmd`+`v` | Copy / paste settings |
 

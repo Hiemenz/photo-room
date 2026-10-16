@@ -30,6 +30,7 @@ from PIL import Image, ImageFilter
 
 import catalog
 import colormix
+import masks
 import library
 import history
 import lens
@@ -499,6 +500,9 @@ def apply_adjustments(base: np.ndarray, baseline_temp: int, adj: dict) -> np.nda
     # --- Detail ---
     img = _apply_detail(img, adj)
 
+    # --- Local adjustments (masks.py): graduated, radial and brush masks ---
+    img = masks.apply_masks(img, adj.get("masks"), blur=_blur)
+
     # --- Edit strength ---
     # Blend the finished edit back toward the original. Above 100% it
     # extrapolates away from the original, exaggerating the same edit.
@@ -615,6 +619,8 @@ def effective_adjustments(adj: dict) -> dict:
     for key, default in colormix.COLOR_DEFAULTS.items():
         if key in adj and key not in colormix.UNSCALED_KEYS:
             out[key] = default + (float(adj[key]) - default) * strength
+    if adj.get("masks"):
+        out["masks"] = masks.scale_for_strength(adj["masks"], strength)
     return out
 
 
@@ -730,7 +736,18 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
         f"-XMP-crs:LuminanceSmoothing={int(adj.get('luminance_nr', 0))}",
         f"-XMP-crs:ConvertToGrayscale={'True' if adj.get('monochrome') else 'False'}",
     ] + (colormix.xmp_arguments(adj) + tonecurve.xmp_arguments(adj.get("tone_curve"))
-         + retouch.xmp_arguments(adj, adj.get("_frame")))
+         + retouch.xmp_arguments(adj, adj.get("_frame")) + _mask_arguments(adj))
+
+
+def _mask_arguments(adj: dict) -> list[str]:
+    """Local-adjustment XMP, only when the caller says anything about masks.
+
+    A save that carries no ``masks`` key (an older client, a batch of plain
+    sliders) leaves whatever masks the file already has alone.
+    """
+    if "masks" not in adj:
+        return []
+    return masks.xmp_arguments(adj["masks"], adj.get("_frame_aspect"))
 
 
 def _process_version_for(path: Path) -> str:
@@ -800,7 +817,11 @@ def save_adjustments(
     writing one changes which application wins, and that is the
     photographer's decision rather than a default.
     """
+    masks_full = adj.get("masks") if "masks" in adj else None
+    aspect = _output_aspect(frame_size, adj)
     adj = effective_adjustments(adj)
+    if aspect:
+        adj["_frame_aspect"] = aspect
     if source_size:
         # Spot radii are fractions of the width; Camera Raw also wants the height.
         adj["_frame"] = tuple(source_size)
@@ -815,6 +836,7 @@ def save_adjustments(
         write_sidecar(path, adj)
         verify_xmp_written(edit_target(path),
                            {"ColorTemperature": str(int(adj.get("color_temp", 5500)))})
+        _save_mask_sidecar(path, masks_full)
         return
 
     result = subprocess.run(
@@ -832,9 +854,51 @@ def save_adjustments(
 
     if sidecar:
         write_sidecar(path, adj)
+    _save_mask_sidecar(path, masks_full)
+
+
+def _output_aspect(frame_size: tuple[float, float] | None, adj: dict) -> float | None:
+    """Width / height of the cropped picture, for writing gradient masks to XMP."""
+    if not frame_size or not frame_size[1]:
+        return None
+    aspect = frame_size[0] / frame_size[1]
+    crop = adj.get("crop") or {}
+    cw = float(crop.get("right", 1.0)) - float(crop.get("left", 0.0))
+    ch = float(crop.get("bottom", 1.0)) - float(crop.get("top", 0.0))
+    if cw > 0.01 and ch > 0.01:
+        aspect *= cw / ch
+    return aspect
+
+
+def _save_mask_sidecar(path: Path, masks_full) -> None:
+    """Full-fidelity masks beside the photo (None = the caller said nothing)."""
+    if masks_full is not None:
+        masks.save_sidecar(path, masks_full)
 
 
 def read_saved_adjustments(path: Path, prefer_sidecar: bool = True) -> dict | None:
+    """Develop settings stored for this photo, with its local-adjustment masks."""
+    values, source = _read_saved_values(path, prefer_sidecar)
+    found = _read_masks(path, source) if source is not None else []
+    if found:
+        values = dict(values or {})
+        values["masks"] = found
+    return values
+
+
+def _read_masks(photo: Path, source: Path) -> list[dict]:
+    """Masks from the XMP in ``source``, or the richer JSON sidecar if it still agrees."""
+    try:
+        result = subprocess.run(
+            ["exiftool"] + masks.xmp_read_args() + [str(source)],
+            capture_output=True, text=True, timeout=EXIFTOOL_TIMEOUT)
+        from_xmp = masks.parse_exiftool_json(result.stdout)
+    except Exception:
+        from_xmp = []
+    return masks.reconcile(masks.load_sidecar(photo), from_xmp)
+
+
+def _read_saved_values(path: Path, prefer_sidecar: bool = True) -> tuple[dict | None, Path | None]:
     """
     Return slider values already stored for this photo.
 
@@ -847,14 +911,14 @@ def read_saved_adjustments(path: Path, prefer_sidecar: bool = True) -> dict | No
     """
     if edit_target(path) != path:
         sidecar = edit_target(path)
-        return _read_adjustments_from(sidecar) if sidecar.exists() else None
+        return (_read_adjustments_from(sidecar), sidecar) if sidecar.exists() else (None, None)
     if prefer_sidecar:
         sidecar = path.with_suffix(".xmp")
         if sidecar.exists():
             values = _read_adjustments_from(sidecar)
             if values:
-                return values
-    return _read_adjustments_from(path)
+                return values, sidecar
+    return _read_adjustments_from(path), path
 
 
 def _read_adjustments_from(path: Path) -> dict | None:
@@ -1139,6 +1203,7 @@ def index():
         controls=CONTROLS,
         global_controls=GLOBAL_CONTROLS,
         color_controls=COLOR_CONTROLS,
+        mask_controls=masks.LOCAL_CONTROLS,
         m8_controls=retouch.CONTROLS,
         m8_toggles=retouch.TOGGLES,
         curve_presets=tonecurve.PRESETS,
@@ -1162,6 +1227,7 @@ def complete_adjustments(adj: dict, baseline_temp: int) -> dict:
     merged["monochrome"] = bool(adj.get("monochrome", False))
     merged["crop"] = adj.get("crop")
     merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
+    merged["masks"] = masks.normalise_masks(adj.get("masks"))
     merged.update(retouch.complete(adj))
     return merged
 
@@ -1266,6 +1332,42 @@ def api_preview():
         return jsonify({"error": describe_error(exc)}), 500
 
 
+    try:
+        payload = _json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        path = _safe_path(payload["path"])
+    except (ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+@app.route("/api/mask_overlay", methods=["POST"])
+def api_mask_overlay():
+    """The selected mask as a red-tint PNG the size of the current preview (O key)."""
+    try:
+        payload = _json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        path = _safe_path(payload["path"])
+    except (ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        adj = payload.get("adjustments", {})
+        wanted = str(payload.get("mask_id", ""))
+        found = [m for m in masks.normalise_masks(adj.get("masks")) if m["id"] == wanted]
+        if not found:
+            return jsonify({"error": "No such mask"}), 404
+        base, _ = _load_base_render(path)
+        # The frame the preview shows: spots and lens first, then transform, straighten, crop.
+        framed = retouch.apply_transform(retouch.apply_corrections(base, adj), adj)
+        shape = apply_geometry(framed, adj).shape[:2]
+        png = masks.overlay_png(found[0], shape)
+        return jsonify({"overlay": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
+                        "width": shape[1], "height": shape[0]})
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
 @app.route("/api/upright", methods=["POST"])
 def api_upright():
     """Suggest transform values from detected lines (Auto / Level / Vertical / Full)."""
@@ -1344,7 +1446,7 @@ def api_save():
 
         frame_size = None
         source_size = None
-        needs_frame = (float(chosen.get("straighten", 0) or 0)
+        needs_frame = (float(chosen.get("straighten", 0) or 0) or chosen.get("masks")
                        or chosen.get("spots") or not retouch.transform.is_identity(chosen))
         if needs_frame:
             base, _ = _load_base_render(path)
@@ -2063,6 +2165,9 @@ def api_reset():
         neutral["color_temp"] = baseline_temp
         neutral["monochrome"] = False
         neutral["crop"] = None
+        neutral["masks"] = []
+        if not vc:
+            masks.delete_sidecar(path)    # a virtual copy keeps its masks in the catalog
         neutral.update(copy.deepcopy(retouch.DEFAULTS))
         if vc:
             catalog.update_virtual(LIBRARY_ROOT, vc[1]["id"], adjustments=neutral)
