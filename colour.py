@@ -56,38 +56,54 @@ def _pow(x: np.ndarray, p: float) -> np.ndarray:
 # Transfer functions
 # ---------------------------------------------------------------------------
 
+def _f32_flat(a) -> np.ndarray:
+    a = np.asarray(a)
+    if a.dtype != np.float32:
+        a = a.astype(np.float32)
+    return np.ascontiguousarray(a)
+
+
 def to_linear(enc: np.ndarray, space: str = DEFAULT_SPACE) -> np.ndarray:
-    """Encoded 0..1 -> linear light (a new array; negative input is treated as 0)."""
+    """Encoded 0..1 -> linear light (a new float32 array; negative input is treated as 0)."""
     space = normalise_space(space)
-    x = np.maximum(np.asarray(enc), 0)
-    if x.dtype not in (np.float32, np.float64):
-        x = x.astype(np.float32)
-    x = np.ascontiguousarray(x)
-    if space == "srgb":
-        hi = _pow((x + x.dtype.type(_SRGB_A)) * x.dtype.type(1.0 / (1.0 + _SRGB_A)), 2.4)
-        low = x < _SRGB_DEC_THRESHOLD
-        if low.any():
-            hi[low] = x[low] * x.dtype.type(1.0 / 12.92)
-        return hi
-    return _pow(x, ADOBE_GAMMA if space == "adobergb" else PROPHOTO_GAMMA)
+    x = np.maximum(_f32_flat(enc), F32(0.0))
+    shape = x.shape
+    flat = x.reshape(-1)
+    if space != "srgb":
+        return _pow(flat, ADOBE_GAMMA if space == "adobergb" else PROPHOTO_GAMMA).reshape(shape)
+    # Piecewise without a boolean mask: the power segment is evaluated on max(x, knee) and the
+    # linear segment contributes (min(x, knee) - knee) / 12.92, which is 0 above the knee.
+    knee = F32(_SRGB_DEC_THRESHOLD)
+    hi = np.maximum(flat, knee)
+    hi = _lin_scale(hi, 1.0 / (1.0 + _SRGB_A), _SRGB_A / (1.0 + _SRGB_A))
+    hi = _pow(hi, 2.4)
+    lo = np.minimum(flat, knee)
+    return _lin_scale(hi, 1.0, 0.0, lo, 1.0 / 12.92, -_SRGB_DEC_THRESHOLD / 12.92).reshape(shape)
 
 
 def to_encoded(lin: np.ndarray, space: str = DEFAULT_SPACE) -> np.ndarray:
-    """Linear light -> encoded (a new array; input is clipped to 0..1 first)."""
+    """Linear light -> encoded (a new float32 array; input is clipped to 0..1 first)."""
     space = normalise_space(space)
-    x = np.clip(np.asarray(lin), 0, 1)
-    if x.dtype not in (np.float32, np.float64):
-        x = x.astype(np.float32)
-    x = np.ascontiguousarray(x)
-    if space == "srgb":
-        hi = _pow(x, 1.0 / 2.4)
-        hi *= x.dtype.type(1.0 + _SRGB_A)
-        hi -= x.dtype.type(_SRGB_A)
-        low = x <= _SRGB_ENC_THRESHOLD
-        if low.any():
-            hi[low] = x[low] * x.dtype.type(12.92)
-        return hi
-    return _pow(x, 1.0 / (ADOBE_GAMMA if space == "adobergb" else PROPHOTO_GAMMA))
+    x = np.clip(_f32_flat(lin), F32(0.0), F32(1.0))
+    shape = x.shape
+    flat = x.reshape(-1)
+    if space != "srgb":
+        return _pow(flat, 1.0 / (ADOBE_GAMMA if space == "adobergb" else PROPHOTO_GAMMA)).reshape(shape)
+    knee = F32(_SRGB_ENC_THRESHOLD)
+    hi = _pow(np.maximum(flat, knee), 1.0 / 2.4)
+    hi = _lin_scale(hi, 1.0 + _SRGB_A, -_SRGB_A)
+    lo = np.minimum(flat, knee)
+    return _lin_scale(hi, 1.0, 0.0, lo, 12.92, -12.92 * _SRGB_ENC_THRESHOLD).reshape(shape)
+
+
+def _lin_scale(a: np.ndarray, ka: float, c: float, b: np.ndarray | None = None, kb: float = 0.0,
+               cb: float = 0.0) -> np.ndarray:
+    """``ka * a + kb * b + c + cb`` as one pass (cv2.addWeighted) when OpenCV is there."""
+    if b is None:
+        b, kb = a, 0.0
+    if cv2 is not None:
+        return cv2.addWeighted(a, ka, b, kb, c + cb).reshape(-1)
+    return (a * F32(ka) + b * F32(kb) + F32(c + cb)).astype(np.float32)
 
 
 def srgb_encode_exact(lin):

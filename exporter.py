@@ -229,7 +229,9 @@ def _render_array(path: Path, opts: ExportOptions,
                        "space": space, "half": False, "crop": crop}, decode)
         src_size = (lin16.shape[1], lin16.shape[0])
         icc = icc_profile_for(space)
-        base = colour.linear16_to_encoded(np.asarray(lin16), space)
+        # Stays linear light: the geometry and tone stages work on it directly.
+        base = render_kernels.u16_to_float(np.asarray(lin16))
+        linear_input = True
         del lin16
     else:
         with Image.open(path) as src:
@@ -249,6 +251,7 @@ def _render_array(path: Path, opts: ExportOptions,
         else:
             icc = source_icc or icc_profile_for("srgb")
         base = render_kernels.u8_to_float(np.asarray(img))
+        linear_input = False
 
     # Resizing first keeps the heavy float passes proportional to the output.
     # Geometry (crop/straighten) is fractional, so it is unaffected. Everything
@@ -262,6 +265,7 @@ def _render_array(path: Path, opts: ExportOptions,
     adj = editor.resolve_edit_version(adj, baseline)
     adj = editor.effective_adjustments(adj)
     adj["_space"] = space
+    adj["_linear_input"] = linear_input
     adj = editor.lens.attach_meta(path, adj)    # lens profile needs the EXIF
     out = editor.apply_adjustments(base, baseline, adj)
     return np.clip(out, 0.0, 1.0), icc

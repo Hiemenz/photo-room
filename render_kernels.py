@@ -195,6 +195,16 @@ def _smooth_mask(e: np.ndarray, lo: float, hi: float) -> np.ndarray:
     return m
 
 
+def lightness(lin: np.ndarray) -> np.ndarray:
+    """Display-referred lightness 0..1 the range masks are drawn on: sqrt of the linear luminance.
+
+    A gamma-2 stand-in for the output curve (within a few percent of sRGB's), one cheap
+    pass, and the same for every output space so the sliders mean the same thing everywhere.
+    """
+    y = np.clip(luminance(lin), 0.0, 1.0)
+    return cv2.sqrt(y) if cv2 is not None and y.flags.c_contiguous else np.sqrt(y)
+
+
 def range_adjust(lin: np.ndarray, adj: dict, space: str) -> np.ndarray:
     """
     Shadows, Highlights, Whites and Blacks on linear light (``lin`` may be modified).
@@ -208,7 +218,7 @@ def range_adjust(lin: np.ndarray, adj: dict, space: str) -> np.ndarray:
     sh, hi, wh, bl = (float(adj.get(k, 0)) for k in ("shadows", "highlights", "whites", "blacks"))
     if not (sh or hi or wh or bl):
         return lin
-    e = colour.to_encoded(luminance(np.clip(lin, 0.0, 1.0)), space)
+    e = lightness(lin)
     stops = None
 
     def add(term):
@@ -226,7 +236,8 @@ def range_adjust(lin: np.ndarray, adj: dict, space: str) -> np.ndarray:
         add(_smooth_mask(e, 0.70, 1.0) * F32(wh / 100.0 * RANGE_STOPS["whites"]))
     if stops is not None:
         stops *= F32(np.log(2.0))
-        lin = lin * np.exp(stops, out=stops)[..., None]
+        gain = cv2.exp(stops) if cv2 is not None and stops.flags.c_contiguous else np.exp(stops)
+        lin = lin * gain[..., None]
     if bl:
         lift = _smooth_mask(e, 0.35, 0.0) * F32(bl / 100.0 * BLACKS_OFFSET)
         lin = lin + lift[..., None]
@@ -271,6 +282,16 @@ def tone_stage(base: np.ndarray, baseline_temp: float, adj: dict, linear: np.nda
     if linear is not None and is_linear:
         return map_rows(lambda s, l: _tone_rows(s, gains, adj, applier, space, True, l), base, linear)
     return map_rows(lambda s: _tone_rows(s, gains, adj, applier, space, is_linear), base)
+
+
+def tone_stage_from_linear(lin: np.ndarray, baseline_temp: float, adj: dict) -> np.ndarray:
+    """``tone_stage`` for an image that is already linear light (edit version 2 only); returns encoded."""
+    space = colour.normalise_space(adj.get("_space"))
+    if tone_is_linear_neutral(baseline_temp, adj):
+        return tone_stage(colour.to_encoded(lin, space), baseline_temp, adj)
+    gains = wb_exposure_gains(baseline_temp, adj)
+    applier = tonecurve.curve_applier(adj.get("tone_curve"), adj.get("contrast", 0))
+    return map_rows(lambda l: _tone_rows(l, gains, adj, applier, space, True, l), lin)
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +502,12 @@ def detail_stage(img: np.ndarray, adj: dict, blur_fn=None) -> np.ndarray:
 def u8_to_float(arr: np.ndarray) -> np.ndarray:
     """uint8 image -> float32 0..1 (what ``asarray(float32) / 255`` did)."""
     k = F32(1.0 / 255.0)
+    return map_rows(lambda s: s.astype(F32) * k, arr, dtype=F32)
+
+
+def u16_to_float(arr: np.ndarray) -> np.ndarray:
+    """uint16 image -> float32 0..1."""
+    k = F32(1.0 / 65535.0)
     return map_rows(lambda s: s.astype(F32) * k, arr, dtype=F32)
 
 

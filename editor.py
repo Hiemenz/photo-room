@@ -438,6 +438,13 @@ def apply_adjustments(
     settings are unchanged. ``should_abort`` is polled between stages and
     raises :class:`StaleRender` for a request that has been superseded.
     """
+    # ``_linear_input``: ``base`` is already linear light (the exporter's 16-bit decode), which
+    # saves a decode and an encode of the full frame. Stages that need display-coded pixels
+    # (spots, lens, the old maths) get an encoded copy instead.
+    linear_in = bool(adj.get("_linear_input"))
+    if linear_in and (_is_legacy(adj) or not fast_ok(adj)):
+        base = colour.to_encoded(base, adj.get("_space"))
+        linear_in = False
     cache = _stage_cache if cache_id else None
     keys = stagecache.stage_keys(adj, baseline_temp) if cache else None
     S = stagecache
@@ -477,6 +484,9 @@ def apply_adjustments(
 
     if resume >= S.TONE:
         img = cached[resume]
+    elif linear_in:
+        checkpoint()
+        img = render_kernels.tone_stage_from_linear(geo, baseline_temp, adj)
     else:
         checkpoint()
         linear = None
@@ -530,7 +540,8 @@ def apply_adjustments(
     # extrapolates away from the original, exaggerating the same edit.
     strength = float(adj.get("strength", 100)) / 100.0
     if abs(strength - 1.0) > 1e-6:
-        img = geo + (img - geo) * strength
+        ref = colour.to_encoded(geo, adj.get("_space")) if linear_in else geo
+        img = ref + (img - ref) * strength
 
     # --- Monochrome ---
     # Applied after the colour sliders so they act as channel mixers: warming
@@ -2149,6 +2160,7 @@ def _current_adjustments(path: Path) -> dict:
         decoded = _decode_cache.get(str(path.resolve()))
     auto = compute_auto_adjustments(path, decoded=decoded, style_model=get_style_model())
     auto = {k: v for k, v in auto.items() if k not in ("iso", "styled")}
+    auto["edit_version"] = EDIT_VERSION
     return complete_adjustments(auto, baseline_temp)
 
 

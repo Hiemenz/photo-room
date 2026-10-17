@@ -542,3 +542,30 @@ def test_auto_exposure_is_measured_in_light():
     out = process.compute_auto_adjustments(Path("x.cr2"), decoded=(rgb, 5500, np.array([2, 1, 1.5, 1.0])), iso=100)
     expected = np.log2(colour.srgb_decode_exact(0.40) / colour.srgb_decode_exact(51 / 255))
     assert out["exposure"] == pytest.approx(round(float(expected) * 4) / 4)
+
+
+# ---------------------------------------------------------------------------
+# Linear-light input (the exporter hands the decode over without a round trip)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("adj", [
+    {},
+    {"exposure": 0.7, "contrast": 20},
+    {"contrast": 30},
+    {"shadows": 40, "highlights": -30, "blacks": 10, "whites": -10, "color_temp": 6800, "tint": 12},
+    {"exposure": -0.5, "straighten": 1.5, "crop": {"left": 0.1, "top": 0.1, "right": 0.9, "bottom": 0.9}},
+    {"exposure": 0.4, "strength": 60, "saturation": 20},
+    {"exposure": 0.4, "vibrance": 30, "tone_curve": {"points": {"rgb": [[0, 0], [100, 80], [255, 255]]}}},
+])
+@pytest.mark.parametrize("space", SPACES)
+def test_linear_input_equals_encoded_input(adj, space):
+    img = synthetic()
+    base = {"edit_version": 2, "_space": space, "color_temp": BASELINE, **adj}
+    ref = editor.apply_adjustments(img, BASELINE, dict(base))
+    got = editor.apply_adjustments(colour.to_linear(img, space), BASELINE, {**base, "_linear_input": True})
+    if adj.get("straighten"):
+        # Resampling in linear light instead of in code values is a (slightly) different, and
+        # physically more correct, interpolation: same picture, not the same bits.
+        assert np.abs(ref - got).mean() < 1.5e-3
+    else:
+        assert np.abs(ref - got).max() < 2e-4

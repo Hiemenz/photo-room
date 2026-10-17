@@ -12,6 +12,7 @@ import functools
 import os
 
 import colour
+import editversion
 import fsutil
 import subprocess
 import sys
@@ -493,6 +494,10 @@ def write_sidecar_adjustments(raw_path: Path, adj: dict) -> Path:
     target = raw_path.with_suffix(".xmp")
     values = _auto_xmp_values(adj)
     args = [f"-XMP-crs:{k}={v}" for k, v in values.items()]
+    if not target.exists():
+        # A brand-new sidecar holds only current-maths numbers; an existing one may hold older edits
+        # whose version must not be rewritten here.
+        args.append(f"-XMP-xmp:CreatorTool={editversion.tool_label()}")
     with fsutil.lock_for(target):
         if target.exists():
             cmd = ["exiftool"] + args + ["-overwrite_original", str(target)]
@@ -510,7 +515,8 @@ def write_sidecar_adjustments(raw_path: Path, adj: dict) -> Path:
 
 def embed_xmp_adjustments(dng_path: Path, adj: dict) -> None:
     values = _auto_xmp_values(adj)
-    xmp_args = [f"-XMP-crs:{k}={v}" for k, v in values.items()] + ["-overwrite_original"]
+    xmp_args = ([f"-XMP-crs:{k}={v}" for k, v in values.items()]
+                + [f"-XMP-xmp:CreatorTool={editversion.tool_label()}", "-overwrite_original"])
 
     result = run_tool(["exiftool"] + xmp_args + [str(dng_path)],
                       timeout=EXIFTOOL_TIMEOUT, what="exiftool",
