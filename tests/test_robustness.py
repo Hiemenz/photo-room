@@ -74,10 +74,10 @@ def failing_decoder(monkeypatch):
     def boom(path):
         if "good" in str(path):
             import numpy as np
-            return np.full((64, 96, 3), 120, dtype=np.uint8), 5000, np.ones(4)
+            return np.full((64, 96, 3), 6000, dtype=np.uint16), 5000, np.ones(4)
         raise OSError(b"Input/output error")
 
-    monkeypatch.setattr(editor, "decode_for_analysis", boom)
+    monkeypatch.setattr(editor, "decode_preview_linear", boom)
 
 
 def test_opening_a_damaged_file_returns_a_readable_error(client, failing_decoder, fake_exiftool):

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-FORMAT_VERSION = "v1"
+FORMAT_VERSION = "v2"
 DEFAULT_MB = 3072
 _lock = threading.Lock()
 

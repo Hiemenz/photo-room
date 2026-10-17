@@ -48,8 +48,8 @@ def test_the_most_recent_photo_is_kept(library, fake_rawpy, monkeypatch):
         open_photo(library, i)
 
     calls = {"n": 0}
-    real = editor.decode_for_analysis
-    monkeypatch.setattr(editor, "decode_for_analysis",
+    real = editor.decode_preview_linear
+    monkeypatch.setattr(editor, "decode_preview_linear",
                         lambda p: (calls.__setitem__("n", calls["n"] + 1), real(p))[1])
 
     open_photo(library, 11)          # the one just viewed
@@ -61,8 +61,8 @@ def test_the_oldest_photo_is_the_one_dropped(library, fake_rawpy, monkeypatch):
         open_photo(library, i)
 
     calls = {"n": 0}
-    real = editor.decode_for_analysis
-    monkeypatch.setattr(editor, "decode_for_analysis",
+    real = editor.decode_preview_linear
+    monkeypatch.setattr(editor, "decode_preview_linear",
                         lambda p: (calls.__setitem__("n", calls["n"] + 1), real(p))[1])
 
     open_photo(library, 0)           # the first one opened, long since evicted
@@ -80,8 +80,8 @@ def test_revisiting_a_photo_renews_it(library, fake_rawpy, monkeypatch):
         open_photo(library, 0)       # keep touching the first
 
     calls = {"n": 0}
-    real = editor.decode_for_analysis
-    monkeypatch.setattr(editor, "decode_for_analysis",
+    real = editor.decode_preview_linear
+    monkeypatch.setattr(editor, "decode_preview_linear",
                         lambda p: (calls.__setitem__("n", calls["n"] + 1), real(p))[1])
 
     open_photo(library, 0)
@@ -94,7 +94,7 @@ def test_a_cached_photo_is_not_decoded_again(library, fake_rawpy, monkeypatch):
     def forbidden(path):
         pytest.fail("re-decoded a photo that was still cached")
 
-    monkeypatch.setattr(editor, "decode_for_analysis", forbidden)
+    monkeypatch.setattr(editor, "decode_preview_linear", forbidden)
     open_photo(library, 0)
 
 

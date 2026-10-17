@@ -39,7 +39,7 @@ PARAMETRIC_TAGS = {
 # Largest shift a +/-100 parametric slider makes to its region (of full scale).
 PARAMETRIC_AMPLITUDE = 0.25
 LUT_SIZE = 1024
-FINE_SIZE = 4096    # resolution of the lookup used when a curve is applied to pixels
+FINE_SIZE = 65536   # resolution of the lookup used when a curve is applied to pixels (16-bit)
 LINEAR = [[0, 0], [255, 255]]
 
 PRESETS = {
@@ -199,28 +199,54 @@ def build_luts(tc) -> np.ndarray:
 _applier_cache: dict = {}
 
 
-def curve_applier(tc):
+def contrast_values(contrast: float, xs: np.ndarray) -> np.ndarray:
     """
-    Return ``apply(img)`` that applies the curve to a float32 (..., 3) array in
-    0..1 *in place* (and returns it), or None for an identity curve.
+    Camera Raw-style Contrast as an S-curve about the encoded mid-point, 0..1 -> 0..1.
 
-    Same curve as ``np.interp`` through the ``LUT_SIZE`` table (to within 0.12 of an
-    8-bit level), but in float32 with ``np.take`` (np.interp promotes to float64).
+    A logistic sigmoid whose steepness follows the slider (about 1.75x slope at the
+    centre for +100); negative values are its inverse (flattening). Unlike a
+    straight scale about 0.5 it never clips, so the ends of the range keep detail.
     """
-    if is_identity(tc):
+    a = float(np.clip(contrast, -100.0, 100.0)) / 100.0
+    xs = np.asarray(xs, dtype=np.float64)
+    if abs(a) < 1e-6:
+        return xs
+    k = 6.5 * abs(a)
+    lo, hi = 1.0 / (1.0 + np.exp(k / 2.0)), 1.0 / (1.0 + np.exp(-k / 2.0))
+    if a > 0:
+        return (1.0 / (1.0 + np.exp(-k * (xs - 0.5))) - lo) / (hi - lo)
+    p = np.clip(xs * (hi - lo) + lo, 1e-12, 1 - 1e-12)
+    return np.clip(0.5 + np.log(p / (1.0 - p)) / k, 0.0, 1.0)
+
+
+def curve_applier(tc, contrast: float = 0.0):
+    """
+    Return ``apply(img)`` that applies the Contrast S-curve and then the curve to a
+    float32 (..., 3) array in 0..1 *in place* (and returns it), or None when both
+    are neutral.
+
+    Same curve as ``np.interp`` through the ``LUT_SIZE`` table (to within 0.01 of an
+    8-bit level at the 65 537-entry lookup), but in float32 with ``np.take``
+    (np.interp promotes to float64).
+    """
+    contrast = float(contrast or 0.0)
+    if is_identity(tc) and abs(contrast) < 1e-6:
         return None
-    key = json.dumps(tc, sort_keys=True, default=str)
+    key = json.dumps([tc, contrast], sort_keys=True, default=str)
     hit = _applier_cache.get(key)
     if hit is not None:
         return hit
-    # 4097-entry tables sampled from the same 1024-point curve with np.interp,
-    # indexed by the nearest entry: at most slope/8192 off the exact linear
-    # interpolation (0.12 of an 8-bit level for a slope of 4), and two
-    # gathers per pixel cheaper than interpolating.
-    luts = build_luts(tc)
-    grid = np.linspace(0.0, 1.0, LUT_SIZE)
+    # Tables sampled from the same 1024-point curve with np.interp, indexed by
+    # the nearest entry: at most slope/131072 off the exact linear interpolation,
+    # and two gathers per pixel cheaper than interpolating.
     fine = np.linspace(0.0, 1.0, FINE_SIZE + 1)
-    tables = [np.interp(fine, grid, luts[c]).astype(np.float32) for c in range(3)]
+    pre = contrast_values(contrast, fine) if abs(contrast) >= 1e-6 else fine
+    if is_identity(tc):
+        tables = [pre.astype(np.float32)] * 3
+    else:
+        grid = np.linspace(0.0, 1.0, LUT_SIZE)
+        luts = build_luts(tc)
+        tables = [np.interp(pre, grid, luts[c]).astype(np.float32) for c in range(3)]
 
     def apply(img: np.ndarray) -> np.ndarray:
         try:

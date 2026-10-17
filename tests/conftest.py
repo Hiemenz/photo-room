@@ -38,6 +38,12 @@ class FakeRaw:
 
     def postprocess(self, **kwargs):
         self.postprocess_kwargs = kwargs
+        # A linear request (gamma=(1, 1)) gets the sRGB-decoded picture, so what
+        # the app encodes back for display is the fixture the test drew.
+        if tuple(kwargs.get("gamma") or ()) == (1, 1):
+            from colour import srgb_decode_exact
+            lin = srgb_decode_exact(self._rgb.astype(np.float64) / 255.0)
+            return np.rint(lin * 65535.0).astype(np.uint16)
         # rawpy honours output_bps; mirror that so callers get the dtype they ask for.
         if kwargs.get("output_bps") == 16:
             return (self._rgb.astype(np.float32) / 255.0 * 65535).astype(np.uint16)

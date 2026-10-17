@@ -340,17 +340,9 @@ def _default_blur(plane: np.ndarray, radius: float) -> np.ndarray:
     return _blur(plane, radius)
 
 
-def apply_local(img: np.ndarray, adj: dict, blur=None) -> np.ndarray:
-    """
-    Render one mask's sliders over the whole picture (the mask blends it later).
-
-    The maths mirrors the global sliders in ``editor.apply_adjustments`` so a
-    local +1 stop reads like a global +1 stop. ``img`` is not modified.
-    """
-    blur = blur or _default_blur
-    g = lambda k: float(adj.get(k, 0) or 0)           # noqa: E731
+def _apply_light_legacy(img: np.ndarray, g) -> np.ndarray:
+    """Edit version 1: the light sliders added to gamma-coded values."""
     out = img.copy()
-
     temp, tint = g("temp"), g("tint")
     if temp:
         out[:, :, 0] *= 1.0 + 0.3 * temp / 100.0
@@ -370,7 +362,42 @@ def apply_local(img: np.ndarray, adj: dict, blur=None) -> np.ndarray:
         out += (g("highlights") / 100.0) * 0.35 * (np.clip((lum - 0.5) / 0.5, 0.0, 1.0) ** 2)[:, :, None]
     if g("contrast"):
         out = (out - 0.5) * (1.0 + g("contrast") / 100.0) + 0.5
-    out = np.clip(out, 0.0, 1.0)
+    return np.clip(out, 0.0, 1.0)
+
+
+def _apply_light(img: np.ndarray, g, space: str) -> np.ndarray:
+    """White balance, exposure, tonal ranges and contrast, with the global kernel."""
+    import colour
+    import render_kernels
+    adj = {"exposure": g("exposure"), "shadows": g("shadows"), "highlights": g("highlights"),
+           "whites": g("whites"), "blacks": g("blacks"), "contrast": g("contrast"),
+           "tint": g("tint") * 1.5, "_space": space, "edit_version": 2}
+    # A mask's Temp is relative (-100..+100), not Kelvin: express it as gains of the
+    # same kind as the global slider by moving the white point symmetrically.
+    out = np.ascontiguousarray(img, dtype=np.float32)
+    temp = g("temp")
+    if temp:
+        lin = colour.to_linear(out, space) * colour.local_temperature_gains(temp).astype(np.float32)
+        out = colour.to_encoded(lin, space)
+    return render_kernels.tone_stage(out, 5500, {**adj, "color_temp": 5500})
+
+
+def apply_local(img: np.ndarray, adj: dict, blur=None, space: str = "srgb", legacy: bool = False) -> np.ndarray:
+    """
+    Render one mask's sliders over the whole picture (the mask blends it later).
+
+    The light controls (temp, tint, exposure, shadows, highlights, whites,
+    blacks) run in linear light exactly like the global sliders, through the
+    same kernel, so a local +1 stop is a global +1 stop; ``legacy`` keeps the
+    original gamma-space maths for edits saved before edit version 2.
+    ``img`` is not modified.
+    """
+    blur = blur or _default_blur
+    g = lambda k: float(adj.get(k, 0) or 0)           # noqa: E731
+    if legacy:
+        out = _apply_light_legacy(img, g)
+    else:
+        out = _apply_light(img, g, space)
 
     if g("saturation"):
         gray = _luma(out)[:, :, None]
@@ -401,7 +428,7 @@ def apply_local(img: np.ndarray, adj: dict, blur=None) -> np.ndarray:
     return out
 
 
-def apply_masks(img: np.ndarray, masks, blur=None) -> np.ndarray:
+def apply_masks(img: np.ndarray, masks, blur=None, space: str = "srgb", legacy: bool = False) -> np.ndarray:
     """
     Apply every mask in order. Returns ``img`` itself, untouched, when no mask
     can change a pixel (no masks, all sliders zero, or an empty mask).
@@ -416,7 +443,7 @@ def apply_masks(img: np.ndarray, masks, blur=None) -> np.ndarray:
         arr = mask_array(m, shape)
         if not arr.any():
             continue
-        local = apply_local(out, m["adj"], blur)
+        local = apply_local(out, m["adj"], blur, space=space, legacy=legacy)
         out = np.clip(out + (local - out) * arr[:, :, None], 0.0, 1.0)
     return out
 
