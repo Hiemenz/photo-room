@@ -559,6 +559,27 @@ type in a text box, number field or menu, and while a dialog is open.
 - **Revert to original** clears every stored adjustment.
 - **Recover original raw file** writes the embedded CR2 back out, byte for byte.
 
+### Presets, film styles and match reference
+
+The **Presets & film styles** panel (right column) has three tabs. Details and limits are in
+[docs/PRESETS-AND-LUTS.md](docs/PRESETS-AND-LUTS.md).
+
+- **Presets**: 30 built-in looks (B&W, warm/cool, faded, contrast, vivid, portrait, film) made from
+  the normal controls, with live thumbnails of your photo, hover preview and an **Amount** slider
+  (0-100%). Click applies as one History step. **Save...** keeps the current edit as a preset
+  (choose Tone / Colour / Curves / Grading / Effects / LUT; crop and white balance are off by
+  default). **Apply to selected** merges a preset into every ticked photo, one History step each.
+  **Import / Export** read and write photo-room `.json` and read Lightroom `.xmp` presets.
+- **Film styles**: import `.cube` 1D/3D LUTs (validated, tetrahedral interpolation), keep a LUT
+  library, a few generated built-ins, an **Intensity** slider. The LUT runs after colour grading
+  and before sharpening, with correct handling of Adobe RGB / ProPhoto output.
+- **Match**: pick a reference image and get an editable tone curve, per-channel curves, colour
+  mixer saturation and grading wheels that move the photo toward it, with a before/after
+  distance report.
+
+The LUT and the last preset used are recorded in the XMP sidecar (`crs:Look`); exports bake the
+LUT into the pixels and keep all metadata.
+
 ## Card ingest
 
 ```bash

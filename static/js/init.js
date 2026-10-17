@@ -7,4 +7,4 @@ loadRatings().then(() => {
   paintRating();
   if (filterMode !== "all") applyFilter();
 });
-loadPresets();
+loadLooks();

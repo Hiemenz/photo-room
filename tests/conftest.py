@@ -23,6 +23,14 @@ def _isolated_decode_cache(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("PHOTO_ROOM_CACHE_DIR", str(tmp_path_factory.mktemp("pr-cache")))
 
 
+@pytest.fixture(autouse=True)
+def _isolated_looks(tmp_path_factory, monkeypatch):
+    """LUT library and preset folder in a throwaway directory, never the photographer's own."""
+    root = tmp_path_factory.mktemp("pr-looks")
+    monkeypatch.setenv("PHOTO_ROOM_LUT_DIR", str(root / "luts"))
+    monkeypatch.setenv("PHOTO_ROOM_PRESET_DIR", str(root / "presets"))
+
+
 class FakeRaw:
     """Stands in for the object rawpy.imread() yields."""
 

@@ -38,8 +38,11 @@ STAGE_FIELDS: dict[int, frozenset] = {
                    | {f"{p}_{b}" for p in ("hue", "sat", "lum", "gray") for b in _BANDS}),
     GRADE: frozenset({"monochrome", "grade_blending", "grade_balance"}
                      | {f"grade_{r}_{c}" for r in _RANGES for c in ("hue", "sat", "lum")}),
-    DETAIL: frozenset({"clarity", "texture", "dehaze", "sharpness"}),
-    FINAL: frozenset({"masks", "strength", "monochrome", "grade_blending", "grade_balance"}
+    # The LUT runs at the start of the detail stage (on the finished colour edit), so its
+    # settings belong to DETAIL and to everything after it. Its own sub-result is cached
+    # under the GRADE key, so the intensity slider only re-blends.
+    DETAIL: frozenset({"clarity", "texture", "dehaze", "sharpness", "lut", "lut_amount"}),
+    FINAL: frozenset({"masks", "strength", "monochrome", "grade_blending", "grade_balance", "lut", "lut_amount"}
                      | {f"grade_{r}_{c}" for r in _RANGES for c in ("hue", "sat", "lum")}),
 }
 # Settings that never reach a preview pixel (noise reduction is not previewed).

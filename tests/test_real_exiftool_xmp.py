@@ -154,7 +154,8 @@ def test_everything_written_is_a_known_crs_tag_with_no_warnings(saved):
     assert_clean(saved)
     written = set(re.findall(r"<crs:(\w+)[ >]", saved.read_text()))
     wanted = {a.split("=")[0].split(":")[-1] for a in editor._xmp_arguments(
-        {**FULL, "_frame_aspect": 1.5, "_frame": (6000, 4000)}) if a.startswith("-XMP-crs:")}
+        {**FULL, "_frame_aspect": 1.5, "_frame": (6000, 4000)})
+        if a.startswith("-XMP-crs:") and not a.endswith("=")}      # "Tag=" only clears (no look on this photo)
     wanted = {ALIAS.get(t, t) for t in wanted}
     assert wanted - written == set(), f"requested but absent from the sidecar: {sorted(wanted - written)}"
 

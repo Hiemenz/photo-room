@@ -44,6 +44,8 @@ import masks
 import libindex
 import libapi
 import library
+import lookxmp
+import lut as lutmod
 import history
 import lens
 import quality
@@ -128,6 +130,10 @@ app.register_blueprint(libapi.bp)
 import cull_api  # noqa: E402  (smart culling and Auto edit)
 
 app.register_blueprint(cull_api.bp)
+
+import looks_api  # noqa: E402  (preset panel, LUT library, match reference look)
+
+app.register_blueprint(looks_api.bp)
 
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
@@ -424,6 +430,42 @@ def _stage_tone(base: np.ndarray, baseline_temp: int, adj: dict, linear=None) ->
     return render_kernels.tone_stage(base, baseline_temp, adj, linear=linear)
 
 
+def lut_amount(adj: dict) -> float:
+    """The film-style intensity as 0..1 (0 when no LUT is set)."""
+    if not adj.get("lut"):
+        return 0.0
+    try:
+        return min(1.0, max(0.0, float(adj.get("lut_amount", 100)) / 100.0))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _stage_lut(img: np.ndarray, adj: dict, cache, cache_id, key) -> np.ndarray:
+    """Apply the photo's film style at its intensity. Raises ``lut.LutNotFound`` if this machine lacks the LUT."""
+    amount = lut_amount(adj)
+    if amount <= 0:
+        return img
+    lut_id = adj["lut"]
+    full = cache.get(cache_id, "lut", f"{key}|{lut_id}") if cache and key else None
+    if full is None:
+        full = lutmod.apply(img, lutmod.get(lut_id), adj.get("_space"), 1.0)
+        if cache and key:
+            cache.put(cache_id, "lut", f"{key}|{lut_id}", full)
+    if amount >= 1.0:
+        return full
+    return img + (full - img) * np.float32(amount)
+
+
+def _without_missing_lut(adj: dict) -> tuple[dict, list[str]]:
+    """``adj`` minus a LUT this machine does not have, and a warning saying so (previews keep working)."""
+    if lut_amount(adj) > 0 and not lutmod.exists(adj["lut"]):
+        trimmed = dict(adj)
+        trimmed["lut"] = ""
+        return trimmed, [f"The LUT used by this photo ({adj['lut']}) is not in the LUT library on this "
+                         "computer, so it is not shown. Import the .cube file again."]
+    return adj, []
+
+
 def _stage_saturation(img: np.ndarray, adj: dict) -> np.ndarray:
     return render_kernels.saturation_stage(img, adj)
 
@@ -533,9 +575,14 @@ def apply_adjustments(
         if not mono:
             img = keep(S.GRADE, colormix.apply_grading(img, adj), img)
 
-    # --- Detail ---
+    # --- Film style (LUT) then detail ---
+    # A LUT is a display-referred look, so it runs on the finished colour edit and
+    # before clarity/texture/sharpening (lut.py). With black & white on, colour is
+    # drained after grading, so the LUT goes last instead (below) to keep its tints.
     if resume < S.DETAIL:
         checkpoint()
+        if not mono:
+            img = _stage_lut(img, adj, cache, cache_id, keys[S.GRADE] if keys else None)
         img = keep(S.DETAIL, _apply_detail(img, adj), img)
 
     checkpoint()
@@ -563,6 +610,7 @@ def apply_adjustments(
         img = np.repeat(_luminance(img)[:, :, None], 3, axis=2)
         # Colour grading still applies to a monochrome image (split toning).
         img = colormix.apply_grading(img, adj)
+        img = _stage_lut(img, adj, None, None, None)
 
     return np.clip(img, 0.0, 1.0)
 
@@ -637,6 +685,7 @@ def render_with_histogram(path: Path, adj: dict, quality: int = 82, should_abort
                           fast: bool = False) -> dict:
     """Render the preview and its histogram from a single composite pass."""
     base, baseline_temp = _load_base_render(path)
+    adj, warnings = _without_missing_lut(adj)
     cache_id = str(path.resolve())
     if fast and fast_ok(adj) and max(base.shape[:2]) > FAST_EDGE * 1.25:
         base = _fast_base(path, base)
@@ -651,6 +700,7 @@ def render_with_histogram(path: Path, adj: dict, quality: int = 82, should_abort
     return {
         "preview": f"data:image/jpeg;base64,{encoded}",
         "histogram": compute_histogram(out),
+        **({"warnings": warnings} if warnings else {}),
     }
 
 
@@ -697,6 +747,8 @@ def effective_adjustments(adj: dict) -> dict:
             out[key] = default + (float(adj[key]) - default) * strength
     if adj.get("masks"):
         out["masks"] = masks.scale_for_strength(adj["masks"], strength)
+    if adj.get("lut"):
+        out["lut_amount"] = min(100.0, float(adj.get("lut_amount", 100)) * strength)
     return out
 
 
@@ -800,7 +852,8 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
         f"-XMP-crs:LuminanceSmoothing={int(adj.get('luminance_nr', 0))}",
         f"-XMP-crs:ConvertToGrayscale={'True' if adj.get('monochrome') else 'False'}",
     ] + (colormix.xmp_arguments(adj) + tonecurve.xmp_arguments(adj.get("tone_curve"))
-         + retouch.xmp_arguments(adj, adj.get("_frame")) + _mask_arguments(adj))
+         + retouch.xmp_arguments(adj, adj.get("_frame")) + _mask_arguments(adj)
+         + lookxmp.xmp_arguments(adj))
 
 
 def _mask_arguments(adj: dict) -> list[str]:
@@ -1027,9 +1080,10 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
         "CropAngle", "HasCrop", "CropLeft", "CropTop", "CropRight", "CropBottom",
     ]
     args = [f"-XMP-crs:{t}" for t in tags] + ["-XMP-xmp:CreatorTool", "-XMP-crs:Version",
-                                               "-s3", "-f", str(path)]
+                                               "-XMP-crs:LookUUID", "-s3", "-f", str(path)]
     values = _exiftool_read(args).strip().split("\n")
     stamp = values[len(tags):len(tags) + 2]            # CreatorTool, crs:Version (absent = "-")
+    look = lookxmp.parse(values[len(tags) + 2] if len(values) > len(tags) + 2 else None)
     values = values[:len(tags)]
     if len(values) < len(tags) or all(v.strip() in ("-", "") for v in values):
         # No develop settings, but a curve alone is still an edit.
@@ -1078,6 +1132,7 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
         out["tone_curve"] = curve
     if out:
         out.update(_read_color_adjustments(path))
+        out.update(look)
         declared = _declared_edit_version(stamp)
         if declared:
             out["edit_version"] = declared
@@ -1376,6 +1431,8 @@ def adjustments_have_edits(adj: dict, baseline_temp: float | None = None) -> boo
             return True
     if adj.get("monochrome") or not tonecurve.is_identity(adj.get("tone_curve")):
         return True
+    if lut_amount(adj) > 0:
+        return True
     return bool(adj.get("masks"))
 
 
@@ -1399,6 +1456,7 @@ def complete_adjustments(adj: dict, baseline_temp: int) -> dict:
     merged = {c["key"]: adj.get(c["key"], c["default"]) for c in CONTROLS + GLOBAL_CONTROLS}
     merged.update({k: adj.get(k, d) for k, d in colormix.COLOR_DEFAULTS.items()})
     merged["monochrome"] = bool(adj.get("monochrome", False))
+    merged.update(lookxmp.complete(adj))
     merged["edit_version"] = resolve_edit_version(adj, baseline_temp).get("edit_version", EDIT_VERSION)
     merged["crop"] = adj.get("crop")
     merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
@@ -2537,6 +2595,7 @@ def api_reset():
         neutral.update(colormix.COLOR_DEFAULTS)
         neutral["color_temp"] = baseline_temp
         neutral["monochrome"] = False
+        neutral.update(lookxmp.complete({}))
         neutral["crop"] = None
         neutral["masks"] = []
         if not vc and is_dng(path) and edit_target(path) != path:

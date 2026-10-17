@@ -18,7 +18,7 @@ raw ──LibRaw──▶ linear light, 16-bit, camera white balance, camera→w
       │          then encode with the output space's curve
       │          then in CODE VALUES: contrast S-curve · tone curve (one lookup)
       ▼
-   saturation / vibrance → HSL · B&W mixer → colour grading → clarity/texture/dehaze/sharpen
+   saturation / vibrance → HSL · B&W mixer → colour grading → film style (LUT) → clarity/texture/dehaze/sharpen
       ▼
    masks (same light maths as the global sliders) → edit strength → monochrome
       ▼
@@ -51,6 +51,8 @@ all three, so mid-tones were about 14 8-bit levels darker than a colour-managed 
 sRGB (mean 4 levels for ProPhoto). `tests/test_linear_light.py` pins the sRGB round trip, compares
 neutral greys against lcms's Lab values for the embedded profile, and compares the Adobe/ProPhoto
 gammas with the ICC bytes.
+
+The film-style LUT is display-referred and runs on the encoded image (in sRGB primaries and curve, converted from and back to the output space); with black & white on it runs after the grey conversion. See [PRESETS-AND-LUTS.md](PRESETS-AND-LUTS.md).
 
 ## The controls
 

@@ -31,6 +31,7 @@
 <link rel="stylesheet" href="{{ asset('css/history.css') }}">
 <link rel="stylesheet" href="{{ asset('css/dialogs.css') }}">
 <link rel="stylesheet" href="{{ asset('css/cull.css') }}">
+<link rel="stylesheet" href="{{ asset('css/looks.css') }}">
 </head>
 <body>
 
@@ -289,13 +290,78 @@
     <button data-ratio="1.7778">16:9</button>
     <button id="crop-reset">Reset</button>
   </div>
-  <div id="preset-bar" style="padding:9px 18px;border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center">
-    <select id="preset-list" style="flex:1;min-width:0;font:inherit;font-size:11px;padding:4px 6px;border-radius:4px;background:var(--panel-2);color:var(--text);border:1px solid var(--line)">
-      <option value="">Presets…</option>
-    </select>
-    <button id="preset-save" style="padding:4px 9px;font-size:11px" disabled>Save</button>
-    <button id="preset-del" style="padding:4px 9px;font-size:11px" disabled>×</button>
-  </div>
+  <details class="panel" id="looks-panel">
+    <summary>Presets &amp; film styles</summary>
+    <div class="seg" id="looks-tabs">
+      <button data-tab="presets" class="active">Presets</button>
+      <button data-tab="luts">Film styles</button>
+      <button data-tab="match">Match</button>
+    </div>
+
+    <section id="looks-presets">
+      <div class="looks-row">
+        <select id="looks-cat" aria-label="Preset category"><option value="">All</option></select>
+        <button id="preset-save" disabled title="Save the current edit as a preset">Save&hellip;</button>
+        <button id="looks-import" title="Import presets (photo-room .json or Lightroom .xmp)">Import</button>
+      </div>
+      <div class="looks-row">
+        <label for="looks-amount">Amount</label>
+        <input type="range" id="looks-amount" min="0" max="100" step="1" value="100" disabled>
+        <span id="looks-amount-val">100</span>
+      </div>
+      <div id="preset-grid" class="look-grid"></div>
+      <div class="looks-row">
+        <button id="looks-apply-sel" disabled>Apply to selected</button>
+        <button id="looks-export" title="Export the chosen preset (or all of yours) as a file" disabled>Export</button>
+        <button id="looks-rename" disabled>Rename</button>
+        <button id="looks-delete" disabled>Delete</button>
+      </div>
+      <input type="file" id="looks-import-file" accept=".json,.xmp,application/json,text/xml" hidden>
+      <div class="hint" id="looks-note"></div>
+    </section>
+
+    <section id="looks-luts" hidden>
+      <div class="looks-row">
+        <label for="lut-amount">Intensity</label>
+        <input type="range" id="lut-amount" min="0" max="100" step="1" value="100" disabled>
+        <span id="lut-amount-val">100</span>
+      </div>
+      <div id="lut-grid" class="look-grid"></div>
+      <div class="looks-row">
+        <button id="lut-import">Import .cube&hellip;</button>
+        <select id="lut-space" title="What the LUT expects as input"><option value="srgb">Display (sRGB)</option><option value="linear">Linear light</option></select>
+      </div>
+      <div class="looks-row">
+        <button id="lut-export" disabled>Export</button>
+        <button id="lut-rename" disabled>Rename</button>
+        <button id="lut-delete" disabled>Delete</button>
+      </div>
+      <input type="file" id="lut-file" accept=".cube,text/plain" hidden>
+      <div class="hint" id="lut-note"></div>
+    </section>
+
+    <section id="looks-match" hidden>
+      <div class="hint">Pick a reference picture. photo-room compares its tones and colours with this photo and writes the
+        difference as a tone curve, colour mixer and grading values you can edit.</div>
+      <div class="looks-row">
+        <button id="match-pick">Reference image&hellip;</button>
+        <button id="match-selected" title="Use another photo ticked in the filmstrip" disabled>Use selected photo</button>
+      </div>
+      <input type="file" id="match-file" accept="image/*" hidden>
+      <div class="hint" id="match-ref"></div>
+      <div class="looks-row">
+        <label for="match-amount">Amount</label>
+        <input type="range" id="match-amount" min="0" max="100" step="1" value="100" disabled>
+        <span id="match-amount-val">100</span>
+      </div>
+      <div class="looks-row">
+        <button id="match-apply" disabled>Apply</button>
+        <button id="match-save" disabled>Save as preset&hellip;</button>
+        <button id="match-discard" disabled>Discard</button>
+      </div>
+      <ul id="match-report" class="hint"></ul>
+    </section>
+  </details>
   <div id="globals"></div>
   <div id="meta">
     <strong>No photo</strong><span id="source"></span>
@@ -412,6 +478,16 @@
   </div>
 </dialog>
 
+<dialog id="looks-save-dlg" aria-labelledby="looks-save-title">
+  <form method="dialog">
+    <h2 id="looks-save-title">Save preset</h2>
+    <label class="row">Name <input type="text" id="looks-save-name" maxlength="60" autocomplete="off"></label>
+    <fieldset><legend>Include</legend><div id="looks-save-groups"></div></fieldset>
+    <div class="hint">Crop and white balance stay out unless you tick them: they belong to one photo and one light.</div>
+    <div class="foot"><button value="cancel" id="looks-save-cancel">Cancel</button>
+      <button value="ok" id="looks-save-ok" class="primary">Save</button></div>
+  </form>
+</dialog>
 <script>
 const CONTROLS = {{ controls | tojson }};
 const GLOBAL_CONTROLS = {{ global_controls | tojson }};
@@ -431,7 +507,7 @@ const CURVE_PARAMETRIC = {{ curve_parametric | tojson }};
 <script src="{{ asset('js/actions.js') }}"></script>
 <script src="{{ asset('js/ratings-filter.js') }}"></script>
 <script src="{{ asset('js/contact-sheet.js') }}"></script>
-<script src="{{ asset('js/presets.js') }}"></script>
+<script src="{{ asset('js/looks.js') }}"></script>
 <script src="{{ asset('js/develop-crop.js') }}"></script>
 <script src="{{ asset('js/develop-tone-curve.js') }}"></script>
 <script src="{{ asset('js/develop-masks.js') }}"></script>
