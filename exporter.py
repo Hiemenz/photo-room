@@ -209,7 +209,7 @@ def _render_array(path: Path, opts: ExportOptions,
 
         with rawpy.imread(str(path)) as raw:
             from process import baseline_temp_from_wb
-            baseline = baseline_temp_from_wb(raw.camera_whitebalance)[0]
+            baseline = baseline_temp_from_wb(raw.camera_whitebalance, raw)[0]
 
             crop = None if opts.full_sensor else process.camera_crop(raw)
 

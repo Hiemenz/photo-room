@@ -21,7 +21,9 @@ import render_kernels
 import tonecurve
 
 BASELINE = 5500
-RAW_BASELINE = 4125         # what the fake raw's camera white balance (R/B = 4/3) maps to
+from process import baseline_temp_from_wb
+
+RAW_BASELINE = baseline_temp_from_wb([2.0, 1.0, 1.5, 1.0])[0]    # the fake raw's as-shot temperature
 SPACES = ("srgb", "adobergb", "prophoto")
 
 

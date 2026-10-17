@@ -150,19 +150,30 @@ ANALYSIS_STRIDE = 4
 AUTO_EXPOSURE_LIMIT = 4.0
 
 
-def baseline_temp_from_wb(camera_whitebalance) -> tuple[int, np.ndarray]:
-    """(baseline temp in K, normalised wb multipliers) from rawpy's camera WB."""
+class _NoMatrix:
+    """Stands in for a raw with no colour matrix (header-only callers, test doubles)."""
+
+
+def baseline_temp_from_wb(camera_whitebalance, raw=None) -> tuple[int, np.ndarray]:
+    """
+    (as-shot temp in K, normalised wb multipliers) from rawpy's camera WB.
+
+    Pass the open ``raw`` so the camera's colour matrix is used: the white the
+    camera balanced for is taken to XYZ and read off as a correlated colour
+    temperature (analysis.kelvin_from_camera). The old ``5500 / (R/B)`` ran the
+    wrong way round and read a daylight frame as ~3100 K.
+    """
+    import analysis
+
     cam_mul = np.array(camera_whitebalance[:4], dtype=float)
     cam_mul /= cam_mul[1]
-    # R/B ratio -> color temperature (empirical mapping)
-    rb_ratio = cam_mul[0] / cam_mul[2] if cam_mul[2] > 0 else 1.0
-    return int(np.clip(5500 / rb_ratio, 2500, 10000)), cam_mul
+    return analysis.baseline_kelvin(raw if raw is not None else _NoMatrix(), cam_mul), cam_mul
 
 
 def camera_baseline_temp(cr2_path: Path) -> int:
     """The camera white balance as a temperature, from the header only."""
     with rawpy.imread(str(cr2_path)) as raw:
-        return baseline_temp_from_wb(raw.camera_whitebalance)[0]
+        return baseline_temp_from_wb(raw.camera_whitebalance, raw)[0]
 
 
 def camera_crop(raw, scale: int = 1):
@@ -220,7 +231,7 @@ def decode_preview_linear(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
     analysis image both come from this one demosaic.
     """
     with rawpy.imread(str(cr2_path)) as raw:
-        baseline_temp, cam_mul = baseline_temp_from_wb(raw.camera_whitebalance)
+        baseline_temp, cam_mul = baseline_temp_from_wb(raw.camera_whitebalance, raw)
         lin = decode_linear(raw, half_size=True)
         crop = camera_crop(raw, scale=2)
         if crop:

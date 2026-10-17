@@ -132,17 +132,18 @@ def test_extreme_white_balance_is_clamped(fake_rawpy, fake_exiftool, whitebalanc
     assert 2500 <= temp <= 10000, f"temp {temp}K escaped the valid range"
 
 
-def test_warmer_camera_wb_yields_lower_temp(fake_rawpy, fake_exiftool):
-    """A high red multiplier means the scene was warm; temp must track it."""
+def test_higher_red_multiplier_yields_higher_temp(fake_rawpy, fake_exiftool):
+    """A high red gain means the camera balanced for a blue (high-Kelvin) light, as in Lightroom;
+    a warm tungsten scene needs little red gain and reads low. (This used to run the other way.)"""
     fake_exiftool.stdout_lines = ["100"]
 
     fake_rawpy["whitebalance"] = [2.5, 1.0, 1.0, 1.0]
-    warm = compute_auto_adjustments(Path("x.CR2"))["color_temp"]
+    shade = compute_auto_adjustments(Path("x.CR2"))["color_temp"]
 
     fake_rawpy["whitebalance"] = [1.0, 1.0, 2.5, 1.0]
-    cool = compute_auto_adjustments(Path("x.CR2"))["color_temp"]
+    tungsten = compute_auto_adjustments(Path("x.CR2"))["color_temp"]
 
-    assert warm < cool
+    assert tungsten < shade
 
 
 @pytest.mark.parametrize(

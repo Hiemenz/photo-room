@@ -45,5 +45,18 @@ every panel, export JPEGs, and re-open the files in Lightroom with the edits int
 - [x] M9 Export presets, output sharpening, watermark, batch export queue (builds on M1b)
 - [x] M10 Performance and polish: preview caching, background thumbnails for large libraries, keyboard shortcuts matching Lightroom (G, D, E, R, 1-5, X, P), dark theme
 
+## Post-1.0 enhancements
+Develop panel helpers from the UX review (proposals 3, 4 and 7). The backend is done; the buttons that call it come with the UI work.
+- [x] Auto tone (Exposure, Contrast, Highlights, Shadows, Whites, Blacks, Vibrance) as one undoable step: `POST /api/develop/auto_tone`
+- [x] Auto white balance from grey-world plus highlights, skin-safe: `POST /api/develop/auto_wb`
+- [x] As-shot Temp reads daylight as ~5000-6500 K (camera matrix to Kelvin) instead of ~3100 K
+- [x] White balance presets (As Shot, Auto, Daylight, Cloudy, Shade, Tungsten, Fluorescent, Flash): `/api/develop/wb_presets`
+- [x] White balance eyedropper with RGB readout: `POST /api/develop/wb_pick`
+- [x] Clipping overlays (shadows blue, highlights red) with per-channel percentages: `POST /api/develop/clipping`
+- [x] Tile server for zoom and 1:1 (fit, 50, 100, 200 %) with halo and LRU cache: `/api/tile`, `/api/tile/meta`
+- [x] 256-bin histogram in a single cv2.calcHist pass: `POST /api/develop/histogram`
+- [ ] Develop panel buttons: Auto, WB picker and preset menu, clipping toggles (J), zoom/1:1 viewer using the tile server
+- [ ] Use the 256-bin histogram and tile viewer in place of the 64-bin histogram and the 1400 px preview
+
 ## Not planned
 AI masking, AI denoise, generative remove, Print/Book/Slideshow/Web modules, tethered capture, cloud sync, mobile apps.

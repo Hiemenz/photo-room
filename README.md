@@ -797,6 +797,40 @@ Three fields are rewritten by Adobe DNG Converter itself, not by this tool
 values (the exact `ExposureTime` and `FNumber` are preserved), and
 `FocalPlaneXResolution` changes because the output is a linear DNG.
 
+## Develop analysis API
+
+Backend for the Develop panel's one-click helpers (UX review proposals 3, 4 and 7). The maths is in
+`analysis.py` and `tile_server.py`, the routes in `develop_api.py`; the panel buttons that call them
+are wired separately. All POST routes take a JSON body like `/api/preview` (`path` is a library path
+or a virtual-copy id, `adjustments` the settings on screen; with no `adjustments` the photo's saved
+settings are used) and need the usual session token. They work in the same linear-light maths as the
+preview and export (`docs/COLOUR-PIPELINE.md`), so what they propose is what renders. Edits made under
+the old colour maths (`edit_version` 1) are refused with 409 until upgraded.
+
+| Route | Purpose |
+|---|---|
+| `POST /api/develop/auto_tone` | Lightroom's **Auto**: returns `settings` (Exposure, Contrast, Highlights, Shadows, Whites, Blacks, Vibrance), the full `adjustments` with them applied, `label: "Auto Tone"`, and before/after statistics. Post `adjustments` and `label` to `/api/history/record` for one undoable step. Deterministic, a few tens of ms on a preview. Aims for a median near mid-grey and at most 0.5 % of pixels clipped |
+| `POST /api/develop/auto_wb` | Auto white balance: `color_temp`, `tint`, `confidence`. Weighted grey-world (clipped, near-black, strongly coloured and skin-tone pixels count less) blended with a highlight/specular estimate when the two agree |
+| `GET/POST /api/develop/wb_presets` | As Shot, Auto, Daylight 5500/+10, Cloudy 6500/+10, Shade 7500/+10, Tungsten 2850/0, Fluorescent 3800/+21, Flash 5500/0 as Temp/Tint, plus `baseline_temp` |
+| `POST /api/develop/wb_pick` | White-balance eyedropper. `x`, `y` are 0..1 fractions of the displayed (cropped) preview, `radius` the sample radius in preview pixels (default 3, max 50). Returns `color_temp`, `tint`, the sampled `rgb` as displayed now (0-255, for the loupe readout), `rgb_before_wb` and `rgb_after`. 422 when the area is too dark |
+| `POST /api/develop/clipping` | Clipping overlay of the rendered preview: shadows blue, highlights red. `shadow` / `highlight` thresholds (0..1 or 0..255, default 2 and 253). `format`: `json` (PNG data URI plus `percent`: overall and per channel), `png` (raw RGBA overlay, percentages in `X-Clipping-*` headers) or `bitmask` (adds `np.packbits` rows) |
+| `POST /api/develop/histogram` | 256-bin (or 128, 64, ...) R, G, B and luminance histograms of the preview with the clipping percentages; `stride` 2 by default |
+| `GET /api/tile` | One 512 px tile of the fully rendered photo: `photo`, `z` (`fit`, `50`, `100`, `200`), `x`, `y`, and the settings as `settings` (JSON) or `sid`; `format` jpeg (default) or png. Edge tiles are cropped to the image. Cached in a byte-bounded LRU keyed on photo, settings hash, zoom and tile |
+| `GET/POST /api/tile/meta` | Source and output size, per-zoom size and tile grid, and a `settings_id` to pass as `sid` (avoids long URLs) |
+
+**Tiles.** Without straighten, transform, lens, spots or masks a tile is made by rendering the tile plus
+a halo (three times the largest local filter radius) through the normal pipeline and cutting the tile
+out; clarity, texture, dehaze and sharpening use the radii of the whole frame, so seams are invisible
+(`tests/test_tiles.py` stitches tiles and compares with a one-piece render). Settings that work in
+whole-frame coordinates render the frame once per zoom and slice it; that path is refused above 12 MP
+so a 200 % view cannot exhaust a Pi. Sizes follow `geometry.py` (inscribed rectangle, then crop).
+
+**As-shot temperature.** The reading was `5500 / (R/B)`, which runs the wrong way round and showed
+about 3100 K on a daylight frame. It now takes the white the camera balanced for through the camera's
+colour matrix to XYZ and reads its correlated colour temperature (McCamy), as Adobe does: the CC0 CR2
+sample reads about 5900 K and LibRaw's own daylight multipliers read 6500 K. Edits saved with an absolute
+Temp against the old baseline keep their number but now move against the new baseline.
+
 ## Tests
 
 ```bash

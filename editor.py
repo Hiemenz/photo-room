@@ -119,6 +119,10 @@ def _cache_static(response):
 import export_api  # noqa: E402  (the Export dialog's endpoints)
 
 app.register_blueprint(export_api.bp)
+
+import develop_api  # noqa: E402  (auto tone / white balance / clipping / tiles)
+
+app.register_blueprint(develop_api.bp)
 app.register_blueprint(libapi.bp)
 
 

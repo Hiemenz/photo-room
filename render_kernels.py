@@ -405,7 +405,8 @@ def detail_stage(img: np.ndarray, adj: dict, blur_fn=None) -> np.ndarray:
 
     blur_fn = blur_fn or blur
     h, w = img.shape[:2]
-    edge = max(h, w)
+    # ``_detail_edge``: the tile server renders a crop with the radii of the whole frame.
+    edge = adj.get("_detail_edge") or max(h, w)
     lum = map_rows(luminance, img)
     cur = img            # replaced by an owned array on the first change
 
