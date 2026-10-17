@@ -5,6 +5,7 @@ let overlay = null;
 function closeOverlays() {
   overlay = null;
   $("cmp").classList.remove("on"); $("svy").classList.remove("on");
+  if (typeof cullHide === "function") cullHide();
 }
 
 async function viewPreview(path) {

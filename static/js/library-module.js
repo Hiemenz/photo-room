@@ -288,10 +288,12 @@ $("lib-kw-del").addEventListener("click", () => libKeywords(true));
 // Library keys. Returns true when the key was handled.
 function libraryKey(e) {
   const k = e.key.toLowerCase();
+  if (module_ === "library" && typeof cullKey === "function" && cullKey(e, k)) return true;
   if (module_ === "library" && overlayKey(e, k)) return true;
   if (module_ === "library") {
     if (k === "c") { e.preventDefault(); openCompare(); return true; }
     if (k === "n") { e.preventDefault(); openSurvey(); return true; }
+    if (k === "k") { e.preventDefault(); cullOpen(); return true; }
     if (k === "v") { e.preventDefault(); libVirtualCopy(); return true; }
     if (k === "e" || k === "d" || k === "enter") { e.preventDefault(); openInDevelop(libActive); return true; }
     if (k === "g") return true;

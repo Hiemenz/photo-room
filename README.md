@@ -279,6 +279,23 @@ what Lightroom and Bridge read, so marks made here mean the same thing
 wherever the photos are opened next. The whole library's ratings are read
 in a single exiftool call.
 
+### Smart cull and Auto edit
+
+**Smart cull** (Library module, `K`) groups a shoot into bursts from capture
+time and a perceptual hash, scores each frame (focus-region sharpness,
+exposure and clipping, and OpenCV Haar face/eyes-open where found), and
+suggests one pick per burst plus rejects for clearly bad frames, each with its
+reasons. Review with the keyboard, compare side by side or at 100% with one
+shared pan, then **Apply**: nothing changes until then, and the batch has an
+Undo. **Auto edit picks** previews auto tone + auto white balance + your
+learned style, then writes it as one undoable history step per photo.
+
+The suggestions learn locally from what you accept or override (a small
+numpy logistic regression, plus the typical corrections you make after Auto
+edit), with accuracy-over-time, export, reset and clear controls. No network,
+no cloud models; the data is `.photo-room-cull.sqlite` in the library folder.
+Details: [docs/AUTO-CULL.md](docs/AUTO-CULL.md).
+
 ### Library module
 
 The bar at the top switches between **Library** and **Develop**. Press `g`

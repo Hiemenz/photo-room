@@ -30,6 +30,7 @@
 <link rel="stylesheet" href="{{ asset('css/library.css') }}">
 <link rel="stylesheet" href="{{ asset('css/history.css') }}">
 <link rel="stylesheet" href="{{ asset('css/dialogs.css') }}">
+<link rel="stylesheet" href="{{ asset('css/cull.css') }}">
 </head>
 <body>
 
@@ -99,6 +100,7 @@
     <button id="lib-rmcol" title="Remove the selection from this collection" hidden>Remove from collection</button>
     <button id="lib-compare" title="Compare: a select beside a candidate (C)">Compare</button>
     <button id="lib-survey" title="Survey the selected photos (N)">Survey</button>
+    <button id="lib-cull" title="Smart cull: group bursts and suggest picks and rejects (K)">Smart cull</button>
     <span class="sep" style="flex:1"></span>
     <span>Label:</span>
     <button class="swatch lbl-Red" data-label="Red" title="Red (6)"></button>
@@ -135,6 +137,71 @@
   </div>
   <div id="svy-grid"></div>
 </section>
+
+<section id="cull" aria-label="Smart cull">
+  <div class="ov-bar">
+    <b>Smart cull</b>
+    <select id="cull-scope" title="Which photos to group">
+      <option value="all">Whole library</option>
+      <option value="collection">Current collection</option>
+      <option value="selection">Selected photos</option>
+    </select>
+    <label title="Also list photos that are not part of a burst"><input type="checkbox" id="cull-singles"> singles</label>
+    <span id="cull-info"></span>
+    <progress id="cull-progress" max="1" value="0" hidden></progress>
+    <span class="sep"></span>
+    <button id="cull-compare" title="Side by side (C)">Compare</button>
+    <button id="cull-actual" title="Actual size, synced pan (Z)">100%</button>
+    <button id="cull-auto" title="Auto tone + auto white balance + your learned style on the picks">Auto edit picks</button>
+    <button id="cull-learn" title="Accuracy, reset, export, clear">Learning</button>
+    <button id="cull-undo" title="Undo the last applied batch" disabled>Undo batch</button>
+    <button id="cull-accept-rest" title="Mark every remaining group as reviewed, keeping the suggestions">Accept rest</button>
+    <button id="cull-apply" class="primary" title="Write the reviewed choices as flags (Ctrl+Enter)" disabled>Apply</button>
+    <button id="cull-close">Close</button>
+  </div>
+  <div id="cull-keys">Left/Right: frame &middot; Down/Up or J/K: group &middot; P pick &middot; X reject &middot; U clear &middot; A or Enter: accept group &middot; C compare &middot; Z 100% &middot; Ctrl+Enter: apply &middot; Esc: close. Suggestions change nothing until you press Apply.</div>
+  <div id="cull-body">
+    <div id="cull-groups"></div>
+    <aside id="cull-detail"><div class="hint">Select a frame to see why it was scored this way.</div></aside>
+  </div>
+  <div id="cull-cmp">
+    <div class="ov-bar">
+      <b id="cull-cmp-title">Compare</b><span id="cull-cmp-info"></span><span class="sep"></span>
+      <span>Tab: next frame &middot; P / X / U: flag the highlighted frame &middot; drag: pan all (100%) &middot; F: re-centre on the focus area &middot; Esc: back</span>
+      <button id="cull-cmp-mode">Actual size</button>
+      <button id="cull-cmp-close">Back</button>
+    </div>
+    <div id="cull-cmp-panes"></div>
+  </div>
+</section>
+
+<dialog id="cull-auto-dlg" aria-labelledby="cull-auto-title">
+  <h2 id="cull-auto-title">Auto edit</h2>
+  <div class="body">
+    <div class="hint" id="cull-auto-note"></div>
+    <div id="cull-auto-previews"></div>
+  </div>
+  <div class="foot">
+    <button id="cull-auto-cancel">Cancel</button>
+    <button id="cull-auto-go" class="primary">Apply to picks</button>
+  </div>
+</dialog>
+
+<dialog id="cull-learn-dlg" aria-labelledby="cull-learn-title">
+  <h2 id="cull-learn-title">What cull has learned</h2>
+  <div class="body">
+    <div id="cull-learn-body"></div>
+    <svg id="cull-acc" viewBox="0 0 300 80" role="img" aria-label="Agreement between suggestion and final choice over time"></svg>
+    <div class="hint">All of this stays in <code>.photo-room-cull.sqlite</code> in your library folder. Nothing is sent anywhere.</div>
+  </div>
+  <div class="foot">
+    <button id="cull-export">Export JSON</button>
+    <button id="cull-reset" title="Delete learned decisions and style offsets">Reset learning</button>
+    <button id="cull-clear" title="Delete every cull record for this library, including cached analysis">Clear all data</button>
+    <span style="flex:1"></span>
+    <button id="cull-learn-close">Close</button>
+  </div>
+</dialog>
 
 <div id="smart-dlg" role="dialog" aria-label="Smart collection">
   <div class="box">
@@ -378,6 +445,7 @@ const CURVE_PARAMETRIC = {{ curve_parametric | tojson }};
 <script src="{{ asset('js/library-module.js') }}"></script>
 <script src="{{ asset('js/collections.js') }}"></script>
 <script src="{{ asset('js/compare-survey.js') }}"></script>
+<script src="{{ asset('js/cull.js') }}"></script>
 <script src="{{ asset('js/library-files.js') }}"></script>
 <script src="{{ asset('js/init.js') }}"></script>
 <script src="{{ asset('js/export-dialog.js') }}"></script>

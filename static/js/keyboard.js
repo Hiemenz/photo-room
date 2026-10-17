@@ -35,6 +35,9 @@ document.addEventListener("keydown", (e) => {
       if (!$("save").disabled) $("save").click();
       return;
     }
+    if (k === "enter" && typeof cullIsOpen === "function" && cullIsOpen()) {
+      e.preventDefault(); cullApply(); return;
+    }
     if (k === "z" && !e.altKey) {
       e.preventDefault();
       if (module_ === "develop") undoRedo(e.shiftKey ? 1 : -1);

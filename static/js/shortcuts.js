@@ -24,6 +24,12 @@ const SHORTCUTS = [
     ["U", "Unflag"], ["6 7 8 9", "Red / Yellow / Green / Blue label"],
     ["Left / Right", "Previous / next photo"],
   ]],
+  ["Smart cull (K in the Library)", [
+    ["K", "Open smart cull"], ["Left / Right", "Previous / next frame in a burst"],
+    ["Down / Up, J / K", "Next / previous burst"], ["P / X / U", "Pick / reject / clear the frame"],
+    ["A or Enter", "Accept the suggestion for this burst"], ["C / Z", "Compare side by side / at 100%"],
+    [`${MOD}+Enter`, "Apply the reviewed choices"],
+  ]],
   ["Develop", [
     ["\\", "Before / after (hold, or tap to latch)"], ["O", "Mask overlay"], ["B", "Black & white"],
     [`${MOD}+Z`, "Undo"], [`${MOD}+Shift+Z`, "Redo"],

@@ -125,6 +125,10 @@ import develop_api  # noqa: E402  (auto tone / white balance / clipping / tiles)
 app.register_blueprint(develop_api.bp)
 app.register_blueprint(libapi.bp)
 
+import cull_api  # noqa: E402  (smart culling and Auto edit)
+
+app.register_blueprint(cull_api.bp)
+
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 security.install(app)
@@ -1941,28 +1945,33 @@ def api_flag():
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc.args[0] if isinstance(exc, KeyError) else exc)}), 400
     try:
-        idx = _idx()
-        if any(idx.get(_rel(p)) is None for p in paths):
-            idx.scan()
-        current = idx.get_many(_rel(p) for p in paths)
-        updates = {}
-        for p in paths:
-            rel = _rel(p)
-            was_rejected = current.get(rel, {}).get("rating") == REJECTED
-            change = {"pick": flag == "pick"}
-            if flag == "reject" and not was_rejected:
-                # Rejecting writes -1 over the stars; remember them first so
-                # un-rejecting (or an accidental double X) gets them back.
-                library.remember_pre_reject(LIBRARY_ROOT, {rel: current.get(rel, {}).get("rating", 0)})
-                change["rating"] = REJECTED
-            elif flag != "reject" and was_rejected:
-                change["rating"] = library.take_pre_reject(LIBRARY_ROOT, [rel])[rel]
-            updates[rel] = change
-        idx.set_fields(updates)
+        _flag_paths(paths, flag)
         n = len(paths) + len(vids)
         return jsonify({"ok": True, "flag": flag, "count": n, "message": f"{n} photo(s): {flag}"})
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
+
+
+def _flag_paths(paths: list[Path], flag: str) -> None:
+    """pick / reject / none on real photos through the index (also used by the cull batch)."""
+    idx = _idx()
+    if any(idx.get(_rel(p)) is None for p in paths):
+        idx.scan()
+    current = idx.get_many(_rel(p) for p in paths)
+    updates = {}
+    for p in paths:
+        rel = _rel(p)
+        was_rejected = current.get(rel, {}).get("rating") == REJECTED
+        change = {"pick": flag == "pick"}
+        if flag == "reject" and not was_rejected:
+            # Rejecting writes -1 over the stars; remember them first so
+            # un-rejecting (or an accidental double X) gets them back.
+            library.remember_pre_reject(LIBRARY_ROOT, {rel: current.get(rel, {}).get("rating", 0)})
+            change["rating"] = REJECTED
+        elif flag != "reject" and was_rejected:
+            change["rating"] = library.take_pre_reject(LIBRARY_ROOT, [rel])[rel]
+        updates[rel] = change
+    idx.set_fields(updates)
 
 
 @app.route("/api/label", methods=["POST"])

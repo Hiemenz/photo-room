@@ -55,6 +55,7 @@ Develop panel helpers from the UX review (proposals 3, 4 and 7). The backend is 
 - [x] Clipping overlays (shadows blue, highlights red) with per-channel percentages: `POST /api/develop/clipping`
 - [x] Tile server for zoom and 1:1 (fit, 50, 100, 200 %) with halo and LRU cache: `/api/tile`, `/api/tile/meta`
 - [x] 256-bin histogram in a single cv2.calcHist pass: `POST /api/develop/histogram`
+- [x] Smart cull and Auto edit, all on-device: burst grouping (perceptual hash + EXIF time), per-photo scores with reasons (focus-region sharpness, exposure/clipping, Haar faces and eyes), suggested pick/reject per burst, keyboard review with side-by-side and synced 100% compare, explicit undoable apply, one-click Auto edit as one history step, and a personal model learned from accept/override decisions and post-Auto corrections (SQLite in the library folder, with accuracy chart, export, reset and clear). See [AUTO-CULL.md](AUTO-CULL.md)
 - [ ] Develop panel buttons: Auto, WB picker and preset menu, clipping toggles (J), zoom/1:1 viewer using the tile server
 - [ ] Use the 256-bin histogram and tile viewer in place of the 64-bin histogram and the 1400 px preview
 
