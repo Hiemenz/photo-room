@@ -463,6 +463,7 @@ def test_main_once_imports_and_ejects_via_fake_commands(tmp_path, monkeypatch, c
     make_card(media, "EOS")
     lib = tmp_path / "lib"
     monkeypatch.setattr(cardwatch, "find_cards", lambda: [Card(media / "EOS", "/dev/sdb1", "EOS")])
+    monkeypatch.setattr(cardwatch.sys, "platform", "linux")
     ran = FakeRun()
     monkeypatch.setattr(cardwatch.subprocess, "run", ran)
     monkeypatch.setattr(cardwatch.shutil, "which", which_all)
