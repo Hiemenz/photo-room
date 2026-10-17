@@ -126,6 +126,9 @@ def map_parameters(adj: dict, baseline_temp: float) -> dict:
 # ---------------------------------------------------------------------------
 
 FIT_EDGE = 320
+MIN_GAIN = 0.05          # 8-bit levels a step must gain to be kept
+DRIFT_COST = {"exposure": 0.2, "contrast": 0.012, "shadows": 0.012, "highlights": 0.012,
+              "whites": 0.012, "blacks": 0.012}      # levels per stop / per slider unit
 _FIT_KEYS = ("exposure", "contrast", "shadows", "highlights", "whites", "blacks")
 _FIT_STEPS = {"exposure": (0.3, 0.1, 0.03), "contrast": (16, 6, 2), "shadows": (16, 6, 2),
               "highlights": (16, 6, 2), "whites": (16, 6, 2), "blacks": (16, 6, 2)}
@@ -173,12 +176,22 @@ def upgrade(adj: dict, baseline_temp: float, base: np.ndarray, render) -> tuple[
     small = _small(base)
     target = render(small, baseline_temp, _fit_view(adj, LEGACY))
     best = dict(mapped)
-    loss = lambda cand: _error(render(small, baseline_temp, _fit_view(cand, CURRENT)), target)   # noqa: E731
-    before = loss(best)
-    current = before
+    error = lambda cand: _error(render(small, baseline_temp, _fit_view(cand, CURRENT)), target)   # noqa: E731
 
-    # Coordinate descent over the light controls the user actually set (exposure always).
-    fit_keys = [k for k in _FIT_KEYS if k == "exposure" or float(adj.get(k, 0) or 0)]
+    def drift(cand):
+        """How far the light sliders have moved from the analytic mapping: a small cost, so a slider the
+        user never touched only moves when it buys a clearly closer render."""
+        return sum(DRIFT_COST[k] * abs(float(cand.get(k, 0) or 0) - float(mapped.get(k, 0) or 0))
+                   for k in _FIT_KEYS)
+
+    loss = lambda cand: error(cand) + drift(cand)       # noqa: E731
+    before = error(best)
+    current = loss(best)
+
+    # Coordinate descent over the light controls. The old curve (BT.709) and the new one
+    # (sRGB) differ by more than a gain, so Contrast, Shadows, ... may move a little even when
+    # the user never touched them; a step is only kept when it brings the render closer.
+    fit_keys = list(_FIT_KEYS)
     for level in range(3):
         for key in fit_keys:
             step = _FIT_STEPS[key][level]
@@ -191,13 +204,15 @@ def upgrade(adj: dict, baseline_temp: float, base: np.ndarray, render) -> tuple[
                         break
                     cand[key] = round(value, 2) if key == "exposure" else int(round(value))
                     err = loss(cand)
-                    if err < current - 1e-4:
+                    if err < current - MIN_GAIN:
                         best, current = cand, err
                     else:
                         break
     if "exposure" in best:
         best["exposure"] = round(float(best["exposure"]), 2)
     best["edit_version"] = CURRENT
+    moved = {k: best[k] for k in _FIT_KEYS if float(best.get(k, 0) or 0) != float(mapped.get(k, 0) or 0)}
     report = {"upgraded": True, "mean_difference_before": round(before, 2),
-              "mean_difference_after": round(current, 2), "levels": "8-bit"}
+              "mean_difference_after": round(error(best), 2), "levels": "8-bit",
+              "refined": moved}      # sliders the render fit moved beyond the analytic mapping
     return best, report

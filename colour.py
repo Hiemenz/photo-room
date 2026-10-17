@@ -140,7 +140,7 @@ def _libraw_gamma_constants(power: float = 1 / 2.222, slope: float = 4.5) -> tup
     knee = 0.0
     for _ in range(48):
         knee = (lo + hi) / 2.0
-        ok = (np.power(knee / slope, -power) - 1.0) / power - 1.0 / knee > 1.0
+        ok = (np.power(knee / slope, -power) - 1.0) / power - 1.0 / knee > -1.0
         if ok:
             hi = knee
         else:

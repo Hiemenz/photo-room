@@ -25,8 +25,10 @@ $("upgrade-edit").addEventListener("click", async () => {
     drawHistogram(data.histogram);
     commit("Upgrade to linear-light colour");
     const r = data.report || {};
+    const moved = Object.entries(r.refined || {}).map(([k, v]) => `${k} ${v}`).join(", ");
     setStatus(`Upgraded. Average difference from the old look: ${r.mean_difference_after} of 255 levels `
-      + `(a plain re-map would have been ${r.mean_difference_before}). Not saved yet.`);
+      + `(a plain re-map would have been ${r.mean_difference_before})`
+      + (moved ? `; sliders re-fitted: ${moved}` : "") + ". Not saved yet; History has the old state.");
   } finally {
     button.disabled = false;
   }
