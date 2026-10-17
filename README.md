@@ -28,13 +28,17 @@ uv run photo-room ~/Pictures/library/                # editor at http://127.0.0.
 
 Then in the browser:
 
-4. **Cull** in the Library module: `g` for the grid, `1`-`5` / `x` / `p` to rate and flag.
-5. **Edit** in Develop (`d`): sliders, tone curve, colour mixer, crop (`r`), masks. `?` lists every shortcut.
-6. **Save** with `Ctrl/Cmd+S`; the edits go into an `.xmp` sidecar beside each raw.
-7. **Export** with `Ctrl/Cmd+Shift+E`: pick PNG or JPEG, size, and leave *Keep metadata* ticked.
+1. **Cull** in the Library module: `g` for the grid, `1`-`5` / `x` / `p` to rate and flag.
+2. **Edit** in Develop (`d`): sliders, tone curve, colour mixer, crop (`r`), masks. `?` lists every shortcut.
+3. **Save** with `Ctrl/Cmd+S`; the edits go into an `.xmp` sidecar beside each raw.
+4. **Export** with `Ctrl/Cmd+Shift+E`: pick PNG or JPEG, size, and leave *Keep metadata* ticked.
    Every EXIF, GPS, IPTC and XMP tag and the colour profile is copied from the raw.
 
 No Adobe software is needed. CR2 is decoded with rawpy/LibRaw.
+
+How this compares with Lightroom Classic, and what is missing, is in
+[docs/LIGHTROOM-PARITY.md](docs/LIGHTROOM-PARITY.md). What has not been tested on real hardware, and a manual
+QA checklist for a Mac with a real card, is in [docs/KNOWN-LIMITS.md](docs/KNOWN-LIMITS.md).
 
 ## Troubleshooting
 
@@ -1129,8 +1133,9 @@ The preview is an approximation of Camera Raw, useful for judging an edit
 but not byte-exact to what Lightroom will render.
 
 The automatic adjustments produce confident-looking values for frames that
-are entirely blown out, where no correction can recover anything. Nothing
-flags those yet.
+are entirely blown out, where no correction can recover anything. The
+editor's quality readout and `process.py cull` flag those frames, but the
+adjustments themselves still do not hold back.
 
 A Google Photos upload that fails partway through the byte-upload stage
 raises, discarding the tokens for files that already transferred in that
