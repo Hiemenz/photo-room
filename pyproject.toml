@@ -27,6 +27,24 @@ dependencies = [
 lens = ["lensfunpy>=1.15"]
 
 
+[project.scripts]
+# `uv run photo-room ~/Pictures/shoot` works from any directory.
+photo-room = "photo_room_cli:main"
+photo-room-doctor = "photo_room_cli:doctor_main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+include = ["*.py", "templates"]
+exclude = ["tests", "scripts"]
+
+[tool.hatch.build.targets.editable]
+# Editable install = the repo root on sys.path, so every top-level module
+# (and the templates beside editor.py) is found from any working directory.
+dev-mode-dirs = ["."]
+
 [dependency-groups]
 dev = [
     "playwright>=1.64.0",
@@ -34,5 +52,4 @@ dev = [
 ]
 
 [tool.uv]
-# Scripts, not an installable package.
-package = false
+package = true

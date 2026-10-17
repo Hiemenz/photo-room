@@ -79,3 +79,50 @@ jobs:
           name: ui-screenshots
           path: tests/ui/artifacts/
           if-no-files-found: ignore
+
+  # A clean install on a fresh runner, then the doctor, so "works on a new
+  # machine" is tested and not assumed.
+  fresh-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install exiftool (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
+      - name: Install exiftool (macOS)
+        if: runner.os == 'macOS'
+        run: brew install exiftool
+
+      - name: Clean uv sync
+        run: uv sync --frozen
+
+      - name: photo-room doctor
+        run: uv run photo-room doctor
+
+      - name: photo-room runs from another directory
+        run: cd "$RUNNER_TEMP" && uv run --project "$GITHUB_WORKSPACE" photo-room doctor
+
+  # The wrong Python must fail loudly at `uv sync`, not install nothing.
+  wrong-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: uv sync on Python 3.11 must fail with a clear message
+        run: |
+          set +e
+          uv sync --python 3.11 > out.txt 2>&1
+          code=$?
+          cat out.txt
+          [ "$code" -ne 0 ] || { echo "uv sync unexpectedly succeeded on 3.11"; exit 1; }
+          grep -q "requires-python" out.txt || { echo "message does not mention requires-python"; exit 1; }

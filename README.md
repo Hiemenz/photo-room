@@ -14,21 +14,19 @@ ever written to if you opt in (`editor.py --embed-dng`, or
 `PHOTO_ROOM_EMBED_DNG=1`), because a DNG from a Leica, Pentax, DJI or phone may
 be your only original.
 
-## Quick start on Linux/macOS: card to export
+## Quick start on Linux/macOS: nothing to first export
 
 ```bash
-# 1. Once: tools and dependencies
-sudo apt install libimage-exiftool-perl     # macOS: brew install exiftool
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv sync
-
-# 2. Copy the raws off the card into a dated library (the card is only read)
-uv run python ingest.py cards                       # find the mounted card
-uv run python ingest.py run /media/$USER/EOS_DIGITAL -o ~/Pictures/library/
-
-# 3. Open the editor on the library
-uv run python editor.py ~/Pictures/library/         # then http://127.0.0.1:5000
+sudo apt install libimage-exiftool-perl              # macOS: brew install exiftool
+curl -LsSf https://astral.sh/uv/install.sh | sh     # installs uv (needs Python 3.12+, uv fetches it)
+git clone https://github.com/Hiemenz/photo-room && cd photo-room
+uv sync                                              # fails loudly on Python < 3.12
+uv run photo-room doctor                             # PASS/WARN/FAIL table with the exact fix for each problem
+uv run photo-room ingest run /media/$USER/EOS_DIGITAL -o ~/Pictures/library/   # copy the card (macOS: /Volumes/EOS_DIGITAL)
+uv run photo-room ~/Pictures/library/                # editor at http://127.0.0.1:5000, from any directory
 ```
+
+Then in the browser:
 
 4. **Cull** in the Library module: `g` for the grid, `1`-`5` / `x` / `p` to rate and flag.
 5. **Edit** in Develop (`d`): sliders, tone curve, colour mixer, crop (`r`), masks. `?` lists every shortcut.
@@ -37,6 +35,21 @@ uv run python editor.py ~/Pictures/library/         # then http://127.0.0.1:5000
    Every EXIF, GPS, IPTC and XMP tag and the colour profile is copied from the raw.
 
 No Adobe software is needed. CR2 is decoded with rawpy/LibRaw.
+
+## Troubleshooting
+
+Start with `uv run photo-room doctor`; it checks everything below and prints the fix.
+
+- **exiftool missing or too old** (the editor shows a banner; saving and export fail):
+  `sudo apt install libimage-exiftool-perl` (Linux) or `brew install exiftool` (macOS).
+  Version 12 is the minimum, 13 or newer is recommended.
+- **Wrong Python** (`uv sync` says the interpreter is incompatible with `>=3.12`):
+  `uv python install 3.12 && uv sync --python 3.12`.
+- **Port in use** (`Address already in use`): run `uv run photo-room -p 5001 <folder>`,
+  or stop the program holding port 5000 (on macOS, AirPlay Receiver uses it).
+- **Chromium for the browser tests**: `uv run playwright install chromium`
+  (add `--with-deps` on a bare Linux box). Only `pytest -m ui` needs it.
+- **`photo-room: command not found`**: run it through `uv run photo-room`, or activate `.venv`.
 
 ## Requirements
 
@@ -64,7 +77,7 @@ uv sync
 ## Editor
 
 ```bash
-uv run python editor.py ~/Pictures/dng/
+uv run photo-room ~/Pictures/dng/
 # open http://127.0.0.1:5000
 ```
 
@@ -532,12 +545,12 @@ type in a text box, number field or menu, and while a dialog is open.
 ## Card ingest
 
 ```bash
-python ingest.py cards                          # what's mounted, and what looks like a card
-python ingest.py watch -o ~/Pictures/library/   # wait for a card, then ingest it
-python ingest.py run /Volumes/EOS_DIGITAL -o ~/Pictures/library/
+uv run photo-room ingest cards                          # what's mounted, and what looks like a card
+uv run photo-room ingest watch -o ~/Pictures/library/   # wait for a card, then ingest it
+uv run photo-room ingest run /Volumes/EOS_DIGITAL -o ~/Pictures/library/
 
 # Develop a shoot again after the learned style has improved
-python ingest.py run /Volumes/EOS_DIGITAL -o ~/Pictures/library/ --no-skip
+uv run photo-room ingest run /Volumes/EOS_DIGITAL -o ~/Pictures/library/ --no-skip
 ```
 
 Insert a card and it copies every raw into the library, sorts by shoot
