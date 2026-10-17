@@ -74,6 +74,9 @@ def options_from_payload(payload: dict) -> ExportOptions:
             bit_depth=int(payload.get("bit_depth", 8)),
             sharpen=payload.get("sharpen") or None,
             watermark=payload.get("watermark") or None,
+            full_sensor=bool(payload.get("full_sensor", False)),
+            png_compression=int(payload.get("png_compression", 1)),
+            optimize_jpeg=bool(payload.get("optimize_jpeg", False)),
         ).validate()
     except (TypeError, ValueError) as exc:
         raise ValueError(str(exc)) from None

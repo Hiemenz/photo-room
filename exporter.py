@@ -20,6 +20,7 @@ import re
 import string
 import shutil
 import struct
+import subprocess
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,8 +28,12 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageCms, ImageOps
 
+import decode_cache
+import fastops
+import exifpool
 import export_finish
 import process
+import render_kernels
 from process import EXIFTOOL_TIMEOUT, RAW_SUFFIXES, run_tool
 
 FORMATS = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg"}
@@ -59,6 +64,10 @@ class ExportOptions:
     bit_depth: int = 8  # 16 is PNG only
     sharpen: dict | None = None     # {"for": screen|matte|glossy, "amount": low|standard|high}
     watermark: dict | None = None   # see export_finish.DEFAULT_WATERMARK
+    # Encoder speed knobs; they change file size and time, never a pixel.
+    png_compression: int = 1        # zlib level 0-9 (Pillow's old default, 6, is ~4x slower)
+    full_sensor: bool = False       # raw: the whole decoded sensor area instead of the camera's default crop
+    optimize_jpeg: bool = False     # optimal Huffman tables: ~5% smaller, ~2x slower to encode
 
     def validate(self) -> "ExportOptions":
         fmt = self.format.lower()
@@ -70,6 +79,9 @@ class ExportOptions:
         if int(self.bit_depth) not in (8, 16):
             raise ValueError("bit depth must be 8 or 16")
         self.bit_depth = int(self.bit_depth)
+        if not 0 <= int(self.png_compression) <= 9:
+            raise ValueError("PNG compression must be between 0 and 9")
+        self.png_compression = int(self.png_compression)
         if self.bit_depth == 16 and self.format != "png":
             raise ValueError("16-bit output is only available for PNG")
         if self.long_edge is not None and int(self.long_edge) < 16:
@@ -200,14 +212,28 @@ def _render_array(path: Path, opts: ExportOptions,
         with rawpy.imread(str(path)) as raw:
             from process import baseline_temp_from_wb
             baseline = baseline_temp_from_wb(raw.camera_whitebalance)[0]
-            rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True,
-                                  output_bps=16 if deep else 8, output_color=color)
+
+            crop = None if opts.full_sensor else process.camera_crop(raw)
+
+            def decode():
+                out = raw.postprocess(use_camera_wb=True, no_auto_bright=True,
+                                      output_bps=16 if deep else 8, output_color=color)
+                if crop:
+                    top, left, h, w = crop
+                    out = np.ascontiguousarray(out[top:top + h, left:left + w])
+                return out
+
+            # The demosaic is the same every time for the same file and
+            # parameters, so re-exports read it back from the decode cache.
+            rgb, _ = decode_cache.get_or_decode(
+                path, {"wb": "camera", "auto_bright": False, "bps": 16 if deep else 8,
+                       "space": space, "half": False, "crop": crop}, decode)
         src_size = (rgb.shape[1], rgb.shape[0])
         icc = icc_profile_for(space)
         if deep:
             base = np.asarray(rgb, dtype=np.float32) / 65535.0
         else:
-            img = Image.fromarray(rgb)
+            img = Image.fromarray(np.asarray(rgb))
     else:
         with Image.open(path) as src:
             src = ImageOps.exif_transpose(src)
@@ -233,7 +259,7 @@ def _render_array(path: Path, opts: ExportOptions,
     if deep:
         base = _scaled_float(base, opts.long_edge)
     else:
-        base = np.asarray(_scaled(img, opts.long_edge), dtype=np.float32) / 255.0
+        base = render_kernels.u8_to_float(np.asarray(_scaled(img, opts.long_edge)))
 
     if adj is None:
         adj = _saved_adjustments(path, src_size)
@@ -249,21 +275,30 @@ def render(path: Path, opts: ExportOptions,
            adjustments: dict | None = None) -> tuple[Image.Image, bytes | None]:
     """Render ``path`` with its saved edits. Returns (8-bit RGB image, ICC bytes)."""
     out, icc = _render_array(path, opts, adjustments=adjustments)
-    return Image.fromarray((out * 255.0 + 0.5).astype(np.uint8)), icc
+    return Image.fromarray(render_kernels.float_to_u8(out)), icc
 
 
-def write_png16(path: Path, arr: np.ndarray, icc: bytes | None) -> None:
+def write_png16(path: Path, arr: np.ndarray, icc: bytes | None, level: int = 1) -> None:
     """
     Write a float RGB array (0..1) as a 16-bit-per-channel PNG.
 
     Pillow cannot save 16-bit RGB, so the file is assembled directly:
-    signature, IHDR, optional iCCP, one IDAT, IEND.
+    signature, IHDR, optional iCCP, one IDAT, IEND. Rows are quantised, byte
+    swapped and filter-prefixed in strips on all cores, and zlib runs at
+    ``level`` (the default 1 is several times faster than the old 6).
     """
     h, w = arr.shape[:2]
-    samples = (np.clip(arr, 0.0, 1.0) * 65535.0 + 0.5).astype(">u2")
-    rows = samples.reshape(h, w * 3).tobytes()
     stride = w * 6
-    raw = b"".join(b"\x00" + rows[i * stride:(i + 1) * stride] for i in range(h))
+    raw = np.empty((h, stride + 1), dtype=np.uint8)
+    raw[:, 0] = 0
+
+    def rows(a, b):
+        t = np.clip(arr[a:b], 0.0, 1.0) * np.float32(65535.0)
+        t += np.float32(0.5)
+        samples = t.astype(">u2")
+        raw[a:b, 1:] = samples.reshape(b - a, w * 3).view(np.uint8)
+
+    fastops.for_rows(rows, h, w, rows=64)
 
     def chunk(kind: bytes, data: bytes) -> bytes:
         crc = zlib.crc32(kind + data) & 0xFFFFFFFF
@@ -272,7 +307,7 @@ def write_png16(path: Path, arr: np.ndarray, icc: bytes | None) -> None:
     out = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 16, 2, 0, 0, 0))
     if icc:
         out += chunk(b"iCCP", b"ICC Profile\x00\x00" + zlib.compress(icc))
-    out += chunk(b"IDAT", zlib.compress(raw, 6)) + chunk(b"IEND", b"")
+    out += chunk(b"IDAT", zlib.compress(raw, level)) + chunk(b"IEND", b"")
     path.write_bytes(out)
 
 
@@ -284,14 +319,28 @@ def exiftool_available() -> bool:
 # Metadata
 # ---------------------------------------------------------------------------
 
-def copy_metadata(source: Path, dest: Path) -> None:
+def _run_exiftool(args: list[str], what: str) -> None:
+    """Write through the shared stay-open exiftool (exifpool); a plain subprocess when that is off."""
+    try:
+        result = exifpool.run(args, timeout=EXIFTOOL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"exiftool did not finish within {EXIFTOOL_TIMEOUT}s and was stopped. "
+                           "It may be waiting on a dialog -- try running it once by hand.") from None
+    if result.returncode != 0:
+        raise RuntimeError(f"exiftool failed {what}: {result.stderr.strip()}")
+
+
+def copy_metadata(source: Path, dest: Path, size: tuple[int, int] | None = None,
+                  extra: list[str] | None = None) -> None:
     """
     Copy every tag from ``source`` (and its sidecar, if any) onto ``dest``.
 
     Group-qualified, so EXIF (including GPS and MakerNotes), IPTC and XMP all
-    travel; the output keeps the ICC profile it was written with.
+    travel; the output keeps the ICC profile it was written with. ``size`` is
+    the output's pixel size (read from the file when omitted); ``extra`` are
+    further assignments applied after the copy in the same exiftool call.
     """
-    cmd = ["exiftool", "-TagsFromFile", str(source), "-all:all", *_NOT_COPIED]
+    cmd = ["-TagsFromFile", str(source), "-all:all", *_NOT_COPIED]
     sidecar = source.with_suffix(".xmp")
     if source.suffix.lower() != ".xmp" and sidecar.exists():
         # Rating, keywords and anything else kept in the sidecar. Develop
@@ -300,31 +349,80 @@ def copy_metadata(source: Path, dest: Path) -> None:
     # Those two are deliberately not copied (the source's size is wrong for the
     # output), but a JPEG's Exif block must declare its own pixel size: exiftool
     # warns "Missing required JPEG ExifIFD tag" and strict readers reject it.
+    if size is None:
+        try:
+            with Image.open(dest) as out:
+                size = out.size
+        except OSError:
+            size = None
+    if size is not None:
+        cmd += [f"-ExifIFD:ExifImageWidth={size[0]}", f"-ExifIFD:ExifImageHeight={size[1]}"]
+    cmd += ["-Orientation#=1", *(extra or []), "-overwrite_original", str(dest)]
+    _run_exiftool(cmd, "copying metadata")
+
+
+_PNG_SIG = b"\x89PNG\r\n\x1a\n"
+_PNG_OWN = (b"IHDR", b"IDAT", b"IEND", b"iCCP", b"sRGB", b"gAMA", b"cHRM")   # the real file keeps its own
+
+
+def _png_chunks(data: bytes):
+    pos = len(_PNG_SIG)
+    while pos + 8 <= len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        yield kind, data[pos:pos + 12 + n]
+        pos += 12 + n
+
+
+def splice_png_metadata(dest: Path, donor: Path) -> None:
+    """
+    Move the metadata chunks of ``donor`` (a tiny PNG exiftool wrote the tags to)
+    into ``dest`` just before its pixel data.
+
+    exiftool rewrites a whole PNG to add tags -- seconds of Perl for a 10 MP
+    file -- but what it adds does not depend on the pixels, so it is done on a
+    1x1 stand-in and the chunks are copied across.
+    """
+    extra = b"".join(chunk for kind, chunk in _png_chunks(donor.read_bytes()) if kind not in _PNG_OWN)
+    data = dest.read_bytes()
+    at = next(offset for offset, kind in _chunk_offsets(data) if kind == b"IDAT")
+    tmp = dest.with_name(dest.name + ".part")
+    tmp.write_bytes(data[:at] + extra + data[at:])
+    os.replace(tmp, dest)
+
+
+def _chunk_offsets(data: bytes):
+    pos = len(_PNG_SIG)
+    while pos + 8 <= len(data):
+        n, kind = struct.unpack(">I4s", data[pos:pos + 8])
+        yield pos, kind
+        pos += 12 + n
+
+
+def copy_metadata_png(source: Path, dest: Path, size: tuple[int, int], icc: bytes | None,
+                      extra: list[str] | None = None) -> None:
+    """``copy_metadata`` for a PNG without making exiftool rewrite the full-size file."""
+    donor = dest.with_name(dest.name + ".meta.png")
     try:
-        with Image.open(dest) as out:
-            width, height = out.size
-        cmd += [f"-ExifIFD:ExifImageWidth={width}", f"-ExifIFD:ExifImageHeight={height}"]
-    except OSError:
-        pass
-    cmd += ["-Orientation#=1", "-overwrite_original", str(dest)]
-    result = run_tool(cmd, timeout=EXIFTOOL_TIMEOUT, what="exiftool",
-                      capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"exiftool failed copying metadata: {result.stderr.strip()}")
+        Image.new("RGB", (1, 1)).save(donor, "PNG", icc_profile=icc)
+        copy_metadata(source, donor, size=size, extra=extra)
+        splice_png_metadata(dest, donor)
+    finally:
+        donor.unlink(missing_ok=True)
+
+
+def _virtual_args(virtual: dict) -> list[str]:
+    """The copy's own rating, colour label and keywords, as exiftool assignments."""
+    import library
+
+    args = [f"-XMP-xmp:Rating={max(0, int(virtual.get('rating', 0)))}"]
+    return args + library.xmp_args(label=virtual.get("label", ""),
+                                   keywords=virtual.get("keywords", []))
 
 
 def _apply_virtual_metadata(dest: Path, virtual: dict) -> None:
     """Put the copy's own rating, colour label and keywords on the exported file."""
-    import library
-
-    args = [f"-XMP-xmp:Rating={max(0, int(virtual.get('rating', 0)))}"]
-    args += library.xmp_args(label=virtual.get("label", ""),
-                             keywords=virtual.get("keywords", []))
-    result = run_tool(["exiftool", *args, "-overwrite_original", str(dest)],
-                      timeout=EXIFTOOL_TIMEOUT, what="exiftool",
-                      capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"exiftool failed writing copy metadata: {result.stderr.strip()}")
+    _run_exiftool([*_virtual_args(virtual), "-overwrite_original", str(dest)],
+                  "writing copy metadata")
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +528,7 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
         # After the resize, at export only: sharpen for the medium, then mark.
         arr = export_finish.finish(arr, opts.sharpen, opts.watermark)
     size = (arr.shape[1], arr.shape[0])
-    img = None if opts.bit_depth == 16 else Image.fromarray((arr * 255.0 + 0.5).astype(np.uint8))
+    img = None if opts.bit_depth == 16 else Image.fromarray(render_kernels.float_to_u8(arr))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     ext = FORMATS[opts.format]
@@ -440,21 +538,23 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
 
     try:
         if img is None:
-            write_png16(dest, arr, icc)
+            write_png16(dest, arr, icc, level=int(opts.png_compression))
         elif opts.format == "jpeg":
             img.save(dest, "JPEG", quality=int(opts.quality), subsampling=0 if opts.quality >= 90 else 2,
-                     optimize=True, icc_profile=icc)
+                     optimize=bool(opts.optimize_jpeg), icc_profile=icc)
         else:
-            img.save(dest, "PNG", icc_profile=icc)
+            img.save(dest, "PNG", icc_profile=icc, compress_level=int(opts.png_compression))
     except BaseException:
         dest.unlink(missing_ok=True)
         raise
 
     if opts.keep_metadata:
         try:
-            copy_metadata(source, dest)
-            if virtual:
-                _apply_virtual_metadata(dest, virtual)
+            extra = _virtual_args(virtual) if virtual else None
+            if opts.format == "png" and os.environ.get("PHOTO_ROOM_PNG_SPLICE", "1") != "0":
+                copy_metadata_png(source, dest, size, icc, extra)
+            else:
+                copy_metadata(source, dest, size=size, extra=extra)
         except Exception:
             dest.unlink(missing_ok=True)  # never leave a stripped file behind
             raise

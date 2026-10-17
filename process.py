@@ -160,6 +160,33 @@ def camera_baseline_temp(cr2_path: Path) -> int:
         return baseline_temp_from_wb(raw.camera_whitebalance)[0]
 
 
+def camera_crop(raw, scale: int = 1):
+    """
+    The camera's default crop of the decoded frame as ``(top, left, height, width)``
+    in output pixels (``scale`` 2 for a half-size decode), or None when the file
+    has none, it is the whole frame, or the decode is rotated (flip != 0).
+
+    LibRaw reports the crop in raw-sensor coordinates; the decoded image starts at
+    (left_margin, top_margin) inside them.
+    """
+    sz = getattr(raw, "sizes", None)
+    try:
+        cw, ch = int(sz.crop_width), int(sz.crop_height)
+        left = int(sz.crop_left_margin) - int(sz.left_margin)
+        top = int(sz.crop_top_margin) - int(sz.top_margin)
+        full_w, full_h = int(sz.iwidth), int(sz.iheight)
+        flip = int(sz.flip)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if flip or cw <= 0 or ch <= 0 or left < 0 or top < 0 or left + cw > full_w or top + ch > full_h:
+        return None
+    if (cw, ch) == (full_w, full_h):
+        return None
+    if scale > 1:
+        left, top, cw, ch = left // scale, top // scale, cw // scale, ch // scale
+    return top, left, ch, cw
+
+
 def decode_for_analysis(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
     """
     Decode a raw file once, returning (8-bit RGB, baseline temp in K, wb multipliers).
@@ -177,6 +204,10 @@ def decode_for_analysis(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
             no_auto_bright=True,
             output_bps=8,
         )
+        crop = camera_crop(raw, scale=2)
+        if crop:
+            top, left, h, w = crop
+            rgb = np.ascontiguousarray(rgb[top:top + h, left:left + w])
     return rgb, baseline_temp, cam_mul
 
 

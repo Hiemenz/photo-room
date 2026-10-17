@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import fastops
+
 try:                      # optional: threaded, SIMD colour conversion
     import cv2
 except ImportError:       # pragma: no cover - numpy path covers it
@@ -146,7 +148,11 @@ def _rgb_to_hsv_numpy(img: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarr
 def hsv_to_rgb(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> np.ndarray:
     h = np.asarray(h)
     if cv2 is not None and h.ndim == 2 and h.dtype == np.float32:
-        hsv = np.stack([h % np.float32(360.0), s, v], axis=-1).astype(np.float32, copy=False)
+        s32, v32 = np.asarray(s, dtype=np.float32), np.asarray(v, dtype=np.float32)
+        if s32.shape == h.shape and v32.shape == h.shape:
+            hsv = cv2.merge([h % np.float32(360.0), s32, v32])
+        else:
+            hsv = np.stack([h % np.float32(360.0), s, v], axis=-1).astype(np.float32, copy=False)
         return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
     return _hsv_to_rgb_numpy(h, s, v)
 
@@ -214,7 +220,12 @@ def _smoothstep(e0, e1, x):
     return t * t * (3.0 - 2.0 * t)
 
 
+_LUMA_ROW = np.array([[0.2126, 0.7152, 0.0722]], dtype=np.float32)
+
+
 def _luma(img: np.ndarray) -> np.ndarray:
+    if cv2 is not None and img.dtype == np.float32 and img.ndim == 3 and img.shape[2] == 3 and img.flags.c_contiguous:
+        return cv2.transform(img, _LUMA_ROW).reshape(img.shape[:2])
     return img[..., 0] * 0.2126 + img[..., 1] * 0.7152 + img[..., 2] * 0.0722
 
 
@@ -252,9 +263,34 @@ class Analysis:
     __slots__ = ("h", "s", "v", "idx", "chroma")
 
     def __init__(self, img: np.ndarray):
+        if img.shape[0] * img.shape[1] >= fastops.MIN_PIXELS:
+            self._build_parallel(img)
+            return
         self.h, self.s, self.v = rgb_to_hsv(img)
         self.idx = _hue_index(self.h)
         self.chroma = _smoothstep(0.0, CHROMA_FLOOR * 2, self.s).astype(np.float32)
+
+    def _build_parallel(self, img: np.ndarray) -> None:
+        h, w = img.shape[:2]
+        self.h = np.empty((h, w), np.float32)
+        self.s = np.empty((h, w), np.float32)
+        self.v = np.empty((h, w), np.float32)
+        self.idx = np.empty((h, w), np.int32)
+        self.chroma = np.empty((h, w), np.float32)
+
+        def rows(a, b):
+            hh, ss, vv = rgb_to_hsv(img[a:b])
+            self.h[a:b], self.s[a:b], self.v[a:b] = hh, ss, vv
+            self.idx[a:b] = _hue_index(hh)
+            self.chroma[a:b] = _smoothstep(0.0, CHROMA_FLOOR * 2, ss)
+
+        fastops.for_rows(rows, h, w)
+
+    def rows(self, a: int, b: int) -> "Analysis":
+        part = Analysis.__new__(Analysis)
+        part.h, part.s, part.v = self.h[a:b], self.s[a:b], self.v[a:b]
+        part.idx, part.chroma = self.idx[a:b], self.chroma[a:b]
+        return part
 
     @property
     def nbytes(self) -> int:
@@ -265,30 +301,49 @@ def has_hsl(adj: dict) -> bool:
     return any(_vec(adj, p).any() for p in ("hue", "sat", "lum"))
 
 
-def apply_hsl(img: np.ndarray, adj: dict, analysis: "Analysis | None" = None) -> np.ndarray:
-    """Per-band hue / saturation / luminance. Exact no-op when all are zero.
-
-    ``analysis`` is the :class:`Analysis` of ``img`` when the caller has one
-    cached; it never changes the result."""
-    dh, ds, dl = _vec(adj, "hue"), _vec(adj, "sat"), _vec(adj, "lum")
-    if not (dh.any() or ds.any() or dl.any()):
-        return img
-    a = analysis or Analysis(img)
+def _hsl_rows(img: np.ndarray, a: "Analysis", dh_tab, ds_tab, dl_tab) -> np.ndarray:
     h, s, v, chroma = a.h, a.s, a.v, a.chroma
-    sat_scale = 1.0 + _band_table(ds)[a.idx] * chroma / 100.0
+    sat_scale = 1.0 + ds_tab[a.idx] * chroma / 100.0
     new_s = np.clip(s * sat_scale, 0.0, 1.0)
-    if dh.any():
-        hue_shift = _band_table(dh)[a.idx] * chroma * np.float32(MAX_HUE_SHIFT_DEG / 100.0)
+    if dh_tab is not None:
+        hue_shift = dh_tab[a.idx] * chroma * np.float32(MAX_HUE_SHIFT_DEG / 100.0)
         out = hsv_to_rgb(h + hue_shift, new_s, v)
     else:
         # Hue untouched: rescale each pixel's distance from its own value
         # instead of a full HSV round trip. Same result, a third of the work.
         ratio = np.divide(new_s, s, out=np.ones_like(s), where=s > 1e-9)
         out = v[..., None] - (v[..., None] - img) * ratio[..., None]
-    if dl.any():
-        gain = 1.0 + _band_table(dl)[a.idx] * chroma * np.float32(LUM_GAIN / 100.0)
+    if dl_tab is not None:
+        gain = 1.0 + dl_tab[a.idx] * chroma * np.float32(LUM_GAIN / 100.0)
         out = out * gain[..., None]
     return np.clip(out, 0.0, 1.0)
+
+
+def apply_hsl(img: np.ndarray, adj: dict, analysis: "Analysis | None" = None) -> np.ndarray:
+    """Per-band hue / saturation / luminance. Exact no-op when all are zero.
+
+    ``analysis`` is the :class:`Analysis` of ``img`` when the caller has one
+    cached; it never changes the result. Runs on row strips in parallel."""
+    dh, ds, dl = _vec(adj, "hue"), _vec(adj, "sat"), _vec(adj, "lum")
+    if not (dh.any() or ds.any() or dl.any()):
+        return img
+    dh_tab = _band_table(dh) if dh.any() else None
+    dl_tab = _band_table(dl) if dl.any() else None
+    ds_tab = _band_table(ds)
+
+    def rows(strip, a=None):
+        return _hsl_rows(strip, a if a is not None else Analysis(strip), dh_tab, ds_tab, dl_tab)
+
+    h, w = img.shape[:2]
+    if h * w < fastops.MIN_PIXELS:
+        return rows(img, analysis)
+    out = np.empty_like(img)
+
+    def work(a, b):
+        out[a:b] = rows(img[a:b], analysis.rows(a, b) if analysis is not None else None)
+
+    fastops.for_rows(work, h, w)
+    return out
 
 
 def apply_gray_mixer(img: np.ndarray, adj: dict) -> np.ndarray:
@@ -322,19 +377,40 @@ def apply_grading(img: np.ndarray, adj: dict) -> np.ndarray:
     if not spec:
         return img
 
-    luma = _luma(img)
-    s, m, h = grade_masks(luma, adj.get("grade_blending", 50), adj.get("grade_balance", 0))
-    masks = {"shadow": s, "mid": m, "highlight": h, "global": np.ones_like(luma)}
-
-    out = img.copy()
-    gain = np.ones_like(luma)
+    tints = {}
     for rng, (hue, sat, lum) in spec.items():
-        w = masks[rng]
         if sat:
             tint = hsv_to_rgb(np.float32(hue), np.float32(1.0), np.float32(1.0))
-            tint = tint - float(_luma(tint))            # zero-luma offset keeps brightness
-            out += (w * (sat / 100.0) * GRADE_TINT_STRENGTH)[..., None] * tint
-        if lum:
-            gain += w * (lum / 100.0) * GRADE_LUM_GAIN
-    out *= gain[..., None]
-    return np.clip(out, 0.0, 1.0)
+            tints[rng] = tint - float(_luma(tint))      # zero-luma offset keeps brightness
+    blending, balance = adj.get("grade_blending", 50), adj.get("grade_balance", 0)
+
+    has_lum = any(lum for (_, _, lum) in spec.values())
+
+    def rows(strip: np.ndarray) -> np.ndarray:
+        luma = _luma(strip)
+        s, m, h = grade_masks(luma, blending, balance)
+        masks = {"shadow": s, "mid": m, "highlight": h, "global": None}
+        # Colour offset = sum over wheels of weight * tint: one 3-plane image, added once.
+        planes = [None, None, None]
+        gain = np.ones_like(luma) if has_lum else None
+        for rng, (hue, sat, lum) in spec.items():
+            w = masks[rng]
+            if sat:
+                for k in range(3):
+                    term = (np.float32(sat / 100.0 * GRADE_TINT_STRENGTH * tints[rng][k])
+                            if w is None else w * np.float32(sat / 100.0 * GRADE_TINT_STRENGTH * tints[rng][k]))
+                    planes[k] = term if planes[k] is None else planes[k] + term
+            if lum:
+                gain += (lum / 100.0) * GRADE_LUM_GAIN if w is None else w * (lum / 100.0) * GRADE_LUM_GAIN
+        if any(p is not None for p in planes):
+            shape = luma.shape
+            full = [np.broadcast_to(p, shape) if p is not None else np.zeros(shape, np.float32) for p in planes]
+            out = strip + (cv2.merge([np.ascontiguousarray(p, dtype=np.float32) for p in full])
+                           if cv2 is not None else np.stack(full, axis=-1))
+        else:
+            out = strip.copy()
+        if gain is not None:
+            out *= gain[..., None]
+        return np.clip(out, 0.0, 1.0, out=out)
+
+    return fastops.map_rows(rows, img)

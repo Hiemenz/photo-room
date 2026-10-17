@@ -52,3 +52,110 @@ cached per field and survive writes to other fields.)
   render code can call it to open Develop without a demosaic; it is not wired in yet.
 
 Run the benchmark: `uv run python scripts/bench_library.py` (needs exiftool on PATH).
+
+---
+
+## Render and export pipeline
+
+Measured on the Pi 5 (4 cores, 16 GB) with a real 10 MP raw (Canon EOS 1000D CR2, 3888x2592, CC0, the
+sample `tests/test_real_raw_e2e.py` downloads). The machine was shared with other jobs (load average
+2-3 on 4 cores) while measuring, so every figure is the **best of N runs**; where wall and CPU time
+differ a lot, trust CPU time. Reproduce with `scripts/bench_export.py`, `scripts/bench_render.py` and
+`scripts/bench_preview.py`; run them from an older checkout for the "before" column. All "before"
+numbers are commit `bf866d8`.
+
+## Full-resolution export (raw -> file, including the exiftool metadata copy)
+
+"Heavy" edit = exposure, contrast, shadows/highlights, saturation + vibrance, clarity, texture, dehaze,
+sharpening, two HSL bands, a colour-grading wheel and a tone curve. "Light" = exposure, contrast, saturation, white balance.
+"Cold" = first export of the file; "warm" = a re-export that hits the decode cache.
+
+| Export (wall s)       | before | after cold | after warm | CPU s before -> after (cold) |
+|-----------------------|-------:|-----------:|-----------:|-----------------------------:|
+| JPEG, heavy edit      | 12.7   | 6.4        | 5.5        | 10.5 -> 6.1                  |
+| PNG, heavy edit       | 21.0   | 8.5        | 7.8        | 14.3 -> 7.8                  |
+| JPEG, light edit      | 4.3    | 2.7        | 1.7        | 3.4 -> 2.5                   |
+| PNG, light edit       | 14.5   | 4.5        | 3.5        | 8.6 -> 4.2                   |
+
+The UX review's ~35 s PNG was the same code on a busier machine (the PNG encoder alone was 4.4 s CPU and
+the exiftool rewrite of the 17 MB file several more).
+
+Targets: JPEG < 6 s (reached warm, 6.4 s cold with a heavy edit; 2.7 s with a light one), PNG < 12 s (reached: 8.5 s heavy, 4.5 s light).
+
+## Per-stage, best of 3, wall / CPU ms
+
+| Stage | 1400 px before | 1400 px after | full-res before | full-res after |
+|---|---:|---:|---:|---:|
+| decode, full 8-bit (rawpy)         |  -        | -         | 1398 / 1635 | 1462 / 1833 (skipped by the decode cache on re-export) |
+| decode, half-size (preview)        | 90 / 121  | 98 / 127  | - | - |
+| resize to 1400 px                  | 173 / 168 | 202 / 179 | - | - |
+| 8-bit -> float                     | -         | -         | 82 / 76 | 87 / 81 |
+| WB + exposure + tone + curve       | 316 / 306 | 65 / 62   | 2860 / 2630 | 709 / 679 |
+| saturation / vibrance              | 108 / 102 | 35 / 31   | 1015 / 963 | 420 / 377 |
+| HSL                                | 123 / 125 | 87 / 85   | 1159 / 1158 | 922 / 984 |
+| colour grading                     | 87 / 77   | 36 / 36   | 886 / 849 | 418 / 400 |
+| clarity / texture / dehaze / sharpen | 293 / 283 | 225 / 204 | 2774 / 2596 | 1850 / 1685 |
+| one graduated mask                 | 158 / 150 | 140 / 138 | 1690 / 1473 | 1648 / 1476 (not optimised) |
+| float -> 8-bit                     | 11 / 11   | 11 / 11   | 140 / 138 | 166 / 159 |
+| JPEG encode q92                    | 20 / 20   | 18 / 18   | 160 / 156 | 138 / 138 (Huffman optimisation off: it cost 2x) |
+| PNG encode, zlib 6 -> 1            | 561 / 523 | 229 / 223 | 4623 / 4391 | 1753 / 1658 |
+| exiftool copy (JPEG)               | -         | -         | 972 / ~0 (separate process) | 939 / ~0 |
+| exiftool copy (PNG)                | -         | -         | ~6000 (rewrites the 17 MB file) | ~1000 (1x1 stand-in, chunks spliced in) |
+
+## Slider drag (`scripts/bench_preview.py`, median ms; "drag" is the 800 px render sent while a slider moves)
+
+| Control | sharp before | sharp after | drag before | drag after |
+|---|---:|---:|---:|---:|
+| exposure         | 535 | 378 | 180 | 118 |
+| contrast         | 554 | 352 | 191 | 137 |
+| saturation       | 470 | 312 | 151 | 110 |
+| HSL hue (red)    | 421 | 290 | 126 | 105 |
+| HSL sat (blue)   | 421 | 295 | 129 | 86 |
+| grading          | 311 | 227 | 119 | 70 |
+| clarity          | 197 | 171 | 69  | 47 |
+| sharpness        | 198 | 173 | 62  | 51 |
+
+Drag renders are under the 150 ms target at the median (worst single tick 155 ms, exposure).
+
+## What changed
+
+* **Fast kernels** (`render_kernels.py`, `colormix.py`, `tonecurve.py`): float32 throughout; white balance, tint
+  and exposure fold into one per-channel multiply; the four tonal-range masks fold into one added plane;
+  luminance, saturation, contrast and gains run as OpenCV 3x3/3x4 `cv2.transform`s (NumPy's strided per-channel
+  passes and `max(axis=2)` were the slowest parts); the tone curve is a 4097-entry float32 table gathered with
+  `np.take` instead of `np.interp` (which promotes to float64; at most 0.12 of an 8-bit level from the old curve);
+  detail runs per row strip and keeps the old quantised Pillow blurs, so clarity/texture/dehaze/sharpen are
+  numerically the old ones.
+* **Decode cache** (`decode_cache.py`): the demosaiced image is stored as an uncompressed `.npy` under
+  `~/.cache/photo-room/decode` keyed by BLAKE2b of the raw file + wb/auto-bright/bit-depth/colour-space/half-size +
+  the LibRaw version; capped at 3 GB (`PHOTO_ROOM_DECODE_CACHE_MB`), LRU; `PHOTO_ROOM_DECODE_CACHE=0` disables.
+* **Encoders**: PNG zlib level 1 by default (`png_compression` option; 6 was 2.6x slower for 2% smaller files),
+  16-bit PNG assembled in strips; JPEG Huffman optimisation is now an option (`optimize_jpeg`, default off).
+* **Metadata**: one exiftool call per export (the virtual-copy tags ride in the same call), through a persistent
+  `-stay_open` process (the library work's `exifpool.py`);
+  for PNG the tags are written on a 1x1 stand-in and its chunks are spliced into the real file.
+* **Row-strip engine** (`fastops.py`): per-pixel stages can run on a thread pool. **Off by default**: on this Pi, while
+  other jobs were running, 2-4 threads were 1.5-2.5x *slower* for these memory-bound passes (and separate processes
+  scaled the same way, so it is the machine, not the GIL). `PHOTO_ROOM_THREADS=N` turns it on; re-measure on a quiet machine.
+
+## Equivalence
+
+`tests/legacy_pipeline.py` is a frozen copy of the old stages. `tests/test_render_equivalence.py` pins every
+stage and the whole chain against it on synthetic images (1 and 4 threads) and on a full-resolution crop of the
+real raw (`-m realraw`): max abs difference <= 1/255 in float (observed <= 0.25/255) and <= 1 level after
+8-bit quantisation. The blur is bit-identical to the old one. `tests/test_decode_cache.py` guards the cache key
+(every decode parameter, file content, no cross-file sharing) and `tests/test_export_speed_paths.py` checks the
+PNG writer, exiftool session and that spliced PNG metadata equals a direct exiftool rewrite.
+
+## Not done / deferred
+
+* Batch export still runs one photo at a time (`export_api._run_job`); a process pool with a memory guard
+  needs a quiet machine to tune and touches the job queue other work is changing.
+* Masks (`masks.apply_local`) are unchanged.
+* `rawpy` demosaic is untouched (`half_size`/other algorithms would change pixels).
+
+### Default camera crop
+
+Raw decodes now use the camera's default crop (`rawpy` `crop_*`; the Canon 1000D sample is 3888x2591 instead of
+the 3906x2602 sensor area) for both the preview and the export, so they frame identically. `ExportOptions.full_sensor`
+(`"full_sensor": true` in the export payload) keeps the whole decoded area. Colour math is untouched.

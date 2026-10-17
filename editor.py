@@ -45,6 +45,7 @@ import library
 import history
 import lens
 import quality
+import render_kernels
 import retouch
 import style
 import stagecache
@@ -276,37 +277,10 @@ def _luminance(img: np.ndarray) -> np.ndarray:
 
 def _blur(plane: np.ndarray, radius: float) -> np.ndarray:
     """
-    Gaussian blur of a single 0..1 plane, via Pillow.
-
-    Pillow's implementation is a separable box approximation in C, which is
-    far faster than anything hand-rolled in numpy at preview resolution and
-    accurate enough for a local-contrast mask.
+    Gaussian blur of a single 0..1 plane, via Pillow (quantised to 8 bits, wide
+    radii computed on a shrunken copy). See ``render_kernels.blur``.
     """
-    # Pillow's Gaussian only accepts 8-bit modes, so the plane is quantised
-    # for the blur. That is fine here — every caller uses the result as a
-    # smooth mask, never as image data.
-    #
-    # Pillow's C implementation was measured against a numpy cumulative-sum
-    # box blur at preview size and was roughly three times faster, so the
-    # quantisation round trip is worth paying.
-    h, w = plane.shape
-    as_u8 = np.clip(plane * 255.0 + 0.5, 0, 255).astype(np.uint8)
-    img = Image.fromarray(as_u8)
-
-    # A wide blur removes exactly the detail that full resolution preserves,
-    # so it is computed on a shrunken copy and scaled back up.
-    factor = 1
-    if radius >= 8.0:
-        factor = min(4, max(1, int(radius // 4)))
-
-    if factor > 1:
-        small = img.resize((max(1, w // factor), max(1, h // factor)), Image.BILINEAR)
-        small = small.filter(ImageFilter.GaussianBlur(radius / factor))
-        img = small.resize((w, h), Image.BILINEAR)
-    else:
-        img = img.filter(ImageFilter.GaussianBlur(radius))
-
-    return np.asarray(img, dtype=np.float32) / 255.0
+    return render_kernels.blur(plane, radius)
 
 
 def apply_geometry(img: np.ndarray, adj: dict) -> np.ndarray:
@@ -363,50 +337,11 @@ def _apply_detail(img: np.ndarray, adj: dict) -> np.ndarray:
     Clarity, texture, dehaze and sharpening.
 
     All four are local-contrast operations, so they share the blur work and
-    run only when their slider is off its default — a blur per photo is the
-    most expensive thing in the preview path.
+    run only when their slider is off its default -- a blur per photo is the
+    most expensive thing in the preview path. The maths lives in
+    ``render_kernels.detail_stage`` (row strips, all cores).
     """
-    clarity = float(adj.get("clarity", 0))
-    texture = float(adj.get("texture", 0))
-    sharpness = float(adj.get("sharpness", 0))
-    dehaze = float(adj.get("dehaze", 0))
-
-    if not (clarity or texture or sharpness or dehaze):
-        return img
-
-    # Radii scale with the image so the effect looks the same at any preview
-    # size rather than getting coarser as the picture gets larger.
-    edge = max(img.shape[0], img.shape[1])
-    lum = _luminance(img)
-
-    if clarity:
-        # Large radius, weighted to the midtones: this is the "punch" control,
-        # and applying it to highlights and shadows just produces halos.
-        detail = lum - _blur(lum, max(4.0, edge * 0.02))
-        midtones = 1.0 - (2.0 * np.clip(lum, 0.0, 1.0) - 1.0) ** 2
-        img = img + (clarity / 100.0) * 0.8 * (detail * midtones)[:, :, None]
-        lum = _luminance(np.clip(img, 0.0, 1.0))
-
-    if texture:
-        # Small radius: fine detail only, and deliberately not midtone-masked
-        # so it can smooth skin as well as bring out fabric.
-        detail = lum - _blur(lum, max(1.0, edge * 0.0025))
-        img = img + (texture / 100.0) * 0.9 * detail[:, :, None]
-        lum = _luminance(np.clip(img, 0.0, 1.0))
-
-    if dehaze:
-        # Dark-channel prior: haze lifts the darkest channel everywhere, so
-        # the blurred per-pixel minimum estimates how much veil to remove.
-        dark = np.min(np.clip(img, 0.0, 1.0), axis=2)
-        veil = _blur(dark, max(6.0, edge * 0.03)) * (dehaze / 100.0) * 0.7
-        veil = np.clip(veil, -0.85, 0.85)[:, :, None]
-        img = (img - veil) / np.maximum(1.0 - veil, 0.15)
-
-    if sharpness:
-        detail = lum - _blur(lum, 1.2)
-        img = img + (sharpness / 100.0) * 0.5 * detail[:, :, None]
-
-    return np.clip(img, 0.0, 1.0)
+    return render_kernels.detail_stage(img, adj)
 
 
 class StaleRender(Exception):
@@ -433,75 +368,12 @@ def _stage_geometry(base: np.ndarray, adj: dict) -> np.ndarray:
 
 
 def _stage_tone(base: np.ndarray, baseline_temp: int, adj: dict) -> np.ndarray:
-    img = base.copy()
-
-    # --- White balance ---
-    temp = float(adj.get("color_temp", baseline_temp))
-    if temp > 0 and abs(temp - baseline_temp) > 1:
-        ratio = temp / baseline_temp
-        img[:, :, 0] *= ratio ** 0.45
-        img[:, :, 2] *= (1.0 / ratio) ** 0.45
-
-    tint = float(adj.get("tint", 0))
-    if tint:
-        img[:, :, 1] *= 1.0 - (tint / 150.0) * 0.18
-        img[:, :, 0] *= 1.0 + (tint / 150.0) * 0.06
-        img[:, :, 2] *= 1.0 + (tint / 150.0) * 0.06
-
-    # --- Exposure ---
-    exposure = float(adj.get("exposure", 0))
-    if exposure:
-        img *= 2.0 ** exposure
-
-    img = np.clip(img, 0.0, 1.0)
-
-    # --- Tonal range ---
-    lum = _luminance(img)
-
-    shadows = float(adj.get("shadows", 0))
-    if shadows:
-        mask = np.clip(1.0 - lum / 0.5, 0.0, 1.0) ** 2
-        img += (shadows / 100.0) * 0.35 * mask[:, :, None]
-
-    highlights = float(adj.get("highlights", 0))
-    if highlights:
-        mask = np.clip((lum - 0.5) / 0.5, 0.0, 1.0) ** 2
-        img += (highlights / 100.0) * 0.35 * mask[:, :, None]
-
-    blacks = float(adj.get("blacks", 0))
-    if blacks:
-        mask = np.clip(1.0 - lum / 0.25, 0.0, 1.0) ** 2
-        img += (blacks / 100.0) * 0.20 * mask[:, :, None]
-
-    whites = float(adj.get("whites", 0))
-    if whites:
-        mask = np.clip((lum - 0.75) / 0.25, 0.0, 1.0) ** 2
-        img += (whites / 100.0) * 0.20 * mask[:, :, None]
-
-    contrast = float(adj.get("contrast", 0))
-    if contrast:
-        img = (img - 0.5) * (1.0 + contrast / 100.0) + 0.5
-
-    img = np.clip(img, 0.0, 1.0)
-
-    # --- Tone curve ---
-    return np.clip(apply_tone_curve(img, adj.get("tone_curve")), 0.0, 1.0)
+    # White balance, exposure, tonal range, contrast and curve (render_kernels).
+    return render_kernels.tone_stage(base, baseline_temp, adj)
 
 
 def _stage_saturation(img: np.ndarray, adj: dict) -> np.ndarray:
-    saturation = float(adj.get("saturation", 0))
-    vibrance = float(adj.get("vibrance", 0))
-    if saturation or vibrance:
-        gray = _luminance(img)[:, :, None]
-        delta = img - gray
-        factor = 1.0 + saturation / 100.0
-        if vibrance:
-            # Vibrance pushes muted colors harder than already-saturated ones.
-            current_sat = np.clip(np.max(np.abs(delta), axis=2), 0.0, 1.0)[:, :, None]
-            factor = factor + (vibrance / 100.0) * (1.0 - current_sat)
-        img = gray + delta * factor
-
-    return np.clip(img, 0.0, 1.0)
+    return render_kernels.saturation_stage(img, adj)
 
 
 def apply_adjustments(

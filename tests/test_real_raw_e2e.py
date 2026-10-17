@@ -146,7 +146,7 @@ def test_edit_and_export_a_real_raw_keeps_every_tag(raw, tmp_path, fmt, depth):
     from PIL import Image
     with Image.open(dest) as exported:
         ew, eh = exported.size
-    full_w, full_h = 3906, 2602                   # rawpy's full sensor area for this CR2
+    full_w, full_h = 3888, 2591                   # the camera default crop of this CR2 (full sensor: 3906x2602)
     scale = 1200 / max(full_w, full_h)
     scaled = (max(1, round(full_h * scale)), max(1, round(full_w * scale)), 3)
     expected = editor.apply_geometry(np.zeros(scaled, np.float32), {"straighten": 1.5}).shape

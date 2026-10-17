@@ -15,6 +15,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
+@pytest.fixture(autouse=True)
+def _isolated_decode_cache(tmp_path_factory, monkeypatch):
+    """The tests' fake raws share file bytes but not pixels, so the decode cache is off by default
+    (tests/test_decode_cache.py turns it on, in a private directory)."""
+    monkeypatch.setenv("PHOTO_ROOM_DECODE_CACHE", "0")
+    monkeypatch.setenv("PHOTO_ROOM_CACHE_DIR", str(tmp_path_factory.mktemp("pr-cache")))
+
+
 class FakeRaw:
     """Stands in for the object rawpy.imread() yields."""
 

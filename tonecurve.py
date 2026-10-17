@@ -15,6 +15,8 @@ the three split points to ParametricShadowSplit/MidtoneSplit/HighlightSplit.
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 CHANNELS = ("rgb", "red", "green", "blue")
@@ -37,6 +39,7 @@ PARAMETRIC_TAGS = {
 # Largest shift a +/-100 parametric slider makes to its region (of full scale).
 PARAMETRIC_AMPLITUDE = 0.25
 LUT_SIZE = 1024
+FINE_SIZE = 4096    # resolution of the lookup used when a curve is applied to pixels
 LINEAR = [[0, 0], [255, 255]]
 
 PRESETS = {
@@ -193,16 +196,63 @@ def build_luts(tc) -> np.ndarray:
     return luts
 
 
-def apply_tone_curve(img: np.ndarray, tc) -> np.ndarray:
-    """Apply the curve to an (H, W, 3) float image in 0-1. Returns ``img`` untouched if identity."""
+_applier_cache: dict = {}
+
+
+def curve_applier(tc):
+    """
+    Return ``apply(img)`` that applies the curve to a float32 (..., 3) array in
+    0..1 *in place* (and returns it), or None for an identity curve.
+
+    Same curve as ``np.interp`` through the ``LUT_SIZE`` table (to within 0.12 of an
+    8-bit level), but in float32 with ``np.take`` (np.interp promotes to float64).
+    """
     if is_identity(tc):
-        return img
+        return None
+    key = json.dumps(tc, sort_keys=True, default=str)
+    hit = _applier_cache.get(key)
+    if hit is not None:
+        return hit
+    # 4097-entry tables sampled from the same 1024-point curve with np.interp,
+    # indexed by the nearest entry: at most slope/8192 off the exact linear
+    # interpolation (0.12 of an 8-bit level for a slope of 4), and two
+    # gathers per pixel cheaper than interpolating.
     luts = build_luts(tc)
     grid = np.linspace(0.0, 1.0, LUT_SIZE)
-    out = np.empty_like(img)
-    for i in range(3):
-        out[:, :, i] = np.interp(img[:, :, i], grid, luts[i])
-    return out
+    fine = np.linspace(0.0, 1.0, FINE_SIZE + 1)
+    tables = [np.interp(fine, grid, luts[c]).astype(np.float32) for c in range(3)]
+
+    def apply(img: np.ndarray) -> np.ndarray:
+        try:
+            import cv2
+        except ImportError:
+            cv2 = None
+        planes = list(cv2.split(img)) if cv2 is not None and img.flags.c_contiguous and img.ndim == 3 else \
+            [np.ascontiguousarray(img[..., c]) for c in range(3)]
+        for c in range(3):
+            pos = planes[c] * np.float32(FINE_SIZE)
+            pos += np.float32(0.5)
+            planes[c] = np.take(tables[c], pos.astype(np.int32))
+        if cv2 is not None and img.flags.c_contiguous and img.ndim == 3:
+            cv2.merge(planes, dst=img)
+        else:
+            for c in range(3):
+                img[..., c] = planes[c]
+        return img
+
+    if len(_applier_cache) > 16:
+        _applier_cache.clear()
+    _applier_cache[key] = apply
+    return apply
+
+
+def apply_tone_curve(img: np.ndarray, tc) -> np.ndarray:
+    """Apply the curve to an (H, W, 3) float image in 0-1. Returns ``img`` untouched if identity."""
+    fn = curve_applier(tc)
+    if fn is None:
+        return img
+    out = np.clip(np.asarray(img, dtype=np.float32), 0.0, 1.0)     # new array; interp clamped too
+    return fn(out if out is not img else out.copy())
 
 
 def scale_toward_identity(tc, strength: float):
