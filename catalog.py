@@ -398,6 +398,11 @@ def copy_name(source_name: str, entry: dict) -> str:
     return f"{p.stem} (copy {entry['copy_no']}){p.suffix}"
 
 
+def has_virtuals(root: Path) -> bool:
+    """Whether the library has any virtual copy (lets the grid skip building them)."""
+    return bool(load(root)["virtual"])
+
+
 def virtual_items(root: Path, source_items: list[dict]) -> list[dict]:
     """
     Library items for every virtual copy whose raw is present in

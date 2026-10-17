@@ -36,7 +36,7 @@ CHUNK = 400
 
 LABELS = ["Red", "Yellow", "Green", "Blue", "Purple"]
 FLAGS = ("pick", "reject", "none")
-SORT_KEYS = ("name", "date", "rating", "label", "flag", "camera")
+SORT_KEYS = ("name", "date", "rating", "label", "flag", "camera", "lens", "iso")
 STORE_NAME = ".photo-room-library.json"
 
 _lock = threading.RLock()
@@ -169,6 +169,18 @@ def load_store(root: Path) -> dict:
 
 def _save_store(root: Path, store: dict) -> None:
     fsutil.atomic_write_text(_store_path(root), json.dumps(store, indent=1, sort_keys=True))
+
+
+def apply_picks(root: Path, picks: dict[str, bool]) -> None:
+    """Set the pick flag of many files in one read-modify-write of the store."""
+    with _lock:
+        store = load_store(root)
+        for rel, picked in picks.items():
+            if picked:
+                store["flags"][rel] = "pick"
+            else:
+                store["flags"].pop(rel, None)
+        _save_store(root, store)
 
 
 def get_pick(root: Path, rel: str) -> bool:
@@ -361,7 +373,7 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
 
     rating_min + rating_op ("ge" default, "eq", "le"); flag (pick / reject /
     unflagged); label (a colour or "none"); keyword (exact, case-insensitive);
-    camera (exact, case-insensitive); date_from / date_to (YYYY-MM-DD,
+    camera / lens (exact, case-insensitive); iso_min / iso_max; date_from / date_to (YYYY-MM-DD,
     inclusive); q (every word must appear in the name, a keyword or the camera).
     """
     rating = f.get("rating_min")
@@ -372,6 +384,9 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
     label = "none" if label.lower() == "none" else (normalize_label(label) if label else "")
     keyword = (f.get("keyword") or "").strip().lower()
     camera = (f.get("camera") or "").strip().lower()
+    lens = (f.get("lens") or "").strip().lower()
+    iso_min = None if f.get("iso_min") in (None, "") else int(f["iso_min"])
+    iso_max = None if f.get("iso_max") in (None, "") else int(f["iso_max"])
     d_from = (f.get("date_from") or "")[:10]
     d_to = (f.get("date_to") or "")[:10]
     words = (f.get("q") or "").lower().split()
@@ -400,12 +415,18 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
             continue
         if camera and it["camera"].lower() != camera:
             continue
+        if lens and (it.get("lens") or "").lower() != lens:
+            continue
+        if iso_min is not None or iso_max is not None:
+            iso = it.get("iso") or 0
+            if not iso or (iso_min is not None and iso < iso_min) or (iso_max is not None and iso > iso_max):
+                continue
         if d_from or d_to:
             day = it["date"][:10]
             if not day or (d_from and day < d_from) or (d_to and day > d_to):
                 continue
         if words:
-            hay = " ".join([it["name"], it["camera"], *it["keywords"]]).lower()
+            hay = " ".join([it["name"], it["camera"], it.get("lens") or "", *it["keywords"]]).lower()
             if not all(w in hay for w in words):
                 continue
         out.append(it)
@@ -435,6 +456,10 @@ def sort_items(items: list[dict], key: str = "name", descending: bool = False) -
             return label_rank.get(it["label"])
         if key == "flag":
             return flag_rank[it["flag"]]
+        if key == "lens":
+            return (it.get("lens") or "").lower() or None
+        if key == "iso":
+            return it.get("iso") or None
         return it["camera"].lower() or None
 
     present = [it for it in items if value(it) is not None]
@@ -448,11 +473,14 @@ def sort_items(items: list[dict], key: str = "name", descending: bool = False) -
 def facets(items: list[dict]) -> dict:
     """Values for the filter bar's dropdowns, from the whole library."""
     cams: dict[str, int] = {}
+    lenses: set[str] = set()
     kws: dict[str, list] = {}
     labels = {name: 0 for name in LABELS}
     for it in items:
         if it["camera"]:
             cams[it["camera"]] = cams.get(it["camera"], 0) + 1
+        if it.get("lens"):
+            lenses.add(it["lens"])
         if it["label"]:
             labels[it["label"]] += 1
         for k in it["keywords"]:
@@ -460,6 +488,7 @@ def facets(items: list[dict]) -> dict:
             entry[1] += 1
     return {
         "cameras": sorted(cams),
+        "lenses": sorted(lenses),
         "keywords": [{"keyword": v[0], "count": v[1]} for _, v in sorted(kws.items())],
         "labels": labels,
         "labels_order": LABELS,

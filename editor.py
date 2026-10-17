@@ -39,6 +39,8 @@ import fsutil
 import security
 import geometry
 import masks
+import libindex
+import libapi
 import library
 import history
 import lens
@@ -112,6 +114,7 @@ def _cache_static(response):
 import export_api  # noqa: E402  (the Export dialog's endpoints)
 
 app.register_blueprint(export_api.bp)
+app.register_blueprint(libapi.bp)
 
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
@@ -1468,7 +1471,7 @@ def api_open():
             "adjustments": merged,
             "source": source,
             "has_original": get_embedded_original_name(path) is not None,
-            "rating": vc[1].get("rating", 0) if vc else read_rating(path),
+            "rating": vc[1].get("rating", 0) if vc else _indexed_rating(path),
             "virtual": bool(vc),
             "baseline_temp": baseline_temp,
             "foreign_editor": None if vc else detect_foreign_edits(path),
@@ -1746,15 +1749,32 @@ def _record_for_learning(path: Path, chosen: dict) -> dict | None:
         return None
 
 
+def _idx(fresh: bool = True) -> "libindex.Index":
+    """The in-memory library index for the current root (scanned on first use)."""
+    idx = libindex.get_index(LIBRARY_ROOT)
+    if fresh:
+        idx.ensure_fresh()
+    return idx
+
+
+def _set_fields(updates: dict[str, dict]) -> None:
+    """Apply rating / label / keyword / pick changes through the index (sidecars follow in the background)."""
+    idx = _idx()
+    if any(idx.get(rel) is None for rel in updates):
+        idx.scan()                    # a file that appeared since the last scan
+    idx.set_fields(updates)
+
+
+def _indexed_rating(path: Path) -> int:
+    """A photo's rating without spawning exiftool when the index knows it."""
+    rec = libindex.get_index(LIBRARY_ROOT).get(_rel(path))
+    return rec["rating"] if rec is not None else read_rating(path)
+
+
 @app.route("/api/ratings")
 def api_ratings():
-    """Every rating in the library, in one pass."""
-    paths = list_photos(LIBRARY_ROOT)
-    raw = read_ratings(paths)
-    root = LIBRARY_ROOT.resolve()
-    return jsonify({
-        "ratings": {str(p.relative_to(root)): raw.get(str(p), 0) for p in paths}
-    })
+    """Every rating in the library, from the index."""
+    return jsonify({"ratings": {it["path"]: it["rating"] for it in _idx().items()}})
 
 
 @app.route("/api/rate", methods=["POST"])
@@ -1774,8 +1794,7 @@ def api_rate():
         if vc:
             catalog.update_virtual(LIBRARY_ROOT, vc[1]["id"], rating=rating)
             return jsonify({"ok": True, "rating": rating, "message": f"{vc[1]['id']}: {rating}"})
-        write_rating(path, rating)
-        library.update_cached(path, rating=rating)
+        _set_fields({_rel(path): {"rating": rating}})
         label = "rejected" if rating == REJECTED else (
             "unrated" if rating == 0 else f"{rating} star" + ("s" if rating > 1 else "")
         )
@@ -1820,15 +1839,22 @@ def api_library():
         keys = ("rating_min", "rating_op", "flag", "label", "keyword",
                 "camera", "date_from", "date_to", "q")
         criteria = {k: args.get(k, "") for k in keys}
-        everything = library.build_items(LIBRARY_ROOT, list_photos(LIBRARY_ROOT))
-        everything += catalog.virtual_items(LIBRARY_ROOT, everything)
-        matched = library.filter_items(everything, criteria)
-        if args.get("collection"):
-            matched = catalog.collection_items(
-                catalog.get_collection(LIBRARY_ROOT, args["collection"]), matched)
-        matched = library.sort_items(
-            matched, args.get("sort", "name"), args.get("dir", "asc") == "desc"
-        )
+        idx = _idx()
+        virtuals = catalog.virtual_items(LIBRARY_ROOT, idx.items()) if catalog.has_virtuals(LIBRARY_ROOT) else []
+        if not virtuals and not args.get("collection"):
+            total, page, library_total = idx.query(criteria, args.get("sort", "name"),
+                                                   args.get("dir", "asc") == "desc", offset, limit)
+            facets = idx.facets() if offset == 0 else None
+        else:
+            everything = idx.items() + virtuals
+            matched = library.filter_items(everything, criteria)
+            if args.get("collection"):
+                matched = catalog.collection_items(
+                    catalog.get_collection(LIBRARY_ROOT, args["collection"]), matched)
+            matched = library.sort_items(
+                matched, args.get("sort", "name"), args.get("dir", "asc") == "desc")
+            total, page, library_total = len(matched), matched[offset:offset + limit], len(everything)
+            facets = library.facets(everything) if offset == 0 else None
     except KeyError as exc:
         return jsonify({"error": exc.args[0]}), 404
     except (ValueError, TypeError) as exc:
@@ -1837,13 +1863,14 @@ def api_library():
         return jsonify({"error": describe_error(exc)}), 500
 
     body = {
-        "total": len(matched),
-        "library_total": len(everything),
+        "total": total,
+        "library_total": library_total,
         "offset": offset,
-        "items": matched[offset:offset + limit],
+        "items": page,
+        "seq": idx.seq,
     }
-    if offset == 0:
-        body["facets"] = library.facets(everything)
+    if facets is not None:
+        body["facets"] = facets
     return jsonify(body)
 
 
@@ -1883,22 +1910,24 @@ def api_flag():
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc.args[0] if isinstance(exc, KeyError) else exc)}), 400
     try:
-        current = library.read_metadata(paths)
+        idx = _idx()
+        if any(idx.get(_rel(p)) is None for p in paths):
+            idx.scan()
+        current = idx.get_many(_rel(p) for p in paths)
+        updates = {}
         for p in paths:
-            was_rejected = current.get(str(p), {}).get("rating") == REJECTED
+            rel = _rel(p)
+            was_rejected = current.get(rel, {}).get("rating") == REJECTED
+            change = {"pick": flag == "pick"}
             if flag == "reject" and not was_rejected:
                 # Rejecting writes -1 over the stars; remember them first so
                 # un-rejecting (or an accidental double X) gets them back.
-                library.remember_pre_reject(
-                    LIBRARY_ROOT, {_rel(p): current.get(str(p), {}).get("rating", 0)})
-                write_rating(p, REJECTED)
-                library.update_cached(p, rating=REJECTED)
+                library.remember_pre_reject(LIBRARY_ROOT, {rel: current.get(rel, {}).get("rating", 0)})
+                change["rating"] = REJECTED
             elif flag != "reject" and was_rejected:
-                restored = library.take_pre_reject(LIBRARY_ROOT, [_rel(p)])[_rel(p)]
-                write_rating(p, restored)
-                library.update_cached(p, rating=restored)
-        if paths:
-            library.set_picks(LIBRARY_ROOT, [_rel(p) for p in paths], flag == "pick")
+                change["rating"] = library.take_pre_reject(LIBRARY_ROOT, [rel])[rel]
+            updates[rel] = change
+        idx.set_fields(updates)
         n = len(paths) + len(vids)
         return jsonify({"ok": True, "flag": flag, "count": n, "message": f"{n} photo(s): {flag}"})
     except Exception as exc:
@@ -1919,15 +1948,10 @@ def api_label():
             catalog.update_virtual(LIBRARY_ROOT, vid, label=label)
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc.args[0] if isinstance(exc, KeyError) else exc)}), 400
-    failed = []
-    for p in paths:
-        try:
-            library.write_xmp(p, label=label)
-            library.update_cached(p, label=label)
-        except Exception as exc:
-            failed.append(f"{p.name}: {describe_error(exc)}")
-    if failed:
-        return jsonify({"error": "; ".join(failed[:3])}), 500
+    try:
+        _set_fields({_rel(p): {"label": label} for p in paths})
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
     return jsonify({"ok": True, "label": label, "count": len(paths) + len(vids),
                     "message": f"{len(paths) + len(vids)} photo(s): " + (label.lower() + " label" if label else "label cleared")})
 
@@ -1946,7 +1970,6 @@ def api_keywords():
         remove = {k.lower() for k in library.normalize_keywords(payload.get("remove", []))}
         if replace is None and not add and not remove:
             raise ValueError("Nothing to change")
-        existing = library.read_metadata(paths) if paths else {}
         for vid in vids:
             have = catalog.get_virtual(LIBRARY_ROOT, vid).get("keywords", [])
             new = library.normalize_keywords(replace) if replace is not None else \
@@ -1954,22 +1977,21 @@ def api_keywords():
             catalog.update_virtual(LIBRARY_ROOT, vid, keywords=new)
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc.args[0] if isinstance(exc, KeyError) else exc)}), 400
-    failed = []
-    for p in paths:
-        try:
+    try:
+        idx = _idx()
+        if any(idx.get(_rel(p)) is None for p in paths):
+            idx.scan()
+        updates = {}
+        for p in paths:
             if replace is not None:
                 new = library.normalize_keywords(replace)
             else:
-                have = existing.get(str(p), {}).get("keywords", [])
-                new = library.normalize_keywords(
-                    [k for k in have if k.lower() not in remove] + add
-                )
-            library.write_xmp(p, keywords=new)
-            library.update_cached(p, keywords=new)
-        except Exception as exc:
-            failed.append(f"{p.name}: {describe_error(exc)}")
-    if failed:
-        return jsonify({"error": "; ".join(failed[:3])}), 500
+                have = (idx.get(_rel(p)) or {}).get("keywords", [])
+                new = library.normalize_keywords([k for k in have if k.lower() not in remove] + add)
+            updates[_rel(p)] = {"keywords": new}
+        idx.set_fields(updates)
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
     n = len(paths) + len(vids)
     return jsonify({"ok": True, "count": n, "message": f"Keywords updated on {n} photo(s)"})
 
@@ -1979,7 +2001,7 @@ def api_keywords():
 # ---------------------------------------------------------------------------
 
 def _all_items() -> list[dict]:
-    items = library.build_items(LIBRARY_ROOT, list_photos(LIBRARY_ROOT))
+    items = _idx().items()
     return items + catalog.virtual_items(LIBRARY_ROOT, items)
 
 
@@ -2132,8 +2154,8 @@ def api_virtual_create():
             adj = payload.get("adjustments")
             if not isinstance(adj, dict) or not adj:
                 adj = _current_adjustments(source)
-            meta = library.read_metadata([source]).get(str(source), {})
-            meta = {**meta, "flag": "pick" if library.get_pick(LIBRARY_ROOT, src_id) else "none"}
+            meta = _idx().get(src_id) or library.read_metadata([source]).get(str(source), {})
+            meta = {**meta, "flag": "pick" if meta.get("flag") == "pick" or library.get_pick(LIBRARY_ROOT, src_id) else "none"}
         rating = meta.get("rating", 0)
         entry = catalog.create_virtual(
             LIBRARY_ROOT, src_id, adj, rating=max(0, rating), label=meta.get("label", ""),
@@ -2211,9 +2233,23 @@ def api_thumbs_prefetch():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        return jsonify(_thumb_pool().prefetch(list_photos(LIBRARY_ROOT)))
+        return jsonify(_thumb_pool().prefetch([LIBRARY_ROOT / it['path'] for it in _idx().items()]))
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/thumbs/want", methods=["POST"])
+def api_thumbs_want():
+    """Tell the workers which tiles are on screen now; they jump the queue. Returns at once."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+    try:
+        size = int(payload.get("size", thumbs.THUMB_EDGE))
+        paths = [_safe_path(r) for r in payload.get("paths", [])[:500]]
+        return jsonify({"queued": _thumb_pool().want(paths, size)})
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.route("/api/thumbs/status")
@@ -2232,7 +2268,10 @@ def api_thumb():
         return jsonify({"error": str(exc)}), 400
 
     try:
-        data = _thumb_pool().get_now(path)
+        size = int(request.args.get("size", thumbs.THUMB_EDGE))
+        if size not in thumbs.SIZES:
+            return jsonify({"error": f"size must be one of {', '.join(map(str, thumbs.SIZES))}"}), 400
+        data = _thumb_pool().get_now(path, size=size)
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
 

@@ -178,20 +178,22 @@ class FakeExiftool:
                 m = dict(self.meta.get(Path(f).name, {}))
                 out.append({"SourceFile": f, **m})
             return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(out), stderr="")
-        target = Path(args[-1])
         self.writes.append(list(args))
-        m = self.meta.setdefault(target.name, {})
-        for a in args:
-            if a.startswith("-XMP-xmp:Rating="):
-                m["Rating"] = int(a.split("=", 1)[1])
-            elif a.startswith("-XMP-xmp:Label="):
-                m["Label"] = a.split("=", 1)[1]
-            elif a == "-XMP-dc:Subject=":
-                m["Subject"] = []
-            elif a.startswith("-XMP-dc:Subject+="):
-                m.setdefault("Subject", []).append(a.split("=", 1)[1])
-        self.clock += 10
-        os.utime(target, (self.clock, self.clock))
+        # exiftool writes every trailing file argument (the writer batches photos with identical changes)
+        targets = [Path(a) for a in args if not a.startswith("-")]
+        for target in targets:
+            m = self.meta.setdefault(target.name, {})
+            for a in args:
+                if a.startswith("-XMP-xmp:Rating="):
+                    m["Rating"] = int(a.split("=", 1)[1])
+                elif a.startswith("-XMP-xmp:Label="):
+                    m["Label"] = a.split("=", 1)[1]
+                elif a == "-XMP-dc:Subject=":
+                    m["Subject"] = []
+                elif a.startswith("-XMP-dc:Subject+="):
+                    m.setdefault("Subject", []).append(a.split("=", 1)[1])
+            self.clock += 10
+            os.utime(target, (self.clock, self.clock))
         return subprocess.CompletedProcess(cmd, 0, stdout="1 image files updated", stderr="")
 
 
