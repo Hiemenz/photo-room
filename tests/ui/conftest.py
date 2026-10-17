@@ -169,3 +169,29 @@ def opened(page):
         "document.getElementById('preview').naturalWidth > 0 && !document.getElementById('save').disabled"
     )
     return page
+
+
+@pytest.fixture
+def page_at(browser, editor_url):
+    """Factory: ``page_at(1280, 720)`` is the editor at that window size with the first photo open."""
+    contexts = []
+
+    def make(width, height, open_photo=True):
+        ctx = browser.new_context(viewport={"width": width, "height": height})
+        contexts.append(ctx)
+        pg = ctx.new_page()
+        pg.errors = []
+        pg.on("pageerror", lambda e: pg.errors.append(f"pageerror: {e}"))
+        pg.on("console", lambda m: pg.errors.append(f"console.{m.type}: {m.text}")
+              if m.type == "error" else None)
+        pg.goto(editor_url)
+        if open_photo:
+            pg.locator("#file-list .file").first.click()
+            pg.wait_for_function(
+                "document.getElementById('preview').complete && "
+                "document.getElementById('preview').naturalWidth > 0 && !document.getElementById('save').disabled")
+        return pg
+
+    yield make
+    for c in contexts:
+        c.close()

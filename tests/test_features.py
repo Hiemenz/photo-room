@@ -272,3 +272,10 @@ def test_histogram_values_are_json_safe(scene):
     h = compute_histogram(scene)
     assert all(type(v) is int for v in h["lum"])
     assert type(h["clipped_shadows"]) is float
+
+
+def test_preview_histogram_uses_every_8_bit_level(scene):
+    """The editor's live histogram is the 256-bin one (as /api/develop/histogram), not a coarse 64."""
+    assert HISTOGRAM_BINS == 256
+    h = compute_histogram(scene)
+    assert len(h["r"]) == len(h["lum"]) == 256

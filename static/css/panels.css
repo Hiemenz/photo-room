@@ -35,9 +35,12 @@ input[type=range]:active::-webkit-slider-thumb { cursor: grabbing; }
 
 /* ---- Buttons ---- */
 #actions {
-  padding: 14px 18px; border-top: 1px solid var(--line);
-  display: grid; gap: 7px;
+  padding: 10px 14px; border-top: 1px solid var(--line);
+  display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
 }
+#actions button { padding: 6px 8px; font-size: 12px; }
+#actions .hint-line { grid-column: 1 / -1; font-size: 10px; color: var(--muted); line-height: 1.6; }
+@media (max-height: 800px) { #actions .hint-line { display: none; } }
 button {
   font: inherit; padding: 8px 12px; border-radius: 5px; cursor: pointer;
   border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
@@ -47,7 +50,7 @@ button:disabled { opacity: .4; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
 button.danger { color: var(--danger); }
 #status {
-  padding: 0 18px 12px; font-size: 11px; color: var(--muted);
-  min-height: 15px; line-height: 1.5;
+  padding: 4px 18px 6px; font-size: 11px; color: var(--muted);
+  min-height: 15px; line-height: 1.4; max-height: 3.4em; overflow: hidden;
 }
 #status.err { color: var(--danger); }

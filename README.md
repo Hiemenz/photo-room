@@ -109,8 +109,41 @@ curve of its colour profile. Edits saved by earlier versions keep their old look
 an **Upgrade edit** button. How every control is computed, and where it differs from
 Lightroom, is in [docs/COLOUR-PIPELINE.md](docs/COLOUR-PIPELINE.md).
 
-A histogram sits above the controls with per-channel curves and a clipping
+A 256-bin histogram sits above the controls with per-channel curves and a clipping
 readout — the shadow and highlight percentages turn red past 1%.
+
+#### Panel layout, accordion and zoom
+
+The right panel is one scrolling column (histogram on top, the buttons at the bottom), so the
+sliders keep their height on a laptop screen: 1440x900 and 1280x720 are both tested. The sliders
+sit in folding sections (**Tone**, **White balance**, **Presence**, **Detail & geometry**, plus
+**Overall**, Color mixer, Color grading, Masks and the rest). Click a heading to fold it;
+**Collapse all**, **Expand all** and **Solo** (opening one folds the others) are at the top of the
+column. Windows shorter than 800 px start with only Tone and White balance open. What is folded
+and which panels are hidden is remembered in the browser.
+
+- `]` hides or shows the adjustments panel (also the **Panel** button, top right); `[` hides or
+  shows the photo list on the left. The photo grows into the space.
+- **Zoom** bar under the photo: **Fit**, **Fill**, **100%** (one photo pixel per screen pixel,
+  device-pixel aware) and **200%**. The scroll wheel zooms around the pointer (up to 400%), a
+  trackpad or touch pinch zooms, dragging pans, double-click toggles 100% at that point, and `Z`
+  toggles Fit and 100%. Zoomed views are drawn from the tile server (`/api/tile`) at full
+  resolution with the sliders applied, so 100% is crisp, sharpening and noise are judged on real
+  pixels, and the view follows the sliders after a short pause. Crop, spot removal, masks and
+  Before/After need the whole photo, so zoom steps back to Fit when you open them.
+
+#### Develop helpers
+
+| Control | What it does |
+|---|---|
+| **Auto tone** (Tone section) | Sets Exposure, Contrast, Highlights, Shadows, Whites, Blacks and Vibrance. One History step, "Auto Tone", so one undo reverts it |
+| **WB preset** menu | As Shot, Auto, Daylight, Cloudy, Shade, Tungsten, Fluorescent, Flash, each with its Temp and Tint; applying one is a History step |
+| **Auto** (White balance) | Auto white balance (grey-world with a highlight check, skin-safe) |
+| **Pick** (White balance) | Eyedropper: hover for a live `R G B` readout under the pointer, click something that should be neutral. Works in Fit and in the zoomed view; it asks the server for the Temp and Tint that neutralise the 7 px patch, and says so if the area is too dark or blown out. `Esc` cancels |
+| **Clipping** button / `J` | Overlays clipped shadows in blue and clipped highlights in red on the photo, and lists the percentages per channel (R, G, B) under the histogram. The overlay follows the sliders and the zoom |
+
+If a helper fails (server not running, old colour maths, too dark to pick) a toast says what
+failed and what to do next, with a **Try again** button where retrying makes sense.
 
 Clicking a slider's number resets that one slider. Opening a photo shows
 its saved edits, or the auto-computed ones if it has none.
@@ -314,6 +347,31 @@ action below applies to the whole selection.
 
 Keywords are typed in the footer (comma separated, Enter to add, **Remove**
 to take them off the selection).
+
+**Live grid.** The grid listens to the server's library change feed
+(`/api/library/events`, Server-Sent Events). A flag, rating, label or keyword set in another
+window, by Smart cull, or from the command line appears on its cell without a refresh; photos
+that arrive (an import or a card ingest) are added with a brief highlight and photos that
+disappear are removed, keeping the filters and scroll position. A green **Live** dot in the footer
+shows the feed is connected (red while it reconnects).
+
+**Quick look.** `Space` opens a large view of the highlighted photo without leaving the grid;
+`←` `→` step through the photos, `Esc`, `Space` or a click closes it, and the culling keys keep
+working underneath. It shows the photo's **smart preview** (a cached 2048 px decode in
+`.photo-room-previews`, built after an import or on first look) and the thumbnail while that is
+being made.
+
+**Import.** Press **Import...** (files) or **Import folder...**, or drag files or a whole folder
+onto the grid. Only raw files are sent (`.cr2 .cr3 .nef .arw .raf .orf .rw2 .dng`); other files
+and dot-files are ignored and counted. Each file is copied by the same code as the card ingest:
+written to a temporary name, flushed, checked against the source with SHA-256, then given its final
+name without ever replacing an existing file (a different file with the same name is kept as
+`IMG_0001-1.CR2`). A file whose bytes are already anywhere in the library is skipped as a
+duplicate, whatever it is called. Photos go into `YYYY/MM/DD` folders by capture date, as the
+ingest does. A progress panel lists every file and why anything was skipped or failed, and
+**Cancel** stops after the current file. Endpoints: `POST /api/import/upload?name=` (raw body),
+`POST /api/import/finish`, `GET /api/smartpreview`, `GET /api/smartpreview/status`,
+`POST /api/smartpreview/build`.
 
 The filter bar narrows the grid by rating, flag, colour label, keyword,
 camera and capture date range, plus a text search over file name, keywords
@@ -553,6 +611,10 @@ type in a text box, number field or menu, and while a dialog is open.
 | `v` | Virtual copy (Library) |
 | `?` | Shortcut list |
 | `Shift`+`T` | Toggle dark / light theme |
+| `j` | Clipping overlay (Develop) |
+| `z` | Zoom: toggle Fit and 100% (Develop) |
+| `]` / `[` | Hide / show the adjustments panel / the photo list |
+| `Space` | Quick look at the highlighted photo (Library) |
 
 ### Reverting
 
@@ -851,8 +913,8 @@ values (the exact `ExposureTime` and `FNumber` are preserved), and
 ## Develop analysis API
 
 Backend for the Develop panel's one-click helpers (UX review proposals 3, 4 and 7). The maths is in
-`analysis.py` and `tile_server.py`, the routes in `develop_api.py`; the panel buttons that call them
-are wired separately. All POST routes take a JSON body like `/api/preview` (`path` is a library path
+`analysis.py` and `tile_server.py`, the routes in `develop_api.py`; the Develop panel's
+Auto tone, Auto, WB preset, Pick, Clipping and Zoom controls call them (see "Develop helpers"). All POST routes take a JSON body like `/api/preview` (`path` is a library path
 or a virtual-copy id, `adjustments` the settings on screen; with no `adjustments` the photo's saved
 settings are used) and need the usual session token. They work in the same linear-light maths as the
 preview and export (`docs/COLOUR-PIPELINE.md`), so what they propose is what renders. Edits made under
@@ -949,7 +1011,10 @@ available on CI).
 
 `tests/ui/` drives the editor in a real Chromium through Playwright: page
 load with no console errors, every slider, the tone curve canvas, the HSL
-tabs and colour wheels, revert, and the crop overlay. They are marked `ui`
+tabs and colour wheels, revert, and the crop overlay. The panel layout is
+checked at 1440x900 and 1280x720 (and the Export dialog down to 1024x480),
+and there are tests for every Develop helper, zoom and pan, the live Library
+grid, Quick look and import. They are marked `ui`
 and skipped by the default `pytest` run, which stays fast.
 
 ```bash
