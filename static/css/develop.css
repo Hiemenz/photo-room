@@ -189,3 +189,4 @@ details.panel > summary { cursor: pointer; font-weight: 600; user-select: none; 
   border: 1px solid var(--accent, #c9a227); display: grid; gap: 6px; }
 #upgrade-banner b { text-transform: uppercase; letter-spacing: .06em; }
 #upgrade-banner button { justify-self: start; }
+#upgrade-banner[hidden] { display: none; }

@@ -42,6 +42,7 @@ JS (`static/js/`, in load order)
 | `develop-hsl-grading.js` | colour mixer and grading |
 | `develop-transform-lens-spots.js` | transform, lens corrections, spot removal |
 | `preview.js` | histogram, preview render, opening a file |
+| `develop-upgrade.js` | "Upgrade edit" banner for edits made with the old colour maths |
 | `actions.js` | save/reset/auto, copy-paste settings |
 | `ratings-filter.js` | ratings, labels, filtering |
 | `contact-sheet.js` | contact sheet |

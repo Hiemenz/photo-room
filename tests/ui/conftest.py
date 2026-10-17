@@ -55,6 +55,9 @@ class _FakeRaw:
         return False
 
     def postprocess(self, **kwargs):
+        if tuple(kwargs.get("gamma") or ()) == (1, 1):          # linear request: the sRGB-decoded picture
+            from colour import srgb_decode_exact
+            return np.rint(srgb_decode_exact(self._rgb / 255.0) * 65535.0).astype(np.uint16)
         if kwargs.get("output_bps") == 16:
             return (self._rgb.astype(np.float32) / 255.0 * 65535).astype(np.uint16)
         return self._rgb.astype(np.uint8)
@@ -91,6 +94,10 @@ class _FakeExiftool:
         return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
 
+class _Url(str):
+    tool = None
+
+
 # Per test, not shared: saves, history and ratings persist per photo, and a
 # test that saved an edit must not change what the next one opens.
 @pytest.fixture
@@ -119,8 +126,10 @@ def editor_url(tmp_path):
     server = make_server("127.0.0.1", 0, editor.app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    url = _Url(f"http://127.0.0.1:{server.server_port}")
+    url.tool = tool                       # tests may pre-seed tags, as if a sidecar already existed
     try:
-        yield f"http://127.0.0.1:{server.server_port}"
+        yield url
     finally:
         server.shutdown()
         thread.join(timeout=5)
