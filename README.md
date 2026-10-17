@@ -90,6 +90,12 @@ remembered in the browser). Press `?` at any time for the shortcut list.
 | Black & white | toggle | Applied after the colour sliders, so they act as a channel mixer |
 | Color mixer, Color grading | see below | HSL by hue band, B&W mixer, shadow / midtone / highlight / global wheels |
 
+Exposure, white balance and the tonal-range sliders edit **linear light**, as Camera
+Raw does, so +1 EV is exactly twice the light, and the output is encoded with the exact
+curve of its colour profile. Edits saved by earlier versions keep their old look and show
+an **Upgrade edit** button. How every control is computed, and where it differs from
+Lightroom, is in [docs/COLOUR-PIPELINE.md](docs/COLOUR-PIPELINE.md).
+
 A histogram sits above the controls with per-channel curves and a clipping
 readout — the shadow and highlight percentages turn red past 1%.
 

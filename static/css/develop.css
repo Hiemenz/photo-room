@@ -184,3 +184,9 @@ details.panel > summary { cursor: pointer; font-weight: 600; user-select: none; 
 .wheelrow .ctrl { margin-top: 6px; }
 .wheelname { font-size: 11px; color: var(--muted); margin-top: 16px; text-transform: uppercase; letter-spacing: .06em; }
 #sliders { flex: 1; overflow-y: auto; padding: 6px 18px 18px; }
+
+#upgrade-banner { margin-top: 8px; padding: 8px 10px; border-radius: 6px; font-size: 11px;
+  border: 1px solid var(--accent, #c9a227); display: grid; gap: 6px; }
+#upgrade-banner b { text-transform: uppercase; letter-spacing: .06em; }
+#upgrade-banner button { justify-self: start; }
+#upgrade-banner[hidden] { display: none; }

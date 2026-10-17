@@ -8,8 +8,11 @@ Subcommands:
 """
 
 import argparse
+import functools
 import os
 
+import colour
+import editversion
 import fsutil
 import subprocess
 import sys
@@ -143,6 +146,8 @@ def get_iso(cr2_path: Path) -> int:
 # statistics are taken from a strided sample. At stride 4 that is ~20x faster
 # than the full frame and moves the resulting values by well under one unit.
 ANALYSIS_STRIDE = 4
+# Auto exposure never proposes more than this many stops either way.
+AUTO_EXPOSURE_LIMIT = 4.0
 
 
 def baseline_temp_from_wb(camera_whitebalance) -> tuple[int, np.ndarray]:
@@ -187,28 +192,63 @@ def camera_crop(raw, scale: int = 1):
     return top, left, ch, cw
 
 
+def decode_linear(raw, *, half_size: bool = False, space: str = "srgb"):
+    """
+    Demosaic ``raw`` to **linear light**: uint16, camera white balance applied, the
+    camera-to-``space`` matrix applied, no tone curve and no auto brightening
+    (``gamma=(1, 1)``). Every edit and every transfer function starts from this.
+    """
+    return raw.postprocess(
+        use_camera_wb=True,
+        half_size=half_size,
+        no_auto_bright=True,
+        output_bps=16,
+        gamma=(1, 1),
+        output_color=rawpy_color_space(space),
+    )
+
+
+def rawpy_color_space(space: str):
+    return {"srgb": rawpy.ColorSpace.sRGB, "adobergb": rawpy.ColorSpace.Adobe,
+            "prophoto": rawpy.ColorSpace.ProPhoto}[colour.normalise_space(space)]
+
+
+def decode_preview_linear(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
+    """
+    (half-size linear uint16 RGB in sRGB primaries, baseline temp in K, wb multipliers),
+    cropped to the camera's default area. The develop preview and the 8-bit
+    analysis image both come from this one demosaic.
+    """
+    with rawpy.imread(str(cr2_path)) as raw:
+        baseline_temp, cam_mul = baseline_temp_from_wb(raw.camera_whitebalance)
+        lin = decode_linear(raw, half_size=True)
+        crop = camera_crop(raw, scale=2)
+        if crop:
+            top, left, h, w = crop
+            lin = np.ascontiguousarray(lin[top:top + h, left:left + w])
+    return lin, baseline_temp, cam_mul
+
+
+@functools.lru_cache(maxsize=1)
+def _u8_lut() -> np.ndarray:
+    return np.rint(colour.encode_lut16("srgb") * 255.0).astype(np.uint8)
+
+
+def linear16_to_u8(lin16: np.ndarray) -> np.ndarray:
+    """uint16 linear light -> 8-bit sRGB (exact sRGB curve) for analysis and thumbnails."""
+    return np.take(_u8_lut(), lin16)
+
+
 def decode_for_analysis(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
     """
-    Decode a raw file once, returning (8-bit RGB, baseline temp in K, wb multipliers).
+    Decode a raw file once, returning (8-bit sRGB RGB, baseline temp in K, wb multipliers).
 
     Unpacking the sensor data is the dominant cost of an import, so callers that
     need both a preview and its statistics should decode through here and pass
     the result around rather than opening the file twice.
     """
-    with rawpy.imread(str(cr2_path)) as raw:
-        baseline_temp, cam_mul = baseline_temp_from_wb(raw.camera_whitebalance)
-
-        rgb = raw.postprocess(
-            use_camera_wb=True,
-            half_size=True,
-            no_auto_bright=True,
-            output_bps=8,
-        )
-        crop = camera_crop(raw, scale=2)
-        if crop:
-            top, left, h, w = crop
-            rgb = np.ascontiguousarray(rgb[top:top + h, left:left + w])
-    return rgb, baseline_temp, cam_mul
+    lin, baseline_temp, cam_mul = decode_preview_linear(cr2_path)
+    return linear16_to_u8(lin), baseline_temp, cam_mul
 
 
 def _tone_statistics(rgb: np.ndarray) -> tuple[float, float, float]:
@@ -253,10 +293,12 @@ def compute_auto_adjustments(
 
     median_lum, p10, p90 = _tone_statistics(rgb)
 
-    # Exposure: shift median toward 0.40
+    # Exposure: shift the median toward 0.40 (display-coded). Exposure is a gain
+    # in linear light, so the shift is measured there: edit version 2 maths.
     if median_lum > 0.001:
-        ev_shift = np.log2(0.40 / median_lum)
-        exposure = round(float(np.clip(ev_shift, -2.0, 2.0)) * 4) / 4
+        target = float(colour.srgb_decode_exact(0.40))
+        ev_shift = np.log2(target / float(colour.srgb_decode_exact(median_lum)))
+        exposure = round(float(np.clip(ev_shift, -AUTO_EXPOSURE_LIMIT, AUTO_EXPOSURE_LIMIT)) * 4) / 4
     else:
         exposure = 0.0
 
@@ -452,6 +494,10 @@ def write_sidecar_adjustments(raw_path: Path, adj: dict) -> Path:
     target = raw_path.with_suffix(".xmp")
     values = _auto_xmp_values(adj)
     args = [f"-XMP-crs:{k}={v}" for k, v in values.items()]
+    if not target.exists():
+        # A brand-new sidecar holds only current-maths numbers; an existing one may hold older edits
+        # whose version must not be rewritten here.
+        args.append(f"-XMP-xmp:CreatorTool={editversion.tool_label()}")
     with fsutil.lock_for(target):
         if target.exists():
             cmd = ["exiftool"] + args + ["-overwrite_original", str(target)]
@@ -469,7 +515,8 @@ def write_sidecar_adjustments(raw_path: Path, adj: dict) -> Path:
 
 def embed_xmp_adjustments(dng_path: Path, adj: dict) -> None:
     values = _auto_xmp_values(adj)
-    xmp_args = [f"-XMP-crs:{k}={v}" for k, v in values.items()] + ["-overwrite_original"]
+    xmp_args = ([f"-XMP-crs:{k}={v}" for k, v in values.items()]
+                + [f"-XMP-xmp:CreatorTool={editversion.tool_label()}", "-overwrite_original"])
 
     result = run_tool(["exiftool"] + xmp_args + [str(dng_path)],
                       timeout=EXIFTOOL_TIMEOUT, what="exiftool",

@@ -124,7 +124,7 @@ def test_open_returns_preview_and_full_slider_set(client, fake_rawpy, fake_exift
 
     assert res.status_code == 200
     assert data["preview"].startswith("data:image/jpeg;base64,")
-    expected = {c["key"] for c in CONTROLS + GLOBAL_CONTROLS} | set(editor.colormix.COLOR_DEFAULTS) | {"monochrome", "crop", "tone_curve", "masks"} | set(editor.retouch.DEFAULTS)
+    expected = {c["key"] for c in CONTROLS + GLOBAL_CONTROLS} | set(editor.colormix.COLOR_DEFAULTS) | {"monochrome", "crop", "tone_curve", "masks", "edit_version"} | set(editor.retouch.DEFAULTS)
     assert set(data["adjustments"]) == expected
 
 
@@ -380,6 +380,7 @@ def test_save_then_read_round_trips(fake_exiftool):
     saved = read_saved_adjustments(Path("x.dng"))
 
     assert saved.pop("monochrome") is False
+    assert saved.pop("edit_version") == editor.EDIT_VERSION       # stamped by the save
     assert saved.pop("luminance_nr") == pytest.approx(0.0)
     # Geometry round-trips alongside the sliders but is not part of this
     # comparison; an uncropped photo reports no crop and a zero angle.

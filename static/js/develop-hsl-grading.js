@@ -98,4 +98,5 @@ function paintAll() {
   $("s-monochrome").checked = !!values.monochrome;
   if (typeof paintMasks === "function") paintMasks();
   paintM8();
+  if (typeof refreshUpgradeBanner === "function") refreshUpgradeBanner();
 }

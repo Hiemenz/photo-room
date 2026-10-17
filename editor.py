@@ -34,7 +34,9 @@ except ImportError:        # pragma: no cover
     cv2 = None
 
 import catalog
+import colour
 import colormix
+import editversion
 import fsutil
 import security
 import geometry
@@ -63,6 +65,8 @@ from process import (
     has_sidecar,
     list_photos,
     decode_for_analysis,
+    decode_preview_linear,
+    linear16_to_u8,
     camera_baseline_temp,
     photo_features,
     verify_xmp_written,
@@ -172,6 +176,10 @@ def cache_stats() -> dict:
 LIBRARY_ROOT: Path = Path.cwd()
 PREVIEW_MAX_EDGE = 1400
 
+# Colour maths generation. 1 = the original gamma-space maths; 2 = linear light
+# (docs/COLOUR-PIPELINE.md). Saved with every edit; an edit without it is version 1.
+EDIT_VERSION = editversion.CURRENT
+
 # Whether a save also writes a Lightroom-style .xmp beside the photo.
 # Off unless --write-sidecars is passed: a sidecar is what Lightroom reads
 # back, so writing one decides which application wins.
@@ -258,17 +266,32 @@ def _load_base_render(path: Path) -> tuple[np.ndarray, int]:
                 _decode_cache.move_to_end(key)
             return _base_cache[key]
 
-    rgb, baseline_temp, cam_mul = decode_for_analysis(path)
-
-    img = Image.fromarray(rgb)
-    img.thumbnail((PREVIEW_MAX_EDGE, PREVIEW_MAX_EDGE), Image.LANCZOS)
-    base = np.asarray(img, dtype=np.float32) / 255.0
+    # One demosaic to linear light: the float preview is encoded straight from
+    # the 16-bit data (no 8-bit step), the 8-bit copy is for analysis only.
+    lin16, baseline_temp, cam_mul = decode_preview_linear(path)
+    rgb = linear16_to_u8(lin16)
+    base = _fit_preview(colour.linear16_to_encoded(lin16, "srgb"))
+    del lin16
 
     with _cache_lock:
         _decode_cache[key] = (rgb, baseline_temp, cam_mul)
         _base_cache[key] = (base, baseline_temp)
         _evict_if_needed()
     return base, baseline_temp
+
+
+def _fit_preview(enc: np.ndarray) -> np.ndarray:
+    """Shrink an encoded float image to PREVIEW_MAX_EDGE (never enlarging)."""
+    h, w = enc.shape[:2]
+    scale = PREVIEW_MAX_EDGE / max(h, w)
+    if scale >= 1.0:
+        return enc
+    size = (max(1, round(w * scale)), max(1, round(h * scale)))
+    if cv2 is not None:
+        return cv2.resize(enc, size, interpolation=cv2.INTER_AREA)
+    planes = [np.asarray(Image.fromarray(np.ascontiguousarray(enc[:, :, c]), "F").resize(size, Image.LANCZOS))
+              for c in range(3)]
+    return np.stack(planes, axis=-1)
 
 
 def _luminance(img: np.ndarray) -> np.ndarray:
@@ -281,6 +304,23 @@ def _blur(plane: np.ndarray, radius: float) -> np.ndarray:
     radii computed on a shrunken copy). See ``render_kernels.blur``.
     """
     return render_kernels.blur(plane, radius)
+
+
+def _rotate_float(img: np.ndarray, angle: float) -> np.ndarray:
+    """
+    Rotate ``angle`` degrees counter-clockwise about the centre, same size, bicubic,
+    in float32 (no 8-bit step: a 16-bit export keeps its precision through Straighten).
+    Pixels from outside the frame are black, as with Pillow's ``rotate``.
+    """
+    h, w = img.shape[:2]
+    if cv2 is not None and img.dtype == np.float32 and img.ndim == 3:
+        m = cv2.getRotationMatrix2D(((w - 1) / 2.0, (h - 1) / 2.0), angle, 1.0)
+        out = cv2.warpAffine(np.ascontiguousarray(img), m, (w, h), flags=cv2.INTER_CUBIC,
+                             borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        return np.clip(out, 0.0, 1.0, out=out)
+    planes = [np.asarray(Image.fromarray(np.ascontiguousarray(img[..., c], dtype=np.float32), "F")
+                         .rotate(angle, resample=Image.BICUBIC, expand=False)) for c in range(img.shape[2])]
+    return np.clip(np.stack(planes, axis=-1), 0.0, 1.0)
 
 
 def apply_geometry(img: np.ndarray, adj: dict) -> np.ndarray:
@@ -297,11 +337,7 @@ def apply_geometry(img: np.ndarray, adj: dict) -> np.ndarray:
 
     if angle:
         h, w = img.shape[:2]
-        as_u8 = np.clip(img * 255.0 + 0.5, 0, 255).astype(np.uint8)
-        rotated = Image.fromarray(as_u8).rotate(
-            angle, resample=Image.BICUBIC, expand=False
-        )
-        img = np.asarray(rotated, dtype=np.float32) / 255.0
+        img = _rotate_float(img, angle)
 
         keep_w, keep_h = _largest_inscribed_rect(w, h, np.deg2rad(angle))
         # Round inward and drop a further pixel each side: the exact rectangle
@@ -364,12 +400,20 @@ def _stage_geometry(base: np.ndarray, adj: dict) -> np.ndarray:
     if not adj.get("_raw_frame"):
         base = retouch.apply_transform(base, adj)
         base = apply_geometry(base, adj)
+    if _is_legacy(adj):
+        # Edit version 1: tuned on BT.709-coded data, so start from exactly that.
+        base = colour.to_legacy(base, colour.normalise_space(adj.get("_space")))
     return base
 
 
-def _stage_tone(base: np.ndarray, baseline_temp: int, adj: dict) -> np.ndarray:
+def _is_legacy(adj: dict) -> bool:
+    """True for an edit made under the original gamma-space maths (edit_version 1)."""
+    return int(adj.get("edit_version", EDIT_VERSION) or EDIT_VERSION) < EDIT_VERSION
+
+
+def _stage_tone(base: np.ndarray, baseline_temp: int, adj: dict, linear=None) -> np.ndarray:
     # White balance, exposure, tonal range, contrast and curve (render_kernels).
-    return render_kernels.tone_stage(base, baseline_temp, adj)
+    return render_kernels.tone_stage(base, baseline_temp, adj, linear=linear)
 
 
 def _stage_saturation(img: np.ndarray, adj: dict) -> np.ndarray:
@@ -394,6 +438,13 @@ def apply_adjustments(
     settings are unchanged. ``should_abort`` is polled between stages and
     raises :class:`StaleRender` for a request that has been superseded.
     """
+    # ``_linear_input``: ``base`` is already linear light (the exporter's 16-bit decode), which
+    # saves a decode and an encode of the full frame. Stages that need display-coded pixels
+    # (spots, lens, the old maths) get an encoded copy instead.
+    linear_in = bool(adj.get("_linear_input"))
+    if linear_in and (_is_legacy(adj) or not fast_ok(adj)):
+        base = colour.to_encoded(base, adj.get("_space"))
+        linear_in = False
     cache = _stage_cache if cache_id else None
     keys = stagecache.stage_keys(adj, baseline_temp) if cache else None
     S = stagecache
@@ -433,9 +484,20 @@ def apply_adjustments(
 
     if resume >= S.TONE:
         img = cached[resume]
+    elif linear_in:
+        checkpoint()
+        img = render_kernels.tone_stage_from_linear(geo, baseline_temp, adj)
     else:
         checkpoint()
-        img = keep(S.TONE, _stage_tone(geo, baseline_temp, adj), geo)
+        linear = None
+        if cache and not _is_legacy(adj) and not render_kernels.tone_is_linear_neutral(baseline_temp, adj):
+            # The geometry output decoded to linear light only depends on the
+            # geometry, so a slider drag decodes it once and re-encodes per move.
+            linear = cache.get(cache_id, "linear", keys[S.GEOMETRY])
+            if linear is None:
+                linear = colour.to_linear(geo, adj.get("_space"))
+                cache.put(cache_id, "linear", keys[S.GEOMETRY], linear)
+        img = keep(S.TONE, _stage_tone(geo, baseline_temp, adj, linear), geo)
     if resume < S.SATURATION:
         checkpoint()
         img = keep(S.SATURATION, _stage_saturation(img, adj), img)
@@ -470,14 +532,16 @@ def apply_adjustments(
 
     checkpoint()
     # --- Local adjustments (masks.py): graduated, radial and brush masks ---
-    img = masks.apply_masks(img, adj.get("masks"), blur=_blur)
+    img = masks.apply_masks(img, adj.get("masks"), blur=_blur, space=adj.get("_space"),
+                            legacy=_is_legacy(adj))
 
     # --- Edit strength ---
     # Blend the finished edit back toward the original. Above 100% it
     # extrapolates away from the original, exaggerating the same edit.
     strength = float(adj.get("strength", 100)) / 100.0
     if abs(strength - 1.0) > 1e-6:
-        img = geo + (img - geo) * strength
+        ref = colour.to_encoded(geo, adj.get("_space")) if linear_in else geo
+        img = ref + (img - ref) * strength
 
     # --- Monochrome ---
     # Applied after the colour sliders so they act as channel mixers: warming
@@ -702,6 +766,7 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
     Shared by the DNG and the sidecar so the two cannot drift apart.
     """
     return [
+        f"-XMP-xmp:CreatorTool={editversion.tool_label(int(adj.get('edit_version') or EDIT_VERSION))}",
         f"-XMP-crs:ProcessVersion={process_version or DEFAULT_PROCESS_VERSION}",
         "-XMP-crs:WhiteBalance=Custom",
         f"-XMP-crs:ColorTemperature={int(adj.get('color_temp', 5500))}",
@@ -953,8 +1018,11 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
         "LuminanceSmoothing", "ConvertToGrayscale",
         "CropAngle", "HasCrop", "CropLeft", "CropTop", "CropRight", "CropBottom",
     ]
-    args = [f"-XMP-crs:{t}" for t in tags] + ["-s3", "-f", str(path)]
+    args = [f"-XMP-crs:{t}" for t in tags] + ["-XMP-xmp:CreatorTool", "-XMP-crs:Version",
+                                               "-s3", "-f", str(path)]
     values = _exiftool_read(args).strip().split("\n")
+    stamp = values[len(tags):len(tags) + 2]            # CreatorTool, crs:Version (absent = "-")
+    values = values[:len(tags)]
     if len(values) < len(tags) or all(v.strip() in ("-", "") for v in values):
         # No develop settings, but a curve alone is still an edit.
         curve = _read_tone_curve(path)
@@ -1002,7 +1070,23 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
         out["tone_curve"] = curve
     if out:
         out.update(_read_color_adjustments(path))
+        declared = _declared_edit_version(stamp)
+        if declared:
+            out["edit_version"] = declared
     return out or None
+
+
+def _declared_edit_version(stamp: list[str]) -> int | None:
+    """Edit version a file states: ours via CreatorTool, Adobe's (crs:Version) as current; else unknown."""
+    tool = stamp[0].strip() if stamp else "-"
+    crs_version = stamp[1].strip() if len(stamp) > 1 else "-"
+    tool = "" if tool == "-" else tool
+    declared = editversion.version_from_tool(tool)
+    if declared:
+        return declared
+    if (tool and any(n in tool for n in editversion.FOREIGN_TOOLS)) or crs_version not in ("-", ""):
+        return editversion.CURRENT
+    return None
 
 
 def _read_tone_curve(path: Path) -> dict | None:
@@ -1263,6 +1347,43 @@ def api_files():
     return jsonify({"root": str(LIBRARY_ROOT), "files": files})
 
 
+def adjustments_have_edits(adj: dict, baseline_temp: float | None = None) -> bool:
+    """True when ``adj`` changes anything the colour maths touches (not framing, not noise reduction)."""
+    skip = {"straighten", "luminance_nr"}
+    for c in CONTROLS + GLOBAL_CONTROLS:
+        key = c["key"]
+        if key in skip or key not in adj:
+            continue
+        if key == "color_temp":
+            if baseline_temp is not None and abs(float(adj[key]) - float(baseline_temp)) > 1:
+                return True
+            continue
+        try:
+            if abs(float(adj[key]) - float(c["default"])) > 1e-9:
+                return True
+        except (TypeError, ValueError):
+            continue
+    for key, default in colormix.COLOR_DEFAULTS.items():
+        if key in adj and adj[key] != default:
+            return True
+    if adj.get("monochrome") or not tonecurve.is_identity(adj.get("tone_curve")):
+        return True
+    return bool(adj.get("masks"))
+
+
+def resolve_edit_version(adj: dict, baseline_temp: float | None = None) -> dict:
+    """
+    ``adj`` with ``edit_version`` set. Settings that say nothing and do something
+    were made before versions existed, so they are version 1 and keep their look.
+    """
+    if adj.get("edit_version"):
+        return adj
+    out = dict(adj)
+    out["edit_version"] = (editversion.LEGACY if adjustments_have_edits(adj, baseline_temp)
+                           else editversion.CURRENT)
+    return out
+
+
 def complete_adjustments(adj: dict, baseline_temp: int) -> dict:
     """Fill every control, colour key, crop and curve so the UI gets a full set."""
     adj = dict(adj)
@@ -1270,6 +1391,7 @@ def complete_adjustments(adj: dict, baseline_temp: int) -> dict:
     merged = {c["key"]: adj.get(c["key"], c["default"]) for c in CONTROLS + GLOBAL_CONTROLS}
     merged.update({k: adj.get(k, d) for k, d in colormix.COLOR_DEFAULTS.items()})
     merged["monochrome"] = bool(adj.get("monochrome", False))
+    merged["edit_version"] = resolve_edit_version(adj, baseline_temp).get("edit_version", EDIT_VERSION)
     merged["crop"] = adj.get("crop")
     merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
     merged["masks"] = masks.normalise_masks(adj.get("masks"))
@@ -1309,6 +1431,7 @@ def api_open():
             auto = compute_auto_adjustments(path, decoded=decoded, style_model=model)
             source = "styled" if auto.pop("styled", False) else "auto"
             adj = {k: v for k, v in auto.items() if k != "iso"}
+            adj["edit_version"] = EDIT_VERSION
 
         merged = complete_adjustments(adj, baseline_temp)
 
@@ -1327,6 +1450,7 @@ def api_open():
                 auto = compute_auto_adjustments(
                     path, decoded=decoded, style_model=get_style_model())
                 auto = {k: v for k, v in auto.items() if k not in ("iso", "styled")}
+                auto["edit_version"] = EDIT_VERSION
                 imported = complete_adjustments(auto, baseline_temp)
             hist = history.set_original(hkey, imported)
         if not hist["entries"]:
@@ -1347,6 +1471,7 @@ def api_open():
             "virtual": bool(vc),
             "baseline_temp": baseline_temp,
             "foreign_editor": None if vc else detect_foreign_edits(path),
+            "needs_upgrade": int(merged.get("edit_version") or EDIT_VERSION) < EDIT_VERSION,
             "has_sidecar": has_sidecar(path),
             "lens": lens.describe(path),
         })
@@ -1423,6 +1548,36 @@ def api_preview():
         path = _resolve_photo(payload["path"])
     except (ValueError, KeyError) as exc:
         return jsonify({"error": str(exc)}), 400
+@app.route("/api/upgrade_edit", methods=["POST"])
+def api_upgrade_edit():
+    """
+    Re-map an edit made under the old (version 1) colour maths so it keeps its look.
+
+    Nothing is written: the upgraded settings come back with a fresh preview and a
+    report of how far the new render is from the old one; saving is the user's call.
+    """
+    try:
+        payload = _json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        path = _resolve_photo(payload["path"])
+    except (ValueError, KeyError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        adj = {k: v for k, v in dict(payload.get("adjustments") or {}).items() if k != "_baseline_temp"}
+        base, baseline_temp = _load_base_render(path)
+        with _render_lock:
+            upgraded, report = editversion.upgrade(
+                resolve_edit_version(adj, baseline_temp), baseline_temp, base,
+                lambda b, t, a: apply_adjustments(b, t, a))
+            merged = complete_adjustments(upgraded, baseline_temp)
+            rendered = render_with_histogram(path, merged)
+        return jsonify({"adjustments": merged, "report": report, **rendered})
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
 @app.route("/api/mask_overlay", methods=["POST"])
 def api_mask_overlay():
     """The selected mask as a red-tint PNG the size of the current preview (O key)."""
@@ -2005,6 +2160,7 @@ def _current_adjustments(path: Path) -> dict:
         decoded = _decode_cache.get(str(path.resolve()))
     auto = compute_auto_adjustments(path, decoded=decoded, style_model=get_style_model())
     auto = {k: v for k, v in auto.items() if k not in ("iso", "styled")}
+    auto["edit_version"] = EDIT_VERSION
     return complete_adjustments(auto, baseline_temp)
 
 
@@ -2198,6 +2354,17 @@ def api_preset_get():
 
     if preset is None:
         return jsonify({"error": "No such preset"}), 404
+    target_version = int(payload.get("edit_version") or EDIT_VERSION)
+    if target_version < EDIT_VERSION:
+        # Merging version 2 numbers into a version 1 edit would silently change how
+        # the photo's existing sliders look.
+        return jsonify({"error": "This photo's edit uses the old colour maths. Click "
+                                 "Upgrade edit first, then apply the preset.",
+                        "needs_upgrade": True}), 409
+    if not preset.get("edit_version"):
+        # Saved before edit versions: its numbers were tuned on the old maths.
+        preset = editversion.map_parameters(
+            preset, float(payload.get("baseline_temp") or 5500))
     return jsonify({"adjustments": preset})
 
 
@@ -2258,8 +2425,13 @@ def api_batch_apply():
             entry = catalog.get_virtual(LIBRARY_ROOT, vid)
             incoming = (dict(adjustments) if include_geometry
                         else geometry.without_photo_specific(adjustments))
-            catalog.update_virtual(LIBRARY_ROOT, vid,
-                                   adjustments={**(entry.get("adjustments") or {}), **incoming})
+            existing = entry.get("adjustments") or {}
+            if existing and int(existing.get("edit_version") or editversion.LEGACY) < int(
+                    incoming.get("edit_version") or EDIT_VERSION):
+                # Never merge version 2 numbers into a version 1 edit as if they were alike.
+                existing = editversion.map_parameters(existing, float(
+                    incoming.get("_baseline_temp") or source_baseline or 5500))
+            catalog.update_virtual(LIBRARY_ROOT, vid, adjustments={**existing, **incoming})
             applied.append(vid)
         except Exception as exc:
             failed.append({"path": vid, "error": str(exc.args[0] if isinstance(exc, KeyError) else exc)})

@@ -159,3 +159,34 @@ PNG writer, exiftool session and that spliced PNG metadata equals a direct exift
 Raw decodes now use the camera's default crop (`rawpy` `crop_*`; the Canon 1000D sample is 3888x2591 instead of
 the 3906x2602 sensor area) for both the preview and the export, so they frame identically. `ExportOptions.full_sensor`
 (`"full_sensor": true` in the export payload) keeps the whole decoded area. Colour math is untouched.
+
+## Linear-light colour pipeline (edit version 2)
+
+Edits now run in linear light (docs/COLOUR-PIPELINE.md): the tone stage decodes to linear, applies gains,
+re-encodes with the exact output curve, then applies Contrast/curve through one 65 537-entry lookup. That costs
+two power functions per full frame where the old stage cost none. Measured on the Pi 5 with the same scripts,
+`main` and this branch back to back (load average 0.7-1.6; best/median of runs; the earlier tables in this file
+were taken on a busier machine, so compare within this table):
+
+| Slider drag (`bench_preview.py`, median ms) | main sharp | now sharp | main drag | now drag |
+|---|---:|---:|---:|---:|
+| exposure   | 253 | 323 | 80 | 102 |
+| contrast   | 249 | 322 | 78 | 102 |
+| saturation | 222 | 220 | 71 | 71 |
+| HSL, grading, clarity, sharpness | unchanged | unchanged | | |
+
+Drag renders stay under the 150 ms target (the figures above are below the 118/137 ms recorded earlier). The
+decode to linear is cached per photo in the stage cache, so a drag costs one re-encode, not a decode and an encode.
+
+| Export wall s (`bench_export.py`) | main cold | now cold | main warm | now warm |
+|---|---:|---:|---:|---:|
+| JPEG, heavy | 5.03 | 5.27 | 4.27 | 4.53 |
+| PNG, heavy  | 6.81 | 6.97 | 6.00 | 6.16 |
+| JPEG, light | 1.99 | 2.49 | 1.28 | 1.75 |
+| PNG, light  | 3.73 | 4.32 | 2.96 | 3.34 |
+
+Targets (JPEG < 6 s, PNG < 12 s) still hold. The exporter passes the 16-bit linear decode straight in
+(`_linear_input`), so only the final encode is added. `bench_render.py`: white balance + exposure + tone + curve,
+1400 px 52 -> 142 ms, full resolution 581 -> 1179 ms when run stand-alone on an encoded image (it pays a decode
+and an encode; the preview caches the decode and the export skips it). Decode cache entries are now 16-bit linear
+(`FORMAT_VERSION` v2), so old entries are never hit.

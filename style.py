@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
+import editversion
 import geometry
 
 try:
@@ -162,6 +163,9 @@ def record_edit(
     Store one training example: what the automatic pass proposed, and what
     the photographer actually kept.
     """
+    # Stamp which colour maths the edit was made under (rows recorded before
+    # edit versions existed have no stamp, see load_training_data).
+    chosen = {**chosen, "edit_version": chosen.get("edit_version") or editversion.CURRENT}
     residual = {}
     for key in LEARNED_KEYS:
         if key not in chosen:
@@ -204,10 +208,19 @@ def load_training_data(db_path: Path | None = None) -> list[tuple[dict, dict]]:
     with _lock:
         con = _connect(db_path)
         try:
-            rows = con.execute("SELECT features, residual FROM edits ORDER BY id").fetchall()
+            rows = con.execute("SELECT features, residual, chosen FROM edits ORDER BY id").fetchall()
         finally:
             con.close()
-    return [(json.loads(f), json.loads(r)) for f, r in rows]
+    out = []
+    for f, r, c in rows:
+        residual = json.loads(r)
+        version = int((json.loads(c) or {}).get("edit_version") or editversion.LEGACY)
+        if version < editversion.CURRENT and "exposure" in residual:
+            # Exposure was a gain on gamma-coded values: the same look needs
+            # about 2.2x the stops in linear light.
+            residual["exposure"] = float(residual["exposure"]) * editversion.EXPOSURE_FACTOR
+        out.append((json.loads(f), residual))
+    return out
 
 
 def clear_history(db_path: Path | None = None) -> int:

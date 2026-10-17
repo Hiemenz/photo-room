@@ -104,11 +104,12 @@ def test_negative_exposure_darkens(mid):
     assert mean_lum(apply_adjustments(mid, BASELINE_TEMP, {"exposure": -1.0})) < 0.5
 
 
-def test_exposure_one_stop_approximately_doubles():
-    """+1 EV should double linear values, within clipping limits."""
+def test_exposure_one_stop_doubles_linear_light():
+    """+1 EV doubles scene-linear light (tests/test_linear_light.py checks the numbers in depth)."""
+    import colour
     img = np.full((8, 8, 3), 0.25, dtype=np.float32)
     out = apply_adjustments(img, BASELINE_TEMP, {"exposure": 1.0})
-    np.testing.assert_allclose(out, 0.5, atol=1e-5)
+    np.testing.assert_allclose(colour.to_linear(out), 2 * colour.to_linear(img), rtol=1e-4)
 
 
 def test_exposure_is_monotonic(mid):

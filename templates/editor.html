@@ -242,6 +242,12 @@
     </div>
     <div id="quality" hidden></div>
     <div id="sharp" hidden></div>
+    <div id="upgrade-banner" hidden>
+      <b>Old colour maths</b>
+      <span>This edit was made before photo-room edited in linear light. It looks exactly as it did.
+        Upgrading re-maps the sliders so it keeps its look, and shows how close it got.</span>
+      <button id="upgrade-edit" type="button">Upgrade edit</button>
+    </div>
   </div>
   <div id="sliders"></div>
   <div id="status"></div>
@@ -354,6 +360,7 @@ const CURVE_PARAMETRIC = {{ curve_parametric | tojson }};
 <script src="{{ asset('js/develop-hsl-grading.js') }}"></script>
 <script src="{{ asset('js/develop-transform-lens-spots.js') }}"></script>
 <script src="{{ asset('js/preview.js') }}"></script>
+<script src="{{ asset('js/develop-upgrade.js') }}"></script>
 <script src="{{ asset('js/actions.js') }}"></script>
 <script src="{{ asset('js/ratings-filter.js') }}"></script>
 <script src="{{ asset('js/contact-sheet.js') }}"></script>

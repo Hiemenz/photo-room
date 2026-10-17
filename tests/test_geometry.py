@@ -1,6 +1,8 @@
 """Tests for crop and straighten."""
 
 import numpy as np
+
+import colour
 from pathlib import Path
 import pytest
 
@@ -182,8 +184,9 @@ def test_geometry_runs_before_the_tonal_work(frame):
     crop = {"left": 0.55, "top": 0.55, "right": 1.0, "bottom": 1.0}
     out = apply_adjustments(frame, BASELINE_TEMP, {"crop": crop, "exposure": -1.0})
 
-    # Only the 0.8 quadrant survives, darkened by a stop.
-    assert float(out.mean()) == pytest.approx(0.4, abs=0.05)
+    # Only the 0.8 quadrant survives, darkened by a stop of light (not of code value).
+    expected = float(colour.to_encoded(colour.to_linear(np.full(1, 0.8, np.float32)) * 0.5)[0])
+    assert float(out.mean()) == pytest.approx(expected, abs=0.01)
 
 
 def test_strength_compares_against_the_cropped_frame(frame):

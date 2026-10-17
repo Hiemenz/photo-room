@@ -13,7 +13,9 @@ import numpy as np
 import pytest
 
 import colormix
+import colour
 import editor
+import process
 import fastops
 import render_kernels
 import tonecurve
@@ -61,7 +63,13 @@ def img():
 
 
 def full_adj():
-    return editor.effective_adjustments(dict(FULL))
+    # The frozen reference is the original (gamma-space) maths: edit version 1.
+    return editor.effective_adjustments({**FULL, "edit_version": 1})
+
+
+def legacy_input(img):
+    """What edit version 1 starts from: the picture coded with the old BT.709 curve."""
+    return colour.to_legacy(img)
 
 
 def test_tone_stage(img, threads):
@@ -73,7 +81,7 @@ def test_tone_stage(img, threads):
                                      ("shadows", 100), ("highlights", -100), ("blacks", -80), ("whites", 90),
                                      ("contrast", -50), ("contrast", 100)])
 def test_tone_stage_each_control(img, key, val):
-    adj = editor.effective_adjustments({key: val})
+    adj = editor.effective_adjustments({key: val, "edit_version": 1})
     assert diff(L.legacy_stage_tone(img, 5200, adj), editor._stage_tone(img, 5200, adj)) <= TOL
 
 
@@ -130,7 +138,7 @@ def test_whole_pipeline_8bit_within_one_level(img, threads):
     adj = full_adj()
 
     def legacy():
-        x = L.legacy_stage_tone(img, 5000, adj)
+        x = L.legacy_stage_tone(legacy_input(img), 5000, adj)
         x = L.legacy_stage_saturation(x, adj)
         x = L.legacy_apply_hsl(x, adj)
         x = L.legacy_apply_grading(x, adj)
@@ -173,12 +181,12 @@ def test_real_raw_matches_legacy_at_preview_and_full_resolution():
     if not SAMPLE.exists():
         pytest.skip("real raw sample not downloaded")
     with rawpy.imread(str(SAMPLE)) as raw:
-        rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=8)
+        lin = process.decode_linear(raw)
     adj = full_adj()
-    full = render_kernels.u8_to_float(rgb)
+    full = colour.linear16_to_encoded(lin)
     crop = np.ascontiguousarray(full[600:1500, 800:2300])          # full-res pixels, 1.35 MP
     for label, base in (("full-res crop", crop),):
-        x = L.legacy_stage_tone(base, 5000, adj)
+        x = L.legacy_stage_tone(legacy_input(base), 5000, adj)
         x = L.legacy_stage_saturation(x, adj)
         x = L.legacy_apply_hsl(x, adj)
         x = L.legacy_apply_grading(x, adj)

@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageCms, ImageOps
 
+import colour
 import decode_cache
 import fastops
 import exifpool
@@ -201,14 +202,11 @@ def _render_array(path: Path, opts: ExportOptions,
     import editor
 
     adj = dict(adjustments) if adjustments is not None else None
-    deep = opts.bit_depth == 16
+    space = colour.normalise_space(opts.colorspace)
 
     if path.suffix.lower() in RAW_SUFFIXES:
         import rawpy
 
-        space = opts.colorspace or "srgb"
-        color = {"srgb": rawpy.ColorSpace.sRGB, "adobergb": rawpy.ColorSpace.Adobe,
-                 "prophoto": rawpy.ColorSpace.ProPhoto}[space]
         with rawpy.imread(str(path)) as raw:
             from process import baseline_temp_from_wb
             baseline = baseline_temp_from_wb(raw.camera_whitebalance)[0]
@@ -216,8 +214,9 @@ def _render_array(path: Path, opts: ExportOptions,
             crop = None if opts.full_sensor else process.camera_crop(raw)
 
             def decode():
-                out = raw.postprocess(use_camera_wb=True, no_auto_bright=True,
-                                      output_bps=16 if deep else 8, output_color=color)
+                # Linear light, 16 bit, in the output space's primaries: every
+                # edit and the transfer function start from here (no 8-bit step).
+                out = process.decode_linear(raw, space=space)
                 if crop:
                     top, left, h, w = crop
                     out = np.ascontiguousarray(out[top:top + h, left:left + w])
@@ -225,15 +224,15 @@ def _render_array(path: Path, opts: ExportOptions,
 
             # The demosaic is the same every time for the same file and
             # parameters, so re-exports read it back from the decode cache.
-            rgb, _ = decode_cache.get_or_decode(
-                path, {"wb": "camera", "auto_bright": False, "bps": 16 if deep else 8,
+            lin16, _ = decode_cache.get_or_decode(
+                path, {"wb": "camera", "auto_bright": False, "bps": 16, "tone": "linear",
                        "space": space, "half": False, "crop": crop}, decode)
-        src_size = (rgb.shape[1], rgb.shape[0])
+        src_size = (lin16.shape[1], lin16.shape[0])
         icc = icc_profile_for(space)
-        if deep:
-            base = np.asarray(rgb, dtype=np.float32) / 65535.0
-        else:
-            img = Image.fromarray(np.asarray(rgb))
+        # Stays linear light: the geometry and tone stages work on it directly.
+        base = render_kernels.u16_to_float(np.asarray(lin16))
+        linear_input = True
+        del lin16
     else:
         with Image.open(path) as src:
             src = ImageOps.exif_transpose(src)
@@ -251,21 +250,22 @@ def _render_array(path: Path, opts: ExportOptions,
                     ImageCms.ImageCmsProfile(io.BytesIO(icc)), outputMode="RGB")
         else:
             icc = source_icc or icc_profile_for("srgb")
-        if deep:
-            base = np.asarray(img, dtype=np.float32) / 255.0
+        base = render_kernels.u8_to_float(np.asarray(img))
+        linear_input = False
 
     # Resizing first keeps the heavy float passes proportional to the output.
-    # Geometry (crop/straighten) is fractional, so it is unaffected.
-    if deep:
-        base = _scaled_float(base, opts.long_edge)
-    else:
-        base = render_kernels.u8_to_float(np.asarray(_scaled(img, opts.long_edge)))
+    # Geometry (crop/straighten) is fractional, so it is unaffected. Everything
+    # stays float32 until the single rounding in render()/write_png16().
+    base = _scaled_float(base, opts.long_edge)
 
     if adj is None:
         adj = _saved_adjustments(path, src_size)
     adj.setdefault("color_temp", baseline)
     adj["_baseline_temp"] = baseline
+    adj = editor.resolve_edit_version(adj, baseline)
     adj = editor.effective_adjustments(adj)
+    adj["_space"] = space
+    adj["_linear_input"] = linear_input
     adj = editor.lens.attach_meta(path, adj)    # lens profile needs the EXIF
     out = editor.apply_adjustments(base, baseline, adj)
     return np.clip(out, 0.0, 1.0), icc

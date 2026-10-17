@@ -19,6 +19,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image, ImageFilter
 
+import colour
 import tonecurve
 from fastops import for_rows, map_rows, run_parallel
 
@@ -60,7 +61,7 @@ def tone_is_neutral(baseline_temp: float, adj: dict) -> bool:
     return tonecurve.is_identity(adj.get("tone_curve"))
 
 
-def _channel_gains(baseline_temp: float, adj: dict) -> np.ndarray | None:
+def _channel_gains_legacy(baseline_temp: float, adj: dict) -> np.ndarray | None:
     gains = [1.0, 1.0, 1.0]
     temp = float(adj.get("color_temp", baseline_temp))
     if temp > 0 and abs(temp - baseline_temp) > 1:
@@ -82,7 +83,7 @@ def _channel_gains(baseline_temp: float, adj: dict) -> np.ndarray | None:
 
 
 # (key, strength, mask weight at lum)
-def _range_plane(lum: np.ndarray, adj: dict) -> np.ndarray | None:
+def _range_plane_legacy(lum: np.ndarray, adj: dict) -> np.ndarray | None:
     delta = None
 
     def add(term):
@@ -130,13 +131,13 @@ def _affine(strip: np.ndarray, scale, offset=0.0) -> np.ndarray:
     return strip * sc + np.float32(offset)
 
 
-def _tone_rows(strip: np.ndarray, gains, adj: dict, curve) -> np.ndarray:
+def _tone_rows_legacy(strip: np.ndarray, gains, adj: dict, curve) -> np.ndarray:
     img = _affine(strip, gains) if gains is not None else strip.copy()
     np.clip(img, 0.0, 1.0, out=img)
 
     wants_range = any(float(adj.get(k, 0)) for k in ("shadows", "highlights", "blacks", "whites"))
     if wants_range:
-        delta = _range_plane(luminance(img), adj)
+        delta = _range_plane_legacy(luminance(img), adj)
         img += delta[..., None]
 
     contrast = float(adj.get("contrast", 0))
@@ -150,10 +151,147 @@ def _tone_rows(strip: np.ndarray, gains, adj: dict, curve) -> np.ndarray:
     return img
 
 
-def tone_stage(base: np.ndarray, baseline_temp: float, adj: dict) -> np.ndarray:
-    gains = _channel_gains(baseline_temp, adj)
+def tone_stage_legacy(base: np.ndarray, baseline_temp: float, adj: dict) -> np.ndarray:
+    """Edit version 1: the same controls applied to gamma-coded values (kept so old edits look the same)."""
+    gains = _channel_gains_legacy(baseline_temp, adj)
     curve = tonecurve.curve_applier(adj.get("tone_curve"))
-    return map_rows(lambda s: _tone_rows(s, gains, adj, curve), base)
+    return map_rows(lambda s: _tone_rows_legacy(s, gains, adj, curve), base)
+
+
+# ---------------------------------------------------------------------------
+# Tone, edit version 2: light is edited in linear light
+# ---------------------------------------------------------------------------
+# Exposure, white balance, Shadows, Highlights, Whites and Blacks are applied to
+# linear-light values (decoded with the output space's exact transfer function),
+# which is what makes +1 EV exactly twice the light. Contrast and the tone curve
+# are display-referred in Camera Raw too, so they run on the re-encoded values.
+# See docs/COLOUR-PIPELINE.md for every constant and where it differs from Lightroom.
+
+RANGE_STOPS = {"shadows": 1.5, "highlights": 1.5, "whites": 0.75}
+BLACKS_OFFSET = 0.012          # linear light added at Blacks = +100 to the darkest tones (encoded 0.10 in sRGB)
+
+
+def wb_exposure_gains(baseline_temp: float, adj: dict) -> np.ndarray | None:
+    """Linear-light RGB gains for temperature, tint and exposure (None when all are neutral)."""
+    gains = np.ones(3)
+    temp = float(adj.get("color_temp", baseline_temp))
+    if temp > 0 and abs(temp - baseline_temp) > 1:
+        gains = gains * colour.temperature_gains(temp, baseline_temp)
+    tint = float(adj.get("tint", 0))
+    if tint:
+        gains = gains * colour.tint_gains(tint)
+    exposure = float(adj.get("exposure", 0))
+    if exposure:
+        gains = gains * 2.0 ** exposure
+    if np.all(gains == 1.0):
+        return None
+    return gains.astype(F32)
+
+
+def _smooth_mask(e: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    """0 at ``e <= lo`` rising to 1 at ``hi`` (squared ramp; the old masks' shape), or falling when hi < lo."""
+    m = np.clip((e - F32(lo)) / F32(hi - lo), 0.0, 1.0)
+    m *= m
+    return m
+
+
+def lightness(lin: np.ndarray) -> np.ndarray:
+    """Display-referred lightness 0..1 the range masks are drawn on: sqrt of the linear luminance.
+
+    A gamma-2 stand-in for the output curve (within a few percent of sRGB's), one cheap
+    pass, and the same for every output space so the sliders mean the same thing everywhere.
+    """
+    y = np.clip(luminance(lin), 0.0, 1.0)
+    return cv2.sqrt(y) if cv2 is not None and y.flags.c_contiguous else np.sqrt(y)
+
+
+def range_adjust(lin: np.ndarray, adj: dict, space: str) -> np.ndarray:
+    """
+    Shadows, Highlights, Whites and Blacks on linear light (``lin`` may be modified).
+
+    Shadows, Highlights and Whites are a number of stops scaled by the slider and
+    by how much of the pixel's display-referred lightness falls in their range;
+    all three channels get the same factor, so hue is kept. Blacks adds or removes
+    a little light, weighted to the darkest tones (Blacks -100 crushes them to 0,
+    +100 lifts them), because a gain cannot move black.
+    """
+    sh, hi, wh, bl = (float(adj.get(k, 0)) for k in ("shadows", "highlights", "whites", "blacks"))
+    if not (sh or hi or wh or bl):
+        return lin
+    e = lightness(lin)
+    stops = None
+
+    def add(term):
+        nonlocal stops
+        if stops is None:
+            stops = term
+        else:
+            stops += term
+
+    if sh:
+        add(_smooth_mask(e, 0.55, 0.0) * F32(sh / 100.0 * RANGE_STOPS["shadows"]))
+    if hi:
+        add(_smooth_mask(e, 0.45, 1.0) * F32(hi / 100.0 * RANGE_STOPS["highlights"]))
+    if wh:
+        add(_smooth_mask(e, 0.70, 1.0) * F32(wh / 100.0 * RANGE_STOPS["whites"]))
+    if stops is not None:
+        stops *= F32(np.log(2.0))
+        gain = cv2.exp(stops) if cv2 is not None and stops.flags.c_contiguous else np.exp(stops)
+        lin = lin * gain[..., None]
+    if bl:
+        lift = _smooth_mask(e, 0.35, 0.0) * F32(bl / 100.0 * BLACKS_OFFSET)
+        lin = lin + lift[..., None]
+    return lin
+
+
+def tone_is_linear_neutral(baseline_temp: float, adj: dict) -> bool:
+    """True when nothing in the adjustment needs linear light (Contrast and curve may still apply)."""
+    return (wb_exposure_gains(baseline_temp, adj) is None
+            and not any(float(adj.get(k, 0)) for k in ("shadows", "highlights", "whites", "blacks")))
+
+
+def _tone_rows(strip: np.ndarray, gains, adj: dict, applier, space: str, linear: bool,
+               lin_strip: np.ndarray | None = None) -> np.ndarray:
+    if linear:
+        lin = lin_strip if lin_strip is not None else colour.to_linear(strip, space)
+        if gains is not None:
+            lin = _affine(lin, gains)
+        lin = range_adjust(lin, adj, space)
+        img = colour.to_encoded(lin, space)
+    else:
+        img = np.clip(strip, 0.0, 1.0).astype(F32, copy=False)      # a new array
+    if applier is not None:
+        img = np.ascontiguousarray(img)
+        applier(img)
+    return img
+
+
+def tone_stage(base: np.ndarray, baseline_temp: float, adj: dict, linear: np.ndarray | None = None) -> np.ndarray:
+    """
+    White balance, exposure, tonal ranges, contrast and curve on an *encoded* image.
+
+    ``linear`` may carry ``colour.to_linear(base)`` when the caller has it cached
+    (a slider drag then costs one re-encode instead of a decode and an encode).
+    """
+    if int(adj.get("edit_version", 2) or 2) < 2:
+        return tone_stage_legacy(base, baseline_temp, adj)
+    space = colour.normalise_space(adj.get("_space"))
+    gains = wb_exposure_gains(baseline_temp, adj)
+    applier = tonecurve.curve_applier(adj.get("tone_curve"), adj.get("contrast", 0))
+    is_linear = not tone_is_linear_neutral(baseline_temp, adj)
+    if linear is not None and is_linear:
+        return map_rows(lambda s, l: _tone_rows(s, gains, adj, applier, space, True, l), base, linear)
+    return map_rows(lambda s: _tone_rows(s, gains, adj, applier, space, is_linear), base)
+
+
+def tone_stage_from_linear(lin: np.ndarray, baseline_temp: float, adj: dict) -> np.ndarray:
+    """``tone_stage`` for an image that is already linear light (edit version 2 only); returns encoded."""
+    space = colour.normalise_space(adj.get("_space"))
+    if tone_is_linear_neutral(baseline_temp, adj):
+        return tone_stage(colour.to_encoded(lin, space), baseline_temp, adj)
+    gains = wb_exposure_gains(baseline_temp, adj)
+    applier = tonecurve.curve_applier(adj.get("tone_curve"), adj.get("contrast", 0))
+    return map_rows(lambda l: _tone_rows(l, gains, adj, applier, space, True, l), lin)
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +502,12 @@ def detail_stage(img: np.ndarray, adj: dict, blur_fn=None) -> np.ndarray:
 def u8_to_float(arr: np.ndarray) -> np.ndarray:
     """uint8 image -> float32 0..1 (what ``asarray(float32) / 255`` did)."""
     k = F32(1.0 / 255.0)
+    return map_rows(lambda s: s.astype(F32) * k, arr, dtype=F32)
+
+
+def u16_to_float(arr: np.ndarray) -> np.ndarray:
+    """uint16 image -> float32 0..1."""
+    k = F32(1.0 / 65535.0)
     return map_rows(lambda s: s.astype(F32) * k, arr, dtype=F32)
 
 

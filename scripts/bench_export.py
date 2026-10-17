@@ -28,8 +28,8 @@ from exporter import ExportOptions  # noqa: E402
 DEFAULT_RAW = Path.home() / ".cache" / "photo-room-test-raw" / "IMG_9406.CR2"
 
 PROFILES = {
-    "light": {"exposure": 0.3, "contrast": 15, "saturation": 10, "color_temp": 5800},
-    "heavy": {"exposure": 0.3, "contrast": 15, "shadows": 20, "highlights": -20, "saturation": 10,
+    "light": {"edit_version": 2, "exposure": 0.3, "contrast": 15, "saturation": 10, "color_temp": 5800},
+    "heavy": {"edit_version": 2, "exposure": 0.3, "contrast": 15, "shadows": 20, "highlights": -20, "saturation": 10,
               "vibrance": 10, "clarity": 20, "texture": 15, "sharpness": 30, "dehaze": 10,
               "hue_red": 10, "sat_blue": -10, "grade_shadow_sat": 20, "grade_shadow_hue": 240,
               "tone_curve": {"points": {"rgb": [[0, 0], [128, 140], [255, 255]]}}},
