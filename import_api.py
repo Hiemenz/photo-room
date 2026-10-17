@@ -224,3 +224,36 @@ def build_smart_previews():
         return _error(str(exc))
     queue_smart_previews(paths)
     return jsonify({"queued": len(paths)})
+
+
+# ---- card watcher status ---------------------------------------------------
+# `photo-room watch-cards` runs as its own process and writes progress to a JSON
+# file in the library; this endpoint relays it to the open editor. When an
+# import finishes, the library is rescanned once so the change feed delivers
+# the new photos to every open Library grid.
+_scanned_card_ids: set[str] = set()
+CARD_STALE_SECONDS = 30
+_CARD_ACTIVE = ("detected", "scanning", "importing", "verifying", "deleting", "ejecting")
+
+
+@bp.route("/api/cards/status")
+def card_status():
+    import json
+    import time
+
+    import cardwatch
+
+    ed = _ed()
+    try:
+        data = json.loads((ed.LIBRARY_ROOT / cardwatch.STATUS_NAME).read_text())
+    except (OSError, ValueError):
+        return jsonify({"state": "idle"})
+    if not isinstance(data, dict) or "id" not in data:
+        return jsonify({"state": "idle"})
+    if data.get("state") in _CARD_ACTIVE and time.time() - data.get("updated", 0) > CARD_STALE_SECONDS:
+        data["state"] = "stale"
+        data["message"] = "The card watcher stopped responding; check `photo-room watch-cards`."
+    if data.get("state") in ("done", "done_with_errors") and data["id"] not in _scanned_card_ids:
+        _scanned_card_ids.add(data["id"])
+        ed._idx(fresh=False).scan()
+    return jsonify(data)

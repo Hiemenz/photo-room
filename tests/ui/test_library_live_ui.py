@@ -278,3 +278,23 @@ def test_import_can_be_cancelled(page):
     page.locator("#import-cancel").click()
     done(page)
     assert not (editor.LIBRARY_ROOT / "SLOW_0002.dng").exists()
+
+
+def test_card_watcher_progress_panel_shows_progress_and_the_outcome(page):
+    import time
+
+    import cardwatch
+    status = editor.LIBRARY_ROOT / cardwatch.STATUS_NAME
+    assert page.locator("#card-panel").is_hidden()
+    status.write_text(json.dumps({"id": "c1", "state": "importing", "label": "EOS", "total": 10, "done": 4,
+                                  "copied": 3, "duplicates": 1, "failed": 0, "name": "IMG_4.CR2",
+                                  "updated": time.time()}))
+    page.wait_for_selector("#card-panel:not([hidden])", timeout=6000)
+    assert "Importing from card: EOS" in page.locator("#card-title").inner_text()
+    assert page.locator("#card-count").inner_text() == "4 of 10"
+    status.write_text(json.dumps({"id": "c1", "state": "done", "label": "EOS", "updated": time.time(),
+                                  "message": "3 imported. Safe to remove the card."}))
+    page.wait_for_function("document.getElementById('card-msg').textContent.includes('Safe to remove')", timeout=6000)
+    page.locator("#card-close").click()
+    assert page.locator("#card-panel").is_hidden()
+    assert page.errors == []

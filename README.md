@@ -677,6 +677,21 @@ renamed and failed counts. Re-running an ingest copies nothing new.
 editor and upload from there. A shoot generally contains frames you
 would not want published.
 
+## Automatic card import
+
+```bash
+uv run photo-room watch-cards ~/Pictures/library      # import, verify and safely eject cards as they are inserted
+```
+
+Detects a mounted card (a volume with `DCIM`), copies new raws, JPEGs and videos into date folders with the
+same checksum-verified, never-overwrite, content-deduplicated copy as `ingest`, re-checks every file
+against the card, then unmounts and powers the card off (`udisksctl` / `umount` on Linux,
+`diskutil eject` on macOS) and sends a desktop notification. It never ejects after a failure, an
+interruption or a busy card. `--no-eject` leaves the card mounted; `--delete-after-import` (off by
+default, with `--delete-dry-run`) removes only individually verified photos from the card. A progress
+panel appears in the editor. Systemd, launchd and udev examples and the caveats are in
+[docs/CARD-IMPORT.md](docs/CARD-IMPORT.md).
+
 ## Culling a shoot
 
 ```bash

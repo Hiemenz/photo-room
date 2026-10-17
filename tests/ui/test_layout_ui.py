@@ -81,6 +81,9 @@ def test_accordion_folds_remembers_and_solo_mode(page_at):
     assert page.locator("#s-exposure").is_visible()
     tone.click()
     assert not page.locator("#s-exposure").is_visible()
+    # The <details> toggle event (which saves the state) fires after the click returns;
+    # reloading before it ran made this test flaky on CI.
+    page.wait_for_function("accState().tone === false")
     page.reload()
     page.wait_for_selector("#file-list .file")
     assert page.evaluate("document.getElementById('acc-tone').open") is False, "fold state is remembered"

@@ -105,6 +105,18 @@ details.panel[open] > summary { color: var(--text); }
 #import-log { max-height: 130px; overflow-y: auto; font-size: 11px; color: var(--muted); line-height: 1.5; }
 #import-log .bad { color: var(--danger); }
 #import-log .dup { color: var(--muted); }
+#card-panel {
+  position: fixed; right: 14px; bottom: 14px; z-index: 50; width: min(420px, calc(100vw - 28px));
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 12px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.5); display: grid; gap: 6px; font-size: 12px;
+}
+#card-panel[hidden] { display: none; }
+#card-panel .ip-head { display: flex; gap: 8px; align-items: center; }
+#card-panel .ip-head #card-count { color: var(--muted); flex: 1; }
+#card-panel button { padding: 2px 9px; font-size: 11px; }
+#card-panel.bad { border-color: var(--danger); }
+#card-bar { width: 100%; height: 8px; accent-color: var(--accent); }
+#card-msg { color: var(--muted); line-height: 1.5; }
 #loupe { position: absolute; inset: 0; z-index: 9; background: rgba(8,8,8,.94); display: flex; flex-direction: column; align-items: center; justify-content: center; top: 0; }
 #loupe[hidden] { display: none; }
 #loupe img { max-width: 96%; max-height: calc(100% - 40px); object-fit: contain; }
