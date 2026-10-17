@@ -105,10 +105,14 @@ so every edit records which maths it was made with:
   reports the mean difference from the old look in 8-bit levels, before and after, and which
   sliders were re-fitted.
 * How close can it get? The old and new neutral renders differ by a curve (BT.709 vs sRGB), not a
-  gain, so sliders can only approximate it. Measured on the real CC0 CR2 (best of 5 edits): mean
-  difference from the old look 1.8-7.3 of 255 levels after the upgrade, against 10-39 for copying
-  the numbers across unchanged (`tests/test_real_raw_colour.py`, `tests/test_linear_light.py`).
-  Heavy edits with hard clipping in the old maths and large temperature moves are the worst cases.
+  gain, so sliders can only approximate it. Measured on the real CC0 CR2 at preview size with five
+  typical old edits (exposure only; exposure + contrast; exposure + shadows + highlights + contrast;
+  exposure + temperature + tint + saturation; contrast only): mean difference from the old look
+  1.8-7.3 of 255 levels after the upgrade (99th percentile 13-26), against 10-39 for copying the
+  numbers across unchanged. The re-fit can move sliders a lot: an exposure-only edit of +0.8
+  became Exposure +1.13 with Contrast +68, because the old gamma-space gain clipped highlights
+  hard and contrast is the closest new control. Heavy edits, hard clipping in the old maths and
+  large temperature moves are the worst cases; the old look is one History step away.
 * Presets saved before versions are re-mapped analytically (no render) when applied to a current
   photo, and refused with an "upgrade first" message for a photo still on the old maths. Batch apply
   to a virtual copy with an old edit re-maps the copy first. The style model's learned exposure
@@ -120,10 +124,10 @@ so every edit records which maths it was made with:
 
 ## Precision notes and known limits
 
-* Straighten uses `cv2.warpAffine` (bicubic) on float32. OpenCV places samples on a 1/32-pixel
-  grid, so a straightened ramp reaches about a quarter of its distinct output values (968 of
-  4056 columns at 1°), well over the 256 of the old `uint8` rotation; the values themselves are
-  within 2.5 sixteen-bit codes of a float64 reference (`test_straighten_keeps_16_bit_precision`).
+* Straighten uses `cv2.warpAffine` (bicubic) on float32. A 4096-pixel ramp straightened by 1°
+  keeps a distinct 16-bit value in every column (4045 of 4045; the old `uint8` rotation left 256),
+  and the values are within 2.5 sixteen-bit codes of a float64 reference
+  (`test_straighten_keeps_16_bit_precision`).
 * The exporter hands the 16-bit linear decode straight to the pipeline and resizes it in linear
   light (gamma-correct downscaling). Edits needing display-coded pixels (spots, lens corrections,
   edit version 1) get an encoded copy instead.
