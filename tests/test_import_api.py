@@ -141,3 +141,32 @@ def test_smart_preview_endpoint(client, lib):
 def test_clean_name():
     assert import_api.clean_name("a/b\\c.CR2") == "c.CR2"
     assert import_api.clean_name("") is None and import_api.clean_name(".x.CR2") is None
+
+
+def test_card_status_endpoint_relays_watcher_progress(client, lib):
+    import json
+    import time
+
+    import cardwatch
+    assert client.get("/api/cards/status").get_json() == {"state": "idle"}
+    (lib / cardwatch.STATUS_NAME).write_text(json.dumps(
+        {"id": "a1", "state": "importing", "total": 10, "done": 4, "updated": time.time()}))
+    assert client.get("/api/cards/status").get_json()["done"] == 4
+    (lib / cardwatch.STATUS_NAME).write_text(json.dumps(
+        {"id": "a1", "state": "importing", "updated": time.time() - 999}))
+    assert client.get("/api/cards/status").get_json()["state"] == "stale"
+
+
+def test_card_status_rescans_the_library_once_when_a_card_finishes(client, lib, monkeypatch):
+    import json
+    import time
+
+    import cardwatch
+    (lib / "A.DNG").write_bytes(b"a")
+    scans = []
+    idx = editor._idx(fresh=False)
+    monkeypatch.setattr(idx, "scan", lambda: scans.append(1) or {})
+    (lib / cardwatch.STATUS_NAME).write_text(json.dumps(
+        {"id": "unique-finished", "state": "done", "updated": time.time()}))
+    client.get("/api/cards/status"); client.get("/api/cards/status")
+    assert len(scans) == 1

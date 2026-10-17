@@ -61,7 +61,8 @@ Develop panel helpers from the UX review (proposals 3, 4 and 7). The backend is 
 - [x] 256-bin histogram in the live preview; the tile viewer replaces the 1400 px preview whenever you zoom past Fit
 - [x] Error toasts that say what failed and what to do; Export dialog scrolls inside short windows
 - [x] Live Library grid on the change feed (SSE), Quick look (Space) on smart previews, in-app import (button, files, folders, drag and drop) with checksum-verified no-overwrite copy and content-hash dedupe. See README "Library module"
-- [ ] Not wired yet: navigator mini-view while zoomed, XMP sidecars travelling with imported raws, importing straight from a mounted card (the CLI `ingest` still does that), an Import dialog with destination and rename options, smart previews feeding the Develop render itself (they are 8-bit 2048 px decodes; Develop still decodes linear 16-bit)
+- [x] Card watcher: `photo-room watch-cards` detects an inserted card, imports it with the checksum-verified no-overwrite copy and library-wide dedupe, re-verifies every file, then safely ejects (udisksctl / umount / diskutil); optional verified delete-from-card; desktop notifications, lock file, editor progress panel. See [CARD-IMPORT.md](CARD-IMPORT.md). Tested with fake cards and fake eject commands only, not real hardware
+- [ ] Not wired yet: navigator mini-view while zoomed, XMP sidecars travelling with imported raws, importing a card from inside the editor (the editor only shows `watch-cards` progress; convert/auto-edit on card import is still `ingest`), an Import dialog with destination and rename options, smart previews feeding the Develop render itself (they are 8-bit 2048 px decodes; Develop still decodes linear 16-bit)
 
 ## Not planned
 AI masking, AI denoise, generative remove, Print/Book/Slideshow/Web modules, tethered capture, cloud sync, mobile apps.

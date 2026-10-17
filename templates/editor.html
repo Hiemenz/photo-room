@@ -425,6 +425,11 @@
   </div>
 </aside>
 
+<div id="card-panel" hidden role="status" aria-live="polite">
+    <div class="ip-head"><b id="card-title">Card</b><span id="card-count"></span><button id="card-close" type="button" hidden>Close</button></div>
+    <progress id="card-bar" max="1" value="0"></progress>
+    <div id="card-msg"></div>
+  </div>
 <div id="toasts" aria-live="assertive" aria-atomic="false"></div>
 <dialog id="export-dialog">
   <h2>Export</h2>
@@ -552,6 +557,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/develop-helpers.js') }}"></script>
 <script src="{{ asset('js/library-live.js') }}"></script>
 <script src="{{ asset('js/import.js') }}"></script>
+<script src="{{ asset('js/card-watch.js') }}"></script>
 <script src="{{ asset('js/init.js') }}"></script>
 <script src="{{ asset('js/export-dialog.js') }}"></script>
 </body>
