@@ -32,6 +32,7 @@
 <link rel="stylesheet" href="{{ asset('css/dialogs.css') }}">
 <link rel="stylesheet" href="{{ asset('css/cull.css') }}">
 <link rel="stylesheet" href="{{ asset('css/looks.css') }}">
+<link rel="stylesheet" href="{{ asset('css/ui.css') }}">
 </head>
 <body>
 
@@ -41,6 +42,7 @@
 </div>
 
 <div id="modtools">
+  <button id="panel-toggle" title="Hide or show the adjustments panel (])" aria-pressed="true">Panel</button>
   <button id="theme-toggle" title="Switch between the dark and light theme">Light</button>
   <button id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
 </div>
@@ -89,12 +91,26 @@
       <div id="col-list"></div>
     </aside>
     <div id="lib-grid"></div>
+    <div id="lib-drop" hidden><div>Drop photos or a folder to import them<small>Copied with a checksum check; nothing is overwritten and duplicates are skipped</small></div></div>
+  </div>
+  <div id="import-panel" hidden role="status" aria-live="polite">
+    <div class="ip-head"><b id="import-title">Importing</b><span id="import-count"></span>
+      <button id="import-cancel" type="button">Cancel</button><button id="import-close" type="button" hidden>Close</button></div>
+    <progress id="import-bar" max="1" value="0"></progress>
+    <div id="import-log"></div>
+  </div>
+  <div id="loupe" hidden role="dialog" aria-label="Quick look">
+    <img id="loupe-img" alt=""><div id="loupe-info"></div>
   </div>
   <div id="lib-foot">
     <span id="lib-count"></span>
     <span id="thumb-progress" hidden title="Building thumbnails in the background">
       <span id="thumb-label">Thumbnails 0/0</span><progress id="thumb-bar" max="1" value="0"></progress>
     </span>
+    <button id="lib-import" title="Copy photos or a folder into the library (or drop them on the grid)">Import&hellip;</button>
+    <button id="lib-import-folder" title="Pick a folder to copy into the library">Import folder&hellip;</button>
+    <input type="file" id="import-files" multiple hidden>
+    <input type="file" id="import-folder" webkitdirectory multiple hidden>
     <button id="lib-vc" title="Virtual copy of the selected photo (V)">Virtual copy</button>
     <button id="lib-vc-del" title="Delete the selected virtual copies; the raw is never touched">Delete copy</button>
     <select id="lib-addto" title="Add the selection to a collection"><option value="">Add to collection…</option></select>
@@ -250,6 +266,16 @@
   <img id="preview" hidden alt="">
   <div id="spinner">rendering…</div>
   <div id="compare-badge">BEFORE</div>
+  <div id="zoom-layer" hidden><div id="zoom-pane"></div></div>
+  <img id="clip-overlay" alt="" hidden>
+  <div id="zoom-bar" hidden role="toolbar" aria-label="Zoom">
+    <button data-zoom="fit" class="active" title="Fit the whole photo (Z toggles Fit and 100%)">Fit</button>
+    <button data-zoom="fill" title="Fill the view">Fill</button>
+    <button data-zoom="1" title="100%: one photo pixel per screen pixel">100%</button>
+    <button data-zoom="2" title="200%">200%</button>
+    <span id="zoom-readout">Fit</span>
+  </div>
+  <div id="wb-hud" hidden></div>
   <div id="ba-bar" hidden>
     <button data-ba="off" class="active" title="Edited view (\ toggles Before)">After</button>
     <button data-ba="split" title="Split view: drag the divider">Split</button>
@@ -279,8 +305,11 @@
   <canvas id="histogram" width="560" height="152"></canvas>
   <div id="clip">
     <span id="clip-shadows">shadows 0%</span>
+    <button id="clip-toggle" aria-pressed="false" title="Show clipped shadows (blue) and highlights (red) on the photo (J)">Clipping</button>
     <span id="clip-highlights">highlights 0%</span>
   </div>
+  <div id="clip-detail" hidden></div>
+  <div id="controls-scroll">
   <div id="crop-bar">
     <button id="crop-toggle" disabled>Crop</button>
     <button data-ratio="free" class="active">Free</button>
@@ -383,27 +412,20 @@
     </div>
   </div>
   <div id="sliders"></div>
-  <div id="status"></div>
+  </div>
+  <div id="status" role="status"></div>
   <div id="actions">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">
-      <button id="copy" disabled>Copy settings</button>
-      <button id="paste" disabled>Paste settings</button>
-    </div>
+    <button id="copy" disabled>Copy settings</button>
+    <button id="paste" disabled>Paste settings</button>
     <button id="save" class="primary" disabled>Save adjustments</button>
     <button id="export-open" title="Export… (Ctrl/Cmd+Shift+E)">Export…</button>
     <button id="reset" disabled>Revert to original</button>
     <button id="recover" class="danger" disabled>Recover original raw file</button>
-    <div style="font-size:10px;color:var(--muted);line-height:1.7;margin-top:3px">
-      <kbd>&larr;</kbd> <kbd>&rarr;</kbd> photo &middot;
-      <kbd>\</kbd> hold to compare &middot;
-      <kbd>b</kbd> B&amp;W &middot; <kbd>cmd</kbd>+<kbd>s</kbd> save &middot; <kbd>cmd</kbd>+<kbd>shift</kbd>+<kbd>e</kbd> export<br>
-      <kbd>cmd</kbd>+<kbd>c</kbd> copy &middot; <kbd>cmd</kbd>+<kbd>v</kbd> paste settings<br>
-      <kbd>0</kbd>–<kbd>5</kbd> rate &middot; <kbd>x</kbd> reject &middot;
-      <kbd>o</kbd> show mask
-    </div>
+    <div class="hint-line">Keys: <kbd>?</kbd> all shortcuts &middot; <kbd>]</kbd> hide this panel &middot; <kbd>J</kbd> clipping &middot; <kbd>Z</kbd> zoom</div>
   </div>
 </aside>
 
+<div id="toasts" aria-live="assertive" aria-atomic="false"></div>
 <dialog id="export-dialog">
   <h2>Export</h2>
   <div class="body">
@@ -497,8 +519,10 @@ const M8_CONTROLS = {{ m8_controls | tojson }};
 const M8_TOGGLES = {{ m8_toggles | tojson }};
 const CURVE_PRESETS = {{ curve_presets | tojson }};
 const CURVE_PARAMETRIC = {{ curve_parametric | tojson }};
+const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 </script>
 <script src="{{ asset('js/core.js') }}"></script>
+<script src="{{ asset('js/toast.js') }}"></script>
 <script src="{{ asset('js/develop-basic.js') }}"></script>
 <script src="{{ asset('js/develop-hsl-grading.js') }}"></script>
 <script src="{{ asset('js/develop-transform-lens-spots.js') }}"></script>
@@ -523,6 +547,11 @@ const CURVE_PARAMETRIC = {{ curve_parametric | tojson }};
 <script src="{{ asset('js/compare-survey.js') }}"></script>
 <script src="{{ asset('js/cull.js') }}"></script>
 <script src="{{ asset('js/library-files.js') }}"></script>
+<script src="{{ asset('js/panels.js') }}"></script>
+<script src="{{ asset('js/zoom.js') }}"></script>
+<script src="{{ asset('js/develop-helpers.js') }}"></script>
+<script src="{{ asset('js/library-live.js') }}"></script>
+<script src="{{ asset('js/import.js') }}"></script>
 <script src="{{ asset('js/init.js') }}"></script>
 <script src="{{ asset('js/export-dialog.js') }}"></script>
 </body>

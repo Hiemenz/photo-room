@@ -44,6 +44,7 @@ function drawHistogram(h) {
 function setStatus(msg, isError = false) {
   $("status").textContent = msg;
   $("status").classList.toggle("err", isError);
+  if (isError && msg) toastError(null, msg);
 }
 
 // ---- Preview -------------------------------------------------------------
@@ -154,7 +155,7 @@ async function openFile(path) {
     // Warn before the photographer overwrites work done elsewhere.
     if (data.foreign_editor) {
       const where = data.has_sidecar ? " and has an .xmp sidecar" : "";
-      setStatus(`Edited in ${data.foreign_editor}${where} — saving will replace those settings`, true);
+      setWarning(`Edited in ${data.foreign_editor}${where} — saving will replace those settings`);
     }
 
     const q = data.quality || {};

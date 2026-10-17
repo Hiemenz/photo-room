@@ -35,6 +35,13 @@ const SHORTCUTS = [
     [`${MOD}+Z`, "Undo"], [`${MOD}+Shift+Z`, "Redo"],
     [`${MOD}+C / ${MOD}+V`, "Copy / paste settings"], [`${MOD}+S`, "Save"],
     ["Delete", "Delete the selected mask or spot"], ["Esc", "Leave the current tool"],
+    ["J", "Clipping overlay (shadows blue, highlights red)"],
+    ["Z", "Zoom: toggle Fit and 100%"], ["Wheel / pinch / drag", "Zoom and pan the photo"],
+    ["Double-click", "Zoom to 100% at that point and back"],
+  ]],
+  ["Panels", [
+    ["]", "Hide / show the adjustments panel"], ["[", "Hide / show the photo list"],
+    ["Space (Library)", "Quick look at the highlighted photo"],
   ]],
   ["Output and app", [
     [`${MOD}+Shift+E`, "Export"], ["?", "This list"], ["Shift+T", "Toggle dark / light theme"],

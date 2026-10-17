@@ -59,6 +59,7 @@ from geometry import largest_inscribed_rect as _largest_inscribed_rect
 from tonecurve import apply_tone_curve
 from process import (
     EXIFTOOL_TIMEOUT,
+    RAW_SUFFIXES,
     compute_auto_adjustments,
     detect_foreign_edits,
     edit_target,
@@ -134,6 +135,10 @@ app.register_blueprint(cull_api.bp)
 import looks_api  # noqa: E402  (preset panel, LUT library, match reference look)
 
 app.register_blueprint(looks_api.bp)
+
+import import_api  # noqa: E402  (drag-and-drop / button import, smart previews)
+
+app.register_blueprint(import_api.bp)
 
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
@@ -230,7 +235,7 @@ GLOBAL_CONTROLS = [
     {"key": "strength", "label": "Edit strength", "min": 0, "max": 150, "step": 1, "default": 100},
 ]
 
-HISTOGRAM_BINS = 64
+HISTOGRAM_BINS = 256     # one bin per 8-bit level, like the /api/develop/histogram route
 
 # HSL / B&W mixer and colour grading sliders (see colormix.py). Kept apart from
 # CONTROLS so the main slider list stays short; the UI builds its own panel.
@@ -615,8 +620,8 @@ def apply_adjustments(
     return np.clip(img, 0.0, 1.0)
 
 
-# A 64-bin histogram drawn 280px wide is indistinguishable whether it counts
-# every pixel or one in four, and this runs on every slider move.
+# The histogram drawn 280px wide is indistinguishable whether it counts every
+# pixel or one in four, and this runs on every slider move.
 HISTOGRAM_STRIDE = 2
 
 
@@ -1400,6 +1405,7 @@ def index():
         curve_presets=tonecurve.PRESETS,
         curve_parametric=[{"key": k, "label": k.capitalize()} for k in ("highlights", "lights", "darks", "shadows")],
         root=str(LIBRARY_ROOT),
+        raw_suffixes=sorted(RAW_SUFFIXES),
         token=app.config["PHOTOROOM_TOKEN"],
     )
 

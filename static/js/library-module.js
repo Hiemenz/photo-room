@@ -50,6 +50,7 @@ async function libLoad(reset) {
   if (gen !== libState.gen) return;                       // a newer query superseded this one
   if (data.error) return setStatus(data.error, true);
   libState.total = data.total; libState.libraryTotal = data.library_total;
+  if (reset || libState.seq === undefined) libState.seq = data.seq;
   if (data.facets) {
     fillSelect("lf-keyword", data.facets.keywords.map(k => k.keyword), "Any keyword");
     fillSelect("lf-camera", data.facets.cameras, "Any camera");

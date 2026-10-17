@@ -32,12 +32,14 @@ CSS (`static/css/`, in cascade order)
 | `library.css` | module picker, Library grid, Compare/Survey, virtual copies |
 | `history.css` | History / snapshots, before-after |
 | `dialogs.css` | Export dialog |
+| `ui.css` | panel hiding, accordion, toasts, zoom bar and tile pane, clipping overlay, WB tools, import and Quick look |
 
 JS (`static/js/`, in load order)
 
 | File | Owns |
 | --- | --- |
 | `core.js` | `$`, shared state (`current`, `values`, ...), `ALL_CONTROLS` |
+| `toast.js` | toasts and plain-language error wording (`toast`, `toastError`, `setWarning`) |
 | `develop-basic.js` | slider building (basic/presence/detail panels) |
 | `develop-hsl-grading.js` | colour mixer and grading |
 | `develop-transform-lens-spots.js` | transform, lens corrections, spot removal |
@@ -60,6 +62,11 @@ JS (`static/js/`, in load order)
 | `collections.js` | collections, virtual copies |
 | `compare-survey.js` | Compare and Survey |
 | `library-files.js` | file list loading |
+| `panels.js` | hide/show side panels (`]` `[`), accordion sections, remembered layout (`localStorage`) |
+| `zoom.js` | Fit / Fill / 100% / 200%, wheel, pinch, pan, tile pane (wraps `openFile` and `schedulePreview`) |
+| `develop-helpers.js` | Auto tone, Auto WB, WB presets, eyedropper, clipping overlay (J) |
+| `library-live.js` | change-feed (SSE) updates of the grid, Quick look and smart previews |
+| `import.js` | Import button, folder picker, drag and drop, progress panel |
 | `init.js` | startup calls (keep last of the app scripts) |
 | `export-dialog.js` | Export dialog (self-contained IIFE) |
 

@@ -134,7 +134,12 @@ kbd {
 #controls {
   width: 280px; flex-shrink: 0; background: var(--panel);
   border-left: 1px solid var(--line); display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden;
 }
+/* Everything between the histogram and the buttons scrolls, so the sliders
+   keep their height on a short laptop screen instead of being squeezed out. */
+#controls-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+#controls > canvas, #controls > #clip, #controls > #status, #controls > #actions { flex: none; }
 #histogram {
   width: 100%; height: 76px; display: block;
   background: var(--scope); border-bottom: 1px solid var(--line);
@@ -183,7 +188,7 @@ details.panel > summary { cursor: pointer; font-weight: 600; user-select: none; 
 .wheelrow .wheelsliders { flex: 1; min-width: 0; }
 .wheelrow .ctrl { margin-top: 6px; }
 .wheelname { font-size: 11px; color: var(--muted); margin-top: 16px; text-transform: uppercase; letter-spacing: .06em; }
-#sliders { flex: 1; overflow-y: auto; padding: 6px 18px 18px; }
+#sliders { flex: none; padding: 6px 18px 18px; }
 
 #upgrade-banner { margin-top: 8px; padding: 8px 10px; border-radius: 6px; font-size: 11px;
   border: 1px solid var(--accent, #c9a227); display: grid; gap: 6px; }
