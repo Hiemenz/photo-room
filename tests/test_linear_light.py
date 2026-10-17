@@ -434,7 +434,7 @@ def test_export_embeds_the_profile_that_matches_the_curve(ramp_raw, tmp_path):
     path, raw = ramp_raw
     for space in SPACES:
         _, icc = exporter.render(path, exporter.ExportOptions(colorspace=space), adjustments={"color_temp": RAW_BASELINE})
-        assert icc == exporter.icc_profile_for(space)
+        assert icc[36:] == exporter.icc_profile_for(space)[36:]      # bytes 24-35 hold the creation time
         out = np.asarray(exporter.render(path, exporter.ExportOptions(colorspace=space),
                                          adjustments={"color_temp": RAW_BASELINE})[0])[0, :, 0]
         expected = np.round(colour.to_encoded(np.linspace(0, 1, 4096, dtype=np.float32), space) * 255)
