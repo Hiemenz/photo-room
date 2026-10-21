@@ -60,8 +60,6 @@ you can run on your Mac with a real card. Companion to
 
 - The **Noise reduction** slider has no effect on pixels, preview or export
   (details in LIGHTROOM-PARITY.md, Finding 1).
-- `photo-room ingest cards` and `ingest watch` only look in `/Volumes`; on
-  Linux use `ingest run <mount>` or `photo-room watch-cards`.
 - JPEG, HEIC and video files copied from a card by `watch-cards` are not listed
   in the Library.
 - Export is JPEG or PNG only; "Keep metadata" is all or nothing.

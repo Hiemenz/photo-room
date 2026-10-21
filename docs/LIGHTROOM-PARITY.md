@@ -43,13 +43,9 @@ macOS and nothing was opened in Lightroom; see [KNOWN-LIMITS.md](KNOWN-LIMITS.md
    denoise when it opens the same sidecar, so the number is only a note to
    Lightroom. `tests/test_noise_reduction.py` checks the control and the XMP
    tag, not any pixel effect.
-2. **`photo-room ingest cards` and `ingest watch` only work on macOS.**
-   `ingest.list_volumes()` scans `/Volumes` and nothing else. On Linux
-   `ingest cards` prints "No volumes mounted" with a card in the reader.
-   `ingest run <path>` works (the README quick start uses it) and
-   `photo-room watch-cards` (`cardwatch.py`, reads `/proc/mounts`) is the
-   cross-platform route, but the README's Card ingest section documents only
-   `/Volumes/...` paths.
+2. **`photo-room ingest cards` and `ingest watch` scanned only `/Volumes`.** Fixed: they now
+   scan `/Volumes` on macOS and `/media/$USER`, `/run/media/$USER` and `/mnt` on Linux
+   (`ingest.volume_roots()`), like `watch-cards`.
 3. **Card import brings in files the Library cannot show.** `cardwatch.py`
    imports raws, JPEG/HEIC and video by default (`PHOTO_SUFFIXES`,
    `VIDEO_SUFFIXES`); `libindex.RAW_SUFFIXES` lists raws and DNGs only. A
