@@ -382,6 +382,7 @@ def test_save_then_read_round_trips(fake_exiftool):
     assert saved.pop("monochrome") is False
     assert saved.pop("edit_version") == editor.EDIT_VERSION       # stamped by the save
     assert saved.pop("luminance_nr") == pytest.approx(0.0)
+    assert saved.pop("color_nr") == pytest.approx(0.0)
     # Geometry round-trips alongside the sliders but is not part of this
     # comparison; an uncropped photo reports no crop and a zero angle.
     assert saved.pop("straighten") == pytest.approx(0.0)

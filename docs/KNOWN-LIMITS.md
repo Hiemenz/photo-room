@@ -58,8 +58,6 @@ you can run on your Mac with a real card. Companion to
 
 ## Known defects (not unverified; confirmed in code)
 
-- The **Noise reduction** slider has no effect on pixels, preview or export
-  (details in LIGHTROOM-PARITY.md, Finding 1).
 - `photo-room ingest cards` and `ingest watch` only look in `/Volumes`; on
   Linux use `ingest run <mount>` or `photo-room watch-cards`.
 - JPEG, HEIC and video files copied from a card by `watch-cards` are not listed
@@ -125,8 +123,8 @@ first). Tick each item and write down anything odd, with the time it took.
 - [ ] Crop (`r`) + Straighten + Transform, Upright Auto.
 - [ ] Masks: graduated, radial, brush; toggle overlay `o`.
 - [ ] Spot removal on a dust speck.
-- [ ] Noise reduction slider on a high-ISO frame: expect NO visible change
-      (known defect). Record that.
+- [ ] Noise reduction and Colour noise reduction on a high-ISO frame: grain and colour speckle
+      shrink at 100% zoom and in an export, edges stay sharp. Record the drag lag.
 - [ ] Trackpad pinch and Cmd shortcuts (`Cmd+Z`, `Cmd+S`, `Cmd+Shift+E`) work.
 - [ ] Safari and Firefox open the page and the sliders respond (only Chromium
       is tested).

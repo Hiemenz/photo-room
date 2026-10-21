@@ -221,11 +221,11 @@ CONTROLS = [
     {"key": "dehaze",     "label": "Dehaze",     "min": -100, "max": 100,   "step": 1,    "default": 0},
     {"key": "sharpness",  "label": "Sharpness",  "min": 0,    "max": 150,   "step": 1,    "default": 0},
     {"key": "straighten", "label": "Straighten",  "min": -15.0, "max": 15.0, "step": 0.1,  "default": 0.0},
-    # Not shown in the preview, and deliberately so: the preview is a
-    # half-size render, and downsampling already hides the noise this
-    # removes. Previewing it there would misrepresent the full-resolution
-    # result in both directions.
+    # Noise reduction (render_kernels.denoise_stage) runs in the preview, the 100% tiles and the
+    # export. Its radii scale with the frame size, so a small preview shows the same amount of
+    # smoothing the full-size export does.
     {"key": "luminance_nr", "label": "Noise reduction", "min": 0, "max": 100, "step": 1, "default": 0},
+    {"key": "color_nr", "label": "Colour noise reduction", "min": 0, "max": 100, "step": 1, "default": 0},
 ]
 
 # Applied on top of the per-slider values rather than alongside them: strength
@@ -396,7 +396,8 @@ def _apply_detail(img: np.ndarray, adj: dict) -> np.ndarray:
     most expensive thing in the preview path. The maths lives in
     ``render_kernels.detail_stage`` (row strips, all cores).
     """
-    return render_kernels.detail_stage(img, adj)
+    # Denoise first so sharpening and clarity do not amplify the noise.
+    return render_kernels.detail_stage(render_kernels.denoise_stage(img, adj), adj)
 
 
 class StaleRender(Exception):
@@ -733,7 +734,7 @@ def effective_adjustments(adj: dict) -> dict:
             continue
         # Geometry is a framing decision, not an intensity — scaling it by
         # edit strength would slide the crop around as the slider moves.
-        if key in ("straighten", "luminance_nr"):
+        if key in ("straighten", "luminance_nr", "color_nr"):
             continue
         # Temperature scales from the camera's own white balance, not from the
         # generic 5500K default, or reducing strength would tint the photo.
@@ -855,6 +856,7 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
         f"-XMP-crs:CropRight={float((adj.get('crop') or {}).get('right', 1.0)):.5f}",
         f"-XMP-crs:CropBottom={float((adj.get('crop') or {}).get('bottom', 1.0)):.5f}",
         f"-XMP-crs:LuminanceSmoothing={int(adj.get('luminance_nr', 0))}",
+        f"-XMP-crs:ColorNoiseReduction={int(adj.get('color_nr', 0))}",
         f"-XMP-crs:ConvertToGrayscale={'True' if adj.get('monochrome') else 'False'}",
     ] + (colormix.xmp_arguments(adj) + tonecurve.xmp_arguments(adj.get("tone_curve"))
          + retouch.xmp_arguments(adj, adj.get("_frame")) + _mask_arguments(adj)
@@ -1085,10 +1087,11 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
         "CropAngle", "HasCrop", "CropLeft", "CropTop", "CropRight", "CropBottom",
     ]
     args = [f"-XMP-crs:{t}" for t in tags] + ["-XMP-xmp:CreatorTool", "-XMP-crs:Version",
-                                               "-XMP-crs:LookUUID", "-s3", "-f", str(path)]
+                                               "-XMP-crs:LookUUID", "-XMP-crs:ColorNoiseReduction", "-s3", "-f", str(path)]
     values = _exiftool_read(args).strip().split("\n")
     stamp = values[len(tags):len(tags) + 2]            # CreatorTool, crs:Version (absent = "-")
     look = lookxmp.parse(values[len(tags) + 2] if len(values) > len(tags) + 2 else None)
+    color_nr = values[len(tags) + 3].strip() if len(values) > len(tags) + 3 else "-"   # after the stamp lines
     values = values[:len(tags)]
     if len(values) < len(tags) or all(v.strip() in ("-", "") for v in values):
         # No develop settings, but a curve alone is still an edit.
@@ -1132,6 +1135,11 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
             out[key] = float(raw_value)
         except ValueError:
             continue
+    if color_nr not in ("-", ""):
+        try:
+            out["color_nr"] = float(color_nr)
+        except ValueError:
+            pass
     curve = _read_tone_curve(path)
     if curve:
         out["tone_curve"] = curve
@@ -1418,7 +1426,7 @@ def api_files():
 
 def adjustments_have_edits(adj: dict, baseline_temp: float | None = None) -> bool:
     """True when ``adj`` changes anything the colour maths touches (not framing, not noise reduction)."""
-    skip = {"straighten", "luminance_nr"}
+    skip = {"straighten", "luminance_nr", "color_nr"}
     for c in CONTROLS + GLOBAL_CONTROLS:
         key = c["key"]
         if key in skip or key not in adj:
