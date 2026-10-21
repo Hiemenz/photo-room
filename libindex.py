@@ -45,7 +45,7 @@ CHUNK = 400
 CHANGE_LOG = 20000
 SQLITE_SYNCHRONOUS = "NORMAL"   # WAL + NORMAL survives a process crash; FULL also survives power loss
 
-RAW_SUFFIXES = (".cr2", ".cr3", ".nef", ".arw", ".raf", ".orf", ".rw2", ".dng")
+RAW_SUFFIXES = library.RAW_SUFFIXES
 READ_TAGS = ["-XMP-xmp:Rating", "-XMP-xmp:Label", "-XMP-dc:Subject", "-Model", "-LensModel",
              "-ISO", "-DateTimeOriginal", "-CreateDate"]
 MUTABLE = ("rating", "label", "keywords", "pick")
@@ -58,7 +58,8 @@ def _flag(rating: int, pick: bool) -> str:
 def _record(rel: str, meta: dict, pick: bool) -> dict:
     return {"path": rel, "name": rel.rsplit("/", 1)[-1], "rating": meta["rating"], "label": meta["label"],
             "keywords": meta["keywords"], "camera": meta["camera"], "lens": meta.get("lens", ""),
-            "iso": meta.get("iso", 0), "date": meta["date"], "flag": _flag(meta["rating"], pick)}
+            "iso": meta.get("iso", 0), "date": meta["date"], "flag": _flag(meta["rating"], pick),
+            "kind": (kind := library.kind_of(rel) or "raw"), "editable": kind == "raw"}
 
 
 def parse_meta(entry: dict, side: dict | None = None, dng: bool = False) -> dict:
@@ -265,14 +266,19 @@ class Index:
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
             names = None
+            raw_stems = {os.path.splitext(f)[0] for f in filenames
+                         if os.path.splitext(f)[1].lower() in RAW_SUFFIXES}
             for fn in filenames:
                 stem, ext = os.path.splitext(fn)
                 ext = ext.lower()
-                if ext not in RAW_SUFFIXES:
+                kind = library.kind_of(fn)
+                if not kind:
                     continue
+                if kind == "image" and stem in raw_stems:
+                    continue         # RAW+JPEG pair: the raw is the photo, and both would share one .xmp
                 if names is None:
                     names = set(filenames)
-                key = (dirpath, stem)
+                key = (dirpath, stem if kind == "raw" else fn)
                 prev = chosen.get(key)
                 if prev is None or (not prev[1] and ext == ".dng"):
                     chosen[key] = (fn, ext == ".dng", names)
