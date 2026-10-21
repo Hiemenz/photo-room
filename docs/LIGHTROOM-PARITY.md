@@ -2,7 +2,7 @@
 
 How photo-room compares with Adobe Lightroom Classic today, for one user: a
 photographer on Linux or macOS who pulls CR2 files off a card, culls and edits
-them, and exports JPEG or PNG with all the original metadata.
+them, and exports JPEG, PNG, TIFF or WebP with all the original metadata.
 
 Everything under "status" was checked against the code at commit `d0163ba`
 (main after PR #2). "Evidence" names the module, route or test that shows it.
@@ -218,11 +218,11 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 
 | Lightroom feature | Status | Evidence | Effort | Value |
 |---|---|---|---|---|
-| Export JPEG / PNG, full-res render from the raw | Done | `exporter.py`, `export_api.py`; `tests/test_export*.py` | - | - |
+| Export JPEG / PNG / TIFF (8/16-bit) / WebP, full-res render from the raw | Done | `exporter.py`, `export_api.py`; `tests/test_export*.py` | - | - |
 | Keep all metadata (EXIF, GPS, IPTC, XMP, ICC, MakerNotes) | Done | exiftool `-TagsFromFile -all:all`; `tests/test_real_exiftool_export.py`, `tests/test_real_raw_e2e.py` (real CR2 incl. Canon MakerNotes). Real 1000D CR2 on the Pi: Make, Model, LensModel, ISO, ExposureTime survive | - | - |
-| Metadata options (copyright only, strip location/person) | Missing | single `Keep all metadata` checkbox (`#ex-meta`, `ExportOptions.keep_metadata`) | S | H |
-| Format: TIFF, PSD, DNG, WebP, AVIF, JPEG XL | Missing | `--format` is `png\|jpeg\|jpg` only (`process.py`) | S (TIFF/WebP) | H |
-| 16-bit output | Partial | 16-bit PNG only (`write_png16`) | S with TIFF | M |
+| Metadata options (copyright only, strip location, drop develop settings) | Done | `ExportOptions.metadata`, `exporter.metadata_args`, `#ex-meta`; `tests/test_export_formats_metadata.py`. Person/face tags are not stripped | - | - |
+| Format: TIFF, PSD, DNG, WebP, AVIF, JPEG XL | Partial | TIFF and WebP done (`--format`, `exporter.FORMATS`); PSD, DNG, AVIF, JPEG XL missing | S | L |
+| 16-bit output | Done | 16-bit PNG and TIFF (`write_png16`, `write_tiff16`) | - | - |
 | Colour space: sRGB, Adobe RGB, ProPhoto with embedded ICC | Done | `exporter.py`; custom ICC absent | - | - |
 | Resize | Partial | long edge only, never upscales | S | M |
 | Naming template | Partial | `{name} {date} {seq} {width} {height}`; no text, `{rating}`, `{camera}`, `{keyword}` | S | M |

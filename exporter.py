@@ -37,7 +37,11 @@ import process
 import render_kernels
 from process import EXIFTOOL_TIMEOUT, RAW_SUFFIXES, run_tool
 
-FORMATS = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg"}
+FORMATS = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg",
+           "tiff": ".tif", "tif": ".tif", "webp": ".webp"}
+SIXTEEN_BIT_FORMATS = ("png", "tiff")
+# Lightroom-style metadata choices (see metadata_args).
+METADATA_MODES = ("all", "copyright", "no_location", "no_develop", "none")
 COLOR_SPACES = ("srgb", "adobergb", "prophoto")
 
 # Tags that describe the *file* or the rendering rather than the photograph.
@@ -61,8 +65,9 @@ class ExportOptions:
     long_edge: int | None = None
     colorspace: str | None = None  # None: raw -> srgb, other images -> keep source
     template: str = "{name}"
-    keep_metadata: bool = True
-    bit_depth: int = 8  # 16 is PNG only
+    keep_metadata: bool = True      # False is the same as metadata="none"
+    metadata: str = "all"           # one of METADATA_MODES
+    bit_depth: int = 8  # 16 is PNG or TIFF only
     sharpen: dict | None = None     # {"for": screen|matte|glossy, "amount": low|standard|high}
     watermark: dict | None = None   # see export_finish.DEFAULT_WATERMARK
     # Encoder speed knobs; they change file size and time, never a pixel.
@@ -73,8 +78,15 @@ class ExportOptions:
     def validate(self) -> "ExportOptions":
         fmt = self.format.lower()
         if fmt not in FORMATS:
-            raise ValueError(f"format must be png or jpeg, not {self.format!r}")
-        self.format = "jpeg" if fmt == "jpg" else fmt
+            raise ValueError(f"format must be jpeg, png, tiff or webp, not {self.format!r}")
+        self.format = {"jpg": "jpeg", "tif": "tiff"}.get(fmt, fmt)
+        mode = str(self.metadata or "all").lower().replace(" ", "_").replace("-", "_")
+        if mode not in METADATA_MODES:
+            raise ValueError(f"metadata must be one of {', '.join(METADATA_MODES)}")
+        if not self.keep_metadata:
+            mode = "none"
+        self.metadata = mode
+        self.keep_metadata = mode != "none"
         if not 1 <= int(self.quality) <= 100:
             raise ValueError("quality must be between 1 and 100")
         if int(self.bit_depth) not in (8, 16):
@@ -83,8 +95,8 @@ class ExportOptions:
         if not 0 <= int(self.png_compression) <= 9:
             raise ValueError("PNG compression must be between 0 and 9")
         self.png_compression = int(self.png_compression)
-        if self.bit_depth == 16 and self.format != "png":
-            raise ValueError("16-bit output is only available for PNG")
+        if self.bit_depth == 16 and self.format not in SIXTEEN_BIT_FORMATS:
+            raise ValueError("16-bit output is only available for PNG and TIFF")
         if self.long_edge is not None and int(self.long_edge) < 16:
             raise ValueError("long edge must be at least 16 pixels")
         if self.colorspace is not None:
@@ -311,6 +323,42 @@ def write_png16(path: Path, arr: np.ndarray, icc: bytes | None, level: int = 1) 
     path.write_bytes(out)
 
 
+def write_tiff16(path: Path, arr: np.ndarray, icc: bytes | None) -> None:
+    """Uncompressed little-endian 16-bit RGB TIFF from a float 0..1 array (Pillow cannot write one)."""
+    h, w = arr.shape[:2]
+    data = np.clip(np.rint(arr[..., :3] * 65535.0), 0, 65535).astype("<u2").tobytes()
+    icc = icc or b""
+    entries = [  # tag, type, count, value (type 3 SHORT, 4 LONG, 7 UNDEFINED)
+        (256, 4, 1, w), (257, 4, 1, h), (258, 3, 3, None), (259, 3, 1, 1),
+        (262, 3, 1, 2), (273, 4, 1, None), (277, 3, 1, 3), (278, 4, 1, h),
+        (279, 4, 1, len(data)), (284, 3, 1, 1),
+    ]
+    if icc:
+        entries.append((34675, 7, len(icc), None))
+    n = len(entries)
+    ifd_at = 8
+    extra_at = ifd_at + 2 + 12 * n + 4
+    bps_at = extra_at
+    icc_at = bps_at + 6
+    data_at = icc_at + len(icc) + (len(icc) & 1)
+    out = bytearray(b"II*\x00" + struct.pack("<I", ifd_at) + struct.pack("<H", n))
+    for tag, typ, count, val in sorted(entries):
+        if tag == 258:
+            field = struct.pack("<I", bps_at)
+        elif tag == 273:
+            field = struct.pack("<I", data_at)
+        elif tag == 34675:
+            field = struct.pack("<I", icc_at)
+        elif typ == 3:
+            field = struct.pack("<HH", val, 0)
+        else:
+            field = struct.pack("<I", val)
+        out += struct.pack("<HHI", tag, typ, count) + field
+    out += struct.pack("<I", 0) + struct.pack("<HHH", 16, 16, 16) + icc
+    out += b"\x00" * (data_at - len(out))
+    path.write_bytes(bytes(out) + data)
+
+
 def exiftool_available() -> bool:
     return shutil.which("exiftool") is not None
 
@@ -330,8 +378,42 @@ def _run_exiftool(args: list[str], what: str) -> None:
         raise RuntimeError(f"exiftool failed {what}: {result.stderr.strip()}")
 
 
+# Location in every container: GPS, IPTC/Photoshop place names, IPTC Extension locations.
+_LOCATION_TAGS = [
+    "--GPS*",   # every GPS tag in EXIF and XMP (a "--GPS:all" group exclusion does not work)
+    "--IPTC:City", "--IPTC:Sub-location", "--IPTC:Province-State",
+    "--IPTC:Country-PrimaryLocationCode", "--IPTC:Country-PrimaryLocationName",
+    "--XMP-photoshop:City", "--XMP-photoshop:State", "--XMP-photoshop:Country",
+    "--XMP-iptcCore:Location", "--XMP-iptcCore:CountryCode",
+    "--XMP-iptcExt:LocationShown", "--XMP-iptcExt:LocationCreated",
+]
+
+# Authorship and rights only.
+_COPYRIGHT_TAGS = [
+    "-EXIF:Copyright", "-EXIF:Artist", "-IPTC:CopyrightNotice", "-IPTC:By-line",
+    "-IPTC:Contact", "-XMP-dc:Rights", "-XMP-dc:Creator", "-XMP-xmpRights:all",
+    "-XMP-photoshop:Credit", "-XMP-iptcCore:CreatorContactInfo",
+]
+
+# Camera raw develop settings. XMP-crs is never copied (the edits are baked in);
+# this mode also drops the camera's MakerNotes, which hold its raw-processing state.
+_DEVELOP_TAGS = ["--MakerNotes:all", "--XMP-aux:all", "--XMP-photomechanic:all"]
+
+
+def metadata_args(mode: str) -> list[str]:
+    """exiftool arguments (after -TagsFromFile SRC) that select what to copy for a metadata mode."""
+    if mode == "copyright":
+        return list(_COPYRIGHT_TAGS)
+    args = ["-all:all", *_NOT_COPIED]
+    if mode == "no_location":
+        args += _LOCATION_TAGS
+    elif mode == "no_develop":
+        args += _DEVELOP_TAGS
+    return args
+
+
 def copy_metadata(source: Path, dest: Path, size: tuple[int, int] | None = None,
-                  extra: list[str] | None = None) -> None:
+                  extra: list[str] | None = None, mode: str = "all") -> None:
     """
     Copy every tag from ``source`` (and its sidecar, if any) onto ``dest``.
 
@@ -340,12 +422,16 @@ def copy_metadata(source: Path, dest: Path, size: tuple[int, int] | None = None,
     the output's pixel size (read from the file when omitted); ``extra`` are
     further assignments applied after the copy in the same exiftool call.
     """
-    cmd = ["-TagsFromFile", str(source), "-all:all", *_NOT_COPIED]
+    cmd = ["-TagsFromFile", str(source), *metadata_args(mode)]
     sidecar = source.with_suffix(".xmp")
-    if source.suffix.lower() != ".xmp" and sidecar.exists():
+    if mode != "copyright" and source.suffix.lower() != ".xmp" and sidecar.exists():
         # Rating, keywords and anything else kept in the sidecar. Develop
         # settings are excluded above.
         cmd += ["-TagsFromFile", str(sidecar), "-XMP:all", "--XMP-crs:all"]
+        if mode == "no_location":
+            cmd += [t for t in _LOCATION_TAGS if "XMP" in t]
+        elif mode == "no_develop":
+            cmd += [t for t in _DEVELOP_TAGS if "XMP" in t]
     # Those two are deliberately not copied (the source's size is wrong for the
     # output), but a JPEG's Exif block must declare its own pixel size: exiftool
     # warns "Missing required JPEG ExifIFD tag" and strict readers reject it.
@@ -399,12 +485,12 @@ def _chunk_offsets(data: bytes):
 
 
 def copy_metadata_png(source: Path, dest: Path, size: tuple[int, int], icc: bytes | None,
-                      extra: list[str] | None = None) -> None:
+                      extra: list[str] | None = None, mode: str = "all") -> None:
     """``copy_metadata`` for a PNG without making exiftool rewrite the full-size file."""
     donor = dest.with_name(dest.name + ".meta.png")
     try:
         Image.new("RGB", (1, 1)).save(donor, "PNG", icc_profile=icc)
-        copy_metadata(source, donor, size=size, extra=extra)
+        copy_metadata(source, donor, size=size, extra=extra, mode=mode)
         splice_png_metadata(dest, donor)
     finally:
         donor.unlink(missing_ok=True)
@@ -537,8 +623,14 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
     dest = claim_output(out_dir, name, overwrite)
 
     try:
-        if img is None:
+        if img is None and opts.format == "tiff":
+            write_tiff16(dest, arr, icc)
+        elif img is None:
             write_png16(dest, arr, icc, level=int(opts.png_compression))
+        elif opts.format == "tiff":
+            img.save(dest, "TIFF", compression="tiff_lzw", icc_profile=icc)
+        elif opts.format == "webp":
+            img.save(dest, "WEBP", quality=int(opts.quality), method=4, icc_profile=icc)
         elif opts.format == "jpeg":
             img.save(dest, "JPEG", quality=int(opts.quality), subsampling=0 if opts.quality >= 90 else 2,
                      optimize=bool(opts.optimize_jpeg), icc_profile=icc)
@@ -550,11 +642,11 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
 
     if opts.keep_metadata:
         try:
-            extra = _virtual_args(virtual) if virtual else None
+            extra = _virtual_args(virtual) if virtual and opts.metadata != "copyright" else None
             if opts.format == "png" and os.environ.get("PHOTO_ROOM_PNG_SPLICE", "1") != "0":
-                copy_metadata_png(source, dest, size, icc, extra)
+                copy_metadata_png(source, dest, size, icc, extra, mode=opts.metadata)
             else:
-                copy_metadata(source, dest, size=size, extra=extra)
+                copy_metadata(source, dest, size=size, extra=extra, mode=opts.metadata)
         except Exception:
             dest.unlink(missing_ok=True)  # never leave a stripped file behind
             raise

@@ -71,6 +71,7 @@ def options_from_payload(payload: dict) -> ExportOptions:
             colorspace=payload.get("colorspace") or None,
             template=str(payload.get("template") or "{name}"),
             keep_metadata=bool(payload.get("keep_metadata", True)),
+            metadata=str(payload.get("metadata") or "all"),
             bit_depth=int(payload.get("bit_depth", 8)),
             sharpen=payload.get("sharpen") or None,
             watermark=payload.get("watermark") or None,
@@ -88,7 +89,8 @@ def clean_settings(payload: dict) -> dict:
     out = {
         "format": opts.format, "quality": opts.quality, "long_edge": opts.long_edge,
         "colorspace": opts.colorspace, "template": opts.template,
-        "keep_metadata": opts.keep_metadata, "bit_depth": opts.bit_depth,
+        "keep_metadata": opts.keep_metadata, "metadata": opts.metadata,
+        "bit_depth": opts.bit_depth,
         "sharpen": opts.sharpen, "watermark": opts.watermark,
     }
     dest = str(payload.get("dest") or "").strip()
