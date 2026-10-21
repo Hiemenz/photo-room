@@ -453,10 +453,10 @@
     <div class="hint">Tokens: {name} {date} {seq} {seq:04d} {width} {height}.
       Result: <span id="ex-preview"></span></div>
     <label class="row">Format
-      <select id="ex-format"><option value="jpeg">JPEG</option><option value="png">PNG</option></select></label>
+      <select id="ex-format"><option value="jpeg">JPEG</option><option value="png">PNG</option><option value="tiff">TIFF</option><option value="webp">WebP</option></select></label>
     <label class="row" id="ex-q-row">Quality
       <span style="display:flex;gap:8px;align-items:center"><input type="range" id="ex-quality" min="1" max="100" value="92" style="flex:1"><output id="ex-q-val">92</output></span></label>
-    <label class="row" id="ex-depth-row">PNG bit depth
+    <label class="row" id="ex-depth-row">Bit depth (PNG, TIFF)
       <select id="ex-depth"><option value="8">8-bit</option><option value="16">16-bit</option></select></label>
     <label class="row">Colour space
       <select id="ex-cs">
@@ -490,8 +490,14 @@
       <label class="row">Margin (%) <input type="number" id="ex-wm-margin" min="0" max="40" step="0.5" value="2"></label>
       <div class="hint">Watermarks and sharpening are drawn on the exported file only; the preview and the original are untouched.</div>
     </div>
-    <label style="font-size:12px"><input type="checkbox" id="ex-meta" checked>
-      Keep all metadata (EXIF, GPS, IPTC, XMP)</label>
+    <label class="row">Metadata
+      <select id="ex-meta">
+        <option value="all">All (EXIF, GPS, IPTC, XMP)</option>
+        <option value="copyright">Copyright only</option>
+        <option value="no_location">All except location (strip GPS)</option>
+        <option value="no_develop">All except camera raw develop settings</option>
+        <option value="none">None</option>
+      </select></label>
     <label style="font-size:12px"><input type="checkbox" id="ex-save" checked>
       Save the open photo's edits first</label>
     <div class="hint">Exports render the saved edits at full resolution, not the preview.</div>

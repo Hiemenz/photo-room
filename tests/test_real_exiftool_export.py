@@ -166,8 +166,16 @@ CASES = [
     pytest.param("png", 16, FINISH, id="png16-sharpen-watermark"),
 ]
 
+# TIFF keeps every tag; WebP has no IPTC block (see test_export_formats_metadata.py).
+# exiftool -validate is JPEG-centric and nags about Exif-in-TIFF details, so these
+# skip the strict-validation test.
+EXTRA_CASES = [
+    pytest.param("tiff", 8, {}, id="tiff8"),
+    pytest.param("tiff", 16, {}, id="tiff16"),
+]
 
-@pytest.mark.parametrize("fmt,depth,finish", CASES)
+
+@pytest.mark.parametrize("fmt,depth,finish", CASES + EXTRA_CASES)
 def test_every_source_tag_survives(source, tmp_path, fmt, depth, finish):
     dest = export_photo(source, tmp_path / "out",
                         ExportOptions(format=fmt, bit_depth=depth, **finish))

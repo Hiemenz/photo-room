@@ -66,7 +66,16 @@ you can run on your Mac with a real card. Companion to
   optional `pillow-heif` package (otherwise the cell shows a "HEIC"
   placeholder). In a RAW+JPEG pair only the raw is listed (both would share
   one `.xmp`). Video thumbnails are not generated.
-- Export is JPEG or PNG only; "Keep metadata" is all or nothing.
+- Export formats are JPEG, PNG, TIFF (8/16-bit) and WebP (8-bit). WebP carries
+  EXIF/XMP/ICC but no IPTC block. 16-bit is PNG and TIFF only. TIFF 16-bit is
+  uncompressed (large); 8-bit TIFF uses LZW.
+- Metadata options: All, Copyright only, All except location (strip GPS and
+  IPTC/XMP place names), All except camera raw develop settings, None. Develop
+  settings (`crs:`) are never copied in any mode because the edits are baked
+  into the pixels; the "develop" mode additionally drops MakerNotes and
+  `aux`. Location stripping covers GPS and the standard city/state/country/
+  sub-location fields, not free text in captions or keywords, and not
+  MakerNotes-internal GPS in "All".
 
 ## Manual QA checklist (Mac with a real card)
 
