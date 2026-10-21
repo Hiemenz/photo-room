@@ -41,6 +41,25 @@ STORE_NAME = ".photo-room-library.json"
 
 _lock = threading.RLock()
 
+# What the Library lists besides raws. Raws are editable; JPEG/HEIC are listed,
+# thumbnailed and rated but view-only (the Develop pipeline starts from a raw
+# decode); video is a placeholder cell with no thumbnail.
+RAW_SUFFIXES = (".cr2", ".cr3", ".nef", ".arw", ".raf", ".orf", ".rw2", ".dng")
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".heic", ".heif")
+VIDEO_SUFFIXES = (".mp4", ".mov", ".mts", ".m2ts", ".avi", ".mxf")
+
+
+def kind_of(name: str) -> str:
+    """'raw', 'image', 'video', or '' for a file the Library ignores."""
+    ext = os.path.splitext(name)[1].lower()
+    if ext in RAW_SUFFIXES:
+        return "raw"
+    if ext in IMAGE_SUFFIXES:
+        return "image"
+    if ext in VIDEO_SUFFIXES:
+        return "video"
+    return ""
+
 
 # ---------------------------------------------------------------------------
 # Normalisation and XMP field mapping
@@ -359,7 +378,9 @@ def build_items(root: Path, paths: list[Path]) -> list[dict]:
             continue
         rel = p.relative_to(root).as_posix() if root in p.resolve().parents else str(p)
         flag = "reject" if m["rating"] == -1 else ("pick" if flags.get(rel) == "pick" else "none")
-        items.append({"path": rel, "name": p.name, **m, "flag": flag})
+        kind = kind_of(p.name) or "raw"
+        items.append({"path": rel, "name": p.name, **m, "flag": flag,
+                      "kind": kind, "editable": kind == "raw"})
     return items
 
 

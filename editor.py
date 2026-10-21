@@ -2346,7 +2346,7 @@ def api_thumbs_prefetch():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
     try:
-        return jsonify(_thumb_pool().prefetch([LIBRARY_ROOT / it['path'] for it in _idx().items()]))
+        return jsonify(_thumb_pool().prefetch([LIBRARY_ROOT / it['path'] for it in _idx().items() if it.get('kind') != 'video']))
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
 

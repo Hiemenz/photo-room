@@ -92,7 +92,9 @@ function paintThumbProgress(st) {
 
 function libCell(it) {
   const cell = document.createElement("div");
-  cell.className = "lcell" + (it.virtual ? " virtual" : "");
+  const kind = it.kind || "raw";
+  cell.className = "lcell" + (it.virtual ? " virtual" : "") + (kind === "video" ? " video" : "") +
+    (it.editable === false ? " viewonly" : "");
   cell.dataset.path = it.path;
   cell.draggable = true;
   cell.addEventListener("dragstart", (e) => {
@@ -102,16 +104,30 @@ function libCell(it) {
   });
   const img = document.createElement("img");
   img.alt = it.name;
-  img.dataset.src = `/api/thumb?path=${encodeURIComponent(it.path)}`;
-  img.addEventListener("error", () => { img.style.visibility = "hidden"; });
+  const ext = (it.name.split(".").pop() || "").toUpperCase();
+  const ph = document.createElement("div"); ph.className = "ph";
+  ph.textContent = kind === "video" ? "\u25B6 " + ext : "";
+  const noThumb = () => { img.style.visibility = "hidden"; cell.classList.add("nothumb"); ph.textContent ||= ext; };
+  if (kind === "video") { img.removeAttribute("src"); noThumb(); }
+  else img.dataset.src = `/api/thumb?path=${encodeURIComponent(it.path)}`;
+  img.addEventListener("error", noThumb);
+  const tag = document.createElement("div"); tag.className = "kindtag";
+  tag.textContent = kind === "raw" ? "" : (kind === "video" ? "VIDEO" : ext + " \u00B7 view only");
   const badge = document.createElement("div"); badge.className = "badge";
   const meta = document.createElement("div"); meta.className = "meta";
   meta.innerHTML = `<span class="dot"></span><span class="nm"></span><span class="st"></span>`;
   meta.querySelector(".nm").textContent = it.name;
-  cell.append(img, badge, meta);
+  cell.append(img, ph, tag, badge, meta);
   cell.addEventListener("click", (e) => libClick(e, it.path));
-  cell.addEventListener("dblclick", () => openInDevelop(it.path));
-  libThumbObs.observe(img);
+  cell.addEventListener("dblclick", () => {
+    if (it.editable === false) {
+      toast(kind === "video" ? "Videos can't be edited" : "JPEG/HEIC files are view-only",
+        { kind: "info", why: "photo-room edits raw files. This file is listed so you can see, rate and flag it." });
+      return;
+    }
+    openInDevelop(it.path);
+  });
+  if (kind !== "video") libThumbObs.observe(img);
   return cell;
 }
 
