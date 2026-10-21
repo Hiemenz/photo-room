@@ -32,17 +32,9 @@ macOS and nothing was opened in Lightroom; see [KNOWN-LIMITS.md](KNOWN-LIMITS.md
 
 ## Findings where the docs and the code disagree
 
-1. **The Noise reduction slider changes nothing on screen or in an export.**
-   `luminance_nr` is seeded from ISO, shown as a slider, written to
-   `crs:LuminanceSmoothing`, and read back; no function reads it to denoise
-   (`grep luminance_nr`: control definition, seeding, XMP read/write,
-   preset mapping, cache-ignore list). Probe: `editor.apply_adjustments` on a
-   noisy array returns byte-identical output for `luminance_nr` 0 and 100. The
-   README says the value is "not shown in the preview" because the preview is
-   half size, which implies the export applies it. It does not. Lightroom would
-   denoise when it opens the same sidecar, so the number is only a note to
-   Lightroom. `tests/test_noise_reduction.py` checks the control and the XMP
-   tag, not any pixel effect.
+1. ~~The Noise reduction slider changes nothing.~~ **Fixed.** Luminance and colour noise
+   reduction now run in the render pipeline (`render_kernels.denoise_stage`) for preview, tiles
+   and export; `tests/test_noise_reduction_pixels.py` checks pixel effect, cache keys and XMP.
 2. **`photo-room ingest cards` and `ingest watch` scanned only `/Volumes`.** Fixed: they now
    scan `/Volumes` on macOS and `/media/$USER`, `/run/media/$USER` and `/mnt` on Linux
    (`ingest.volume_roots()`), like `watch-cards`.
@@ -160,8 +152,8 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Lightroom feature | Status | Evidence | Effort | Value |
 |---|---|---|---|---|
 | Sharpening amount | Partial | one `sharpness` 0-150, luminance-only unsharp; no Radius, Detail, Masking | S | H |
-| Luminance noise reduction | Partial (no-op) | slider and XMP only (finding 1) | M | H |
-| Colour noise reduction (and Detail/Contrast) | Missing | no code | M | H |
+| Luminance noise reduction | Partial | `render_kernels.denoise_stage` (bilateral on luma), preview, tiles and export; no Detail/Contrast | S | M |
+| Colour noise reduction | Done | `color_nr` slider, edge-guarded chroma blur, `crs:ColorNoiseReduction` | - | - |
 | Output sharpening | Done | `export_finish.sharpen`, screen/matte/glossy x low/standard/high | - | - |
 
 ### 5. Develop: lens, geometry, crop
@@ -262,7 +254,7 @@ Lightroom features is in the matrix above.
 
 | # | Work package | Why (value for this user) | Effort | Touches |
 |---|---|---|---|---|
-| 1 | **Real noise reduction.** Luma + chroma denoise from the Noise reduction slider (OpenCV, applied at full size on export and on the 100% tile; keep the half-size preview as is) and a colour-NR slider. Until then relabel the slider so it does not promise a pixel effect | A shipped slider that does nothing; high-ISO CR2s are the common case | M | `render_kernels.py`, `editor.py`, `tile_server.py`, `stagecache.py`, `tests/test_noise_reduction.py` |
+| 1 | ~~**Real noise reduction.** Luma + chroma denoise from the Noise reduction slider (OpenCV, applied at full size on export and on the 100% tile; keep the half-size preview as is) and a colour-NR slider. Until then relabel the slider so it does not promise a pixel effect~~ (done) | A shipped slider that does nothing; high-ISO CR2s are the common case | M | `render_kernels.py`, `editor.py`, `tile_server.py`, `stagecache.py`, `tests/test_noise_reduction.py` |
 | 2 | **Linux-aware `ingest cards` / `ingest watch`**: make `list_volumes` reuse `cardwatch.find_cards`, fix the README Card ingest section | The headline Linux flow fails at its first command | S | `ingest.py`, `cardwatch.py`, README |
 | 3 | **Export metadata options**: All / all except location / copyright and contact only / none | The user's stated goal is metadata; privacy-safe sharing needs the middle options | S | `exporter.py`, `export_api.py`, `export_presets.py`, `static/js/export-dialog.js` |
 | 4 | **Metadata panel (read-only)**: EXIF/IPTC/GPS in a Library/Develop side panel via cached `exiftool -j` | Nothing in the UI shows camera, lens, ISO or GPS today | S | `libapi.py`, new `static/js/metadata.js`, `templates/editor.html` |

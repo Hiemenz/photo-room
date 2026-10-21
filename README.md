@@ -152,10 +152,10 @@ failed and what to do next, with a **Try again** button where retrying makes sen
 Clicking a slider's number resets that one slider. Opening a photo shows
 its saved edits, or the auto-computed ones if it has none.
 
-Noise reduction is written to the file but deliberately not shown in the
-preview. The preview is a half-size render, and downsampling already hides
-the noise this removes, so previewing it there would misrepresent the
-full-resolution result in both directions.
+Noise reduction (**Noise reduction** for luminance, **Colour noise reduction** for chroma) is
+applied in the preview, the 100% tiles and the export, before sharpening and clarity. Its radii
+scale with the frame size so the small preview and the full-size export show the same amount of
+smoothing. Both values are written to `crs:LuminanceSmoothing` and `crs:ColorNoiseReduction`.
 
 ### Colour mixer and colour grading
 
