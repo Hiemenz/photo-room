@@ -54,6 +54,7 @@ async function libLoad(reset) {
   if (data.facets) {
     fillSelect("lf-keyword", data.facets.keywords.map(k => k.keyword), "Any keyword");
     fillSelect("lf-camera", data.facets.cameras, "Any camera");
+    if (typeof kwRefresh === "function") kwRefresh();
     $("kw-list").innerHTML = data.facets.keywords.map(k => `<option value="${k.keyword.replace(/"/g, "&quot;")}">`).join("");
   }
   libAppend(data.items);

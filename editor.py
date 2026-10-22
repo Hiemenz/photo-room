@@ -43,6 +43,7 @@ import geometry
 import masks
 import libindex
 import libapi
+import kwapi
 import library
 import lookxmp
 import lut as lutmod
@@ -127,6 +128,7 @@ import develop_api  # noqa: E402  (auto tone / white balance / clipping / tiles)
 
 app.register_blueprint(develop_api.bp)
 app.register_blueprint(libapi.bp)
+app.register_blueprint(kwapi.bp)
 
 import cull_api  # noqa: E402  (smart culling and Auto edit)
 

@@ -513,13 +513,16 @@ def claim_output(out_dir: Path, name: str, overwrite: bool = False) -> Path:
 
 
 def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
-                 virtual: dict | None = None, overwrite: bool = False) -> Path:
+                 virtual: dict | None = None, overwrite: bool = False,
+                 drop_keywords=None) -> Path:
     """
     Export one photo. Returns the written path; never overwrites an existing file.
 
     With ``virtual`` (a catalog entry) the raw is rendered with the copy's own
     adjustments and the output is named ``<stem>-copy<N>``. Metadata still comes
     from the raw, with the copy's rating, colour label and keywords on top.
+    ``drop_keywords`` are keyword names flagged "do not include on export"; they
+    (and their hierarchy paths) are removed from the written file.
     """
     opts = opts.validate()
     adjustments = virtual["adjustments"] if virtual else None
@@ -555,6 +558,9 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
                 copy_metadata_png(source, dest, size, icc, extra)
             else:
                 copy_metadata(source, dest, size=size, extra=extra)
+            if drop_keywords:
+                import keywordlib
+                keywordlib.strip_for_export(dest, drop_keywords, lambda a: exifpool.run(a, timeout=EXIFTOOL_TIMEOUT))
         except Exception:
             dest.unlink(missing_ok=True)  # never leave a stripped file behind
             raise

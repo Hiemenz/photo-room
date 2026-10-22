@@ -260,6 +260,11 @@ def _run_job(job: dict) -> None:
     opts = export_presets.options_from_payload(job["options"])
     dest = Path(job["dest"])
     overwrite = bool(job.get("overwrite"))
+    try:
+        import keywordlib
+        drop = keywordlib.unexported(_ed().LIBRARY_ROOT)     # keywords flagged "do not include on export"
+    except Exception:
+        drop = frozenset()
     for item in job["items"]:
         with _lock:
             if job.get("_cancel"):
@@ -270,7 +275,7 @@ def _run_job(job: dict) -> None:
         try:
             written = exporter.export_photo(Path(item["source"]), dest, opts,
                                             seq=item["seq"], virtual=item["virtual"],
-                                            overwrite=overwrite)
+                                            overwrite=overwrite, drop_keywords=drop)
             with _lock:
                 item.update(status="ok", output=str(written), error=None)
                 job["written"].append(str(written))

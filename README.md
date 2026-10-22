@@ -352,6 +352,22 @@ action below applies to the whole selection.
 Keywords are typed in the footer (comma separated, Enter to add, **Remove**
 to take them off the selection).
 
+The Library sidebar has a **Keywords** panel: every keyword with its photo count
+(`own (with sub-keywords)` for parents), indented under its parent. Click a name to
+filter the grid, click again to clear; `+`, double-click or dragging the row onto the
+grid tags the selection (dropping on an unselected photo tags just that photo). The
+pencil opens an editor for the parent, synonyms, "Include on export", rename and
+delete. Renaming to an existing keyword asks to merge; delete leaves sub-keywords in
+place (they move up a level). All of these rewrite every affected photo through the
+usual sidecar writer, virtual copies included. The hierarchy is written to
+`XMP-lr:HierarchicalSubject` ("France|Paris") beside `XMP-dc:Subject` so Lightroom
+rebuilds the tree, and parents already in your sidecars show up on their own.
+Synonyms and the export flag live in `.photo-room-keywords.json` in the library
+folder; keywords not flagged for export are removed (with their hierarchy paths) from
+files written by the editor's Export dialog. Endpoints: `GET /api/keywords/list`,
+`POST /api/keywords/create|update|rename|delete` (`rename` and `delete` take
+`dry_run` to count the photos first).
+
 **Live grid.** The grid listens to the server's library change feed
 (`/api/library/events`, Server-Sent Events). A flag, rating, label or keyword set in another
 window, by Smart cull, or from the command line appears on its cell without a refresh; photos

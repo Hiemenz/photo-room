@@ -89,6 +89,9 @@
       <h3><span>Collections</span><span>
         <button id="col-new" title="New collection (from the selection, if any)">+</button><button id="col-smart" title="New smart collection">+ Smart</button></span></h3>
       <div id="col-list"></div>
+      <h3><span>Keywords</span><span><button id="kw-new" title="New keyword">+</button></span></h3>
+      <input id="kw-search" type="search" placeholder="Find keyword" aria-label="Find keyword">
+      <div id="kw-tree" role="tree" aria-label="Keyword list"></div>
     </aside>
     <div id="lib-grid"></div>
     <div id="lib-drop" hidden><div>Drop photos or a folder to import them<small>Copied with a checksum check; nothing is overwritten and duplicates are skipped</small></div></div>
@@ -549,6 +552,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/keyboard.js') }}"></script>
 <script src="{{ asset('js/library-module.js') }}"></script>
 <script src="{{ asset('js/collections.js') }}"></script>
+<script src="{{ asset('js/keyword-panel.js') }}"></script>
 <script src="{{ asset('js/compare-survey.js') }}"></script>
 <script src="{{ asset('js/cull.js') }}"></script>
 <script src="{{ asset('js/library-files.js') }}"></script>

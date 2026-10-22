@@ -33,6 +33,7 @@ from pathlib import Path
 
 import exifpool
 import fsutil
+import keywordlib
 import library
 
 DB_NAME = ".photo-room-index.sqlite"
@@ -46,9 +47,9 @@ CHANGE_LOG = 20000
 SQLITE_SYNCHRONOUS = "NORMAL"   # WAL + NORMAL survives a process crash; FULL also survives power loss
 
 RAW_SUFFIXES = (".cr2", ".cr3", ".nef", ".arw", ".raf", ".orf", ".rw2", ".dng")
-READ_TAGS = ["-XMP-xmp:Rating", "-XMP-xmp:Label", "-XMP-dc:Subject", "-Model", "-LensModel",
+READ_TAGS = ["-XMP-xmp:Rating", "-XMP-xmp:Label", "-XMP-dc:Subject", "-XMP-lr:HierarchicalSubject", "-Model", "-LensModel",
              "-ISO", "-DateTimeOriginal", "-CreateDate"]
-MUTABLE = ("rating", "label", "keywords", "pick")
+MUTABLE = ("rating", "label", "keywords", "hier", "pick")
 
 
 def _flag(rating: int, pick: bool) -> str:
@@ -57,7 +58,7 @@ def _flag(rating: int, pick: bool) -> str:
 
 def _record(rel: str, meta: dict, pick: bool) -> dict:
     return {"path": rel, "name": rel.rsplit("/", 1)[-1], "rating": meta["rating"], "label": meta["label"],
-            "keywords": meta["keywords"], "camera": meta["camera"], "lens": meta.get("lens", ""),
+            "keywords": meta["keywords"], "hier": meta.get("hier", []), "camera": meta["camera"], "lens": meta.get("lens", ""),
             "iso": meta.get("iso", 0), "date": meta["date"], "flag": _flag(meta["rating"], pick)}
 
 
@@ -77,6 +78,7 @@ def parse_meta(entry: dict, side: dict | None = None, dng: bool = False) -> dict
         iso = int(float(entry.get("ISO") or 0))
     except (TypeError, ValueError):
         iso = 0
+    meta["hier"] = keywordlib.parse_hier(side if side is not None and (not dng or "HierarchicalSubject" in side) else entry)
     meta["lens"] = " ".join(str(entry.get("LensModel") or "").split())
     meta["iso"] = iso
     return meta
@@ -149,6 +151,8 @@ class Index:
                 self._sigs[rel] = tuple(json.loads(sig))
             except ValueError:
                 continue
+            if "hier" not in meta:
+                self._sigs[rel] = ()      # indexed before hierarchical keywords: re-read it on the next scan
             if pick:
                 self._picks.add(rel)
             self._recs[rel] = _record(rel, meta, bool(pick))
@@ -196,7 +200,8 @@ class Index:
                 raise
 
     def _meta_of(self, rec: dict) -> dict:
-        return {k: rec[k] for k in ("rating", "label", "keywords", "camera", "lens", "iso", "date")}
+        return {k: rec.get(k, []) if k == "hier" else rec[k]
+                for k in ("rating", "label", "keywords", "hier", "camera", "lens", "iso", "date")}
 
     # ------------------------------------------------------------- reading
     def touch(self) -> None:
@@ -481,6 +486,7 @@ class Index:
         rows_photos = []
         rows_pending = []
         n = 0
+        kw_state = None
         with self._lock:
             for rel, fields in updates.items():
                 rec = self._recs.get(rel)
@@ -495,7 +501,11 @@ class Index:
                     fields["rating"] = max(-1, min(5, int(fields["rating"])))
                 pick = fields.get("pick", rel in self._picks)
                 new = dict(rec)
-                for k in ("rating", "label", "keywords"):
+                if "keywords" in fields and "hier" not in fields:
+                    if kw_state is None:
+                        kw_state = keywordlib.load_state(self.root)
+                    fields["hier"] = keywordlib.paths_for(kw_state, fields["keywords"], rec.get("hier"))
+                for k in ("rating", "label", "keywords", "hier"):
                     if k in fields:
                         new[k] = fields[k]
                 new["flag"] = _flag(new["rating"], bool(pick))
@@ -731,7 +741,7 @@ def sidecar_args(fields: dict) -> list[str]:
     args: list[str] = []
     if "rating" in fields:
         args.append(f"-XMP-xmp:Rating={max(-1, min(5, int(fields['rating'])))}")
-    args.extend(library.xmp_args(fields.get("label"), fields.get("keywords")))
+    args.extend(library.xmp_args(fields.get("label"), fields.get("keywords"), fields.get("hier")))
     return args
 
 

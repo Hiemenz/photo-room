@@ -111,8 +111,8 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Collections | Done | `catalog.py`, `/api/collections/*` | - | - |
 | Smart collections | Partial | rating, flag, label, keyword, camera, date (`catalog.RULE_OPS`); no lens, ISO, focal length, edit state, file type | S | M |
 | Collection sets, Quick/Target collection | Missing | flat list of collections | S | L |
-| Keywording (add/remove, autocomplete) | Partial | comma list on the selection, `XMP-dc:Subject`, datalist (`/api/keywords`); no keyword list panel with counts | S | M |
-| Keyword hierarchy, synonyms, export flags | Missing | no `HierarchicalSubject` anywhere | M | M |
+| Keywording (add/remove, autocomplete) | Done | comma list on the selection, `XMP-dc:Subject`, datalist (`/api/keywords`); Keyword List panel in the Library sidebar with per-keyword counts, click to filter, `+`/double-click/drag to tag the selection, rename (merge on collision) and delete across photos and sidecars (`kwapi.py`, `keywordlib.py`, `static/js/keyword-panel.js`). Sidecars rewritten in the background, not browser-verified in Lightroom | - | - |
+| Keyword hierarchy, synonyms, export flags | Partial | `XMP-lr:HierarchicalSubject` written next to `dc:Subject` and read back; parent > child tree with subtree counts; synonyms and "include on export" stored in `.photo-room-keywords.json` and honoured by the export job (hidden keywords and their paths are stripped from the output). Names are unique library-wide (a keyword cannot sit under two parents); synonyms are not written to XMP nor searched; the flag does not apply to the CLI `export` or to Lightroom itself | S | L |
 | Metadata panel (read EXIF/IPTC) | Missing | no EXIF readout anywhere in `templates/editor.html` or `static/js` | S | H |
 | Metadata editing (title, caption, creator, copyright, location) | Missing | only rating, label, keywords are written; no `Copyright`/`Caption` write path | M | H |
 | Metadata presets | Missing | no code | S | H (for copyright) |
@@ -282,7 +282,7 @@ Lightroom features is in the matrix above.
 | 14 | **Export sizing and destination**: short edge, megapixels, percent, subfolder, same-as-original, Export with Previous | Daily export ergonomics | S | `exporter.py`, `export_api.py`, export dialog |
 | 15 | **More local sliders**: whites, blacks, hue, noise, colour tint (reuse global kernels) | Closes most of the local-adjustment slider gap | M | `masks.py`, `editor.py` |
 | 16 | **Range masks (luminance, colour) and mask combine** | The first non-geometric masking; makes brush masks reusable | M | `masks.py`, `static/js/develop-masks.js` |
-| 17 | **Keyword list panel with counts, hierarchy (`lr:HierarchicalSubject`)** | Keyword workflow beyond a text box | M | `library.py`, `libapi.py`, new JS panel |
+| 17 | ~~**Keyword list panel with counts, hierarchy (`lr:HierarchicalSubject`)**~~ done | Keyword workflow beyond a text box | M | `keywordlib.py`, `kwapi.py`, `static/js/keyword-panel.js` |
 | 18 | **DCP / camera-profile import** (Adobe-style colour and base curve) | The largest reason an edit will not look like Lightroom's | L | `colour.py`, `render_kernels.py`, new `dcp.py` |
 | 19 | **Folders panel with move/rename** that rewrites sidecars, `*.photoroom.json`, masks JSON and catalog paths together | Library management on disk | M | `libapi.py`, `catalog.py`, `library.py` |
 | 20 | **Stacks** (auto from Smart cull burst groups) | Reduces grid noise after a burst-heavy shoot | M | `catalog.py`, `cull.py`, `static/js/library-module.js` |

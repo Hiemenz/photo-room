@@ -134,3 +134,21 @@ body { padding-top: 30px; }
 #smart-dlg select, #smart-dlg input { font: inherit; font-size: 11px; padding: 3px 5px; border-radius: 4px;
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
 #smart-dlg .rule input { flex: 1; min-width: 0; }
+
+/* Keyword list panel */
+#kw-search { margin: 0 12px 4px; width: calc(100% - 24px); box-sizing: border-box; font-size: 11px; }
+#kw-tree { padding-bottom: 12px; }
+.kw { display: flex; align-items: center; gap: 3px; padding: 3px 8px 3px 6px; cursor: pointer; color: var(--muted); }
+.kw:hover { background: var(--panel-2); color: var(--text); }
+.kw.active { background: var(--panel-2); color: var(--text); border-left: 2px solid var(--accent); }
+.kw .tg { width: 12px; flex-shrink: 0; text-align: center; opacity: .7; }
+.kw .nm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kw .ct { opacity: .6; font-variant-numeric: tabular-nums; }
+.kw .act { display: none; background: none; border: 0; color: var(--muted); padding: 0 2px; cursor: pointer; }
+.kw:hover .act { display: inline; }
+.kw .act:hover { color: var(--text); }
+.kw.noexp .nm::after { content: " (no export)"; opacity: .5; font-size: 9px; }
+.kw-edit { padding: 6px 10px; background: var(--panel-2); display: grid; gap: 4px; font-size: 11px; }
+.kw-edit input[type=text] { width: 100%; box-sizing: border-box; font-size: 11px; }
+.kw-edit .row { display: flex; gap: 4px; align-items: center; }
+.lcell.kwdrop { outline: 2px solid var(--accent); outline-offset: -2px; }
