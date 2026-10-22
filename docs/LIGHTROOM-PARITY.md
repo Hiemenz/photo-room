@@ -91,7 +91,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Watched-folder auto import | Partial | `process.py watch` converts as files arrive; `watch-cards` for cards | - | - |
 | Grid view with thumbnails | Done | `libindex.py` paged API (200/page), embedded-JPEG thumbs (`thumbs.py`), background builder, live updates over SSE. `tests/test_libindex.py`, `tests/ui/test_library_live_ui.py` | - | - |
 | Grid cell size / density / badge options | Missing | fixed cell size; badges for stars, flag, label, virtual copy | S | L |
-| Loupe / Quick look | Partial | `Space` shows a 2048 px smart preview (`smartpreview.py`); Develop has Fit/Fill/100/200% zoom (`tile_server.py`). No info overlay, no navigator | S | M |
+| Loupe / Quick look | Partial | `Space` shows a 2048 px smart preview (`smartpreview.py`); Develop has Fit/Fill/100/200% zoom (`tile_server.py`). No info overlay (the Navigator is in the Develop panel) | S | M |
 | Compare and Survey | Done | `compare-survey.js`; `c`, `n`. `tests/test_collections.py` | - | - |
 | Star ratings, pick/reject, colour labels | Done | `XMP-xmp:Rating` (-1 reject), `XMP-xmp:Label`; pick is catalog-only (not a Lightroom field). `tests/test_ratings.py`, `tests/test_library.py` | - | - |
 | Stacks | Missing | no code (Smart cull already groups bursts, so the data exists) | M | M |
@@ -129,7 +129,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Vibrance, Saturation | Done | `editor._stage_saturation` | - | - |
 | Histogram, clipping overlay (J), RGB readout | Done | `/api/develop/histogram`, `/clipping`, `/wb_pick` | - | - |
 | Zoom/pan, Fit/Fill/100/200% | Done | `/api/tile`, `tests/test_tiles.py`, `tests/ui/test_zoom_ui.py` | - | - |
-| Navigator panel | Missing | ROADMAP "Not wired yet" | S | M |
+| Navigator panel | Done | Top of the Develop side panel (`navigator.js`): whole-photo preview with the visible-region rectangle; click or drag pans; first click while at Fit zooms to 100%; hover shows Fit / Fill / 100% / 200% presets | S | M |
 | Profile browser (Adobe Color, Landscape, Portrait...) | Missing | output is LibRaw's camera matrix to sRGB/Adobe/ProPhoto; no camera profile layer | L | H |
 | DCP / ICC camera profile import | Missing | no code | L | M |
 | Creative profiles / LUT looks | Done | `.cube` import + 30 built-in presets (`lut.py`, `presetlib.py`, `looks_api.py`). `tests/test_lut.py`, `tests/test_looks_*.py` | - | - |
