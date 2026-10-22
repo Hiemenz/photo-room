@@ -649,9 +649,9 @@ LUT into the pixels and keep all metadata.
 ## Card ingest
 
 ```bash
-uv run photo-room ingest cards                          # what's mounted, and what looks like a card
+uv run photo-room ingest cards                          # cards under /Volumes (macOS) or /media, /run/media, /mnt (Linux)
 uv run photo-room ingest watch -o ~/Pictures/library/   # wait for a card, then ingest it
-uv run photo-room ingest run /Volumes/EOS_DIGITAL -o ~/Pictures/library/
+uv run photo-room ingest run /Volumes/EOS_DIGITAL -o ~/Pictures/library/   # Linux: /media/$USER/EOS_DIGITAL
 
 # Develop a shoot again after the learned style has improved
 uv run photo-room ingest run /Volumes/EOS_DIGITAL -o ~/Pictures/library/ --no-skip
