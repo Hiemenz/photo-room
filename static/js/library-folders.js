@@ -1,7 +1,8 @@
 // ---- Folders panel -------------------------------------------------------
 // Tree with photo counts; click filters the grid, drop photos on a folder to
 // move them (sidecars, edits, virtual copies and collections follow). Nothing
-// is deleted or overwritten; Undo reverses the last move or rename.
+// is deleted or overwritten; Undo reverses the last move or rename. Drag a
+// folder onto another folder (or onto the library root) to move the whole folder.
 let foFolders = [], foUndo = null;
 const foCollapsed = new Set();
 
@@ -42,12 +43,20 @@ function foRender() {
       }
       foSelect(f.path);
     });
+    if (f.path) {                      // the library root itself cannot be moved
+      el.draggable = true;
+      el.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", "photo-room-folder:" + f.path);
+        e.dataTransfer.effectAllowed = "move";
+      });
+    }
     el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("drop"); });
     el.addEventListener("dragleave", () => el.classList.remove("drop"));
     el.addEventListener("drop", (e) => {
       e.preventDefault(); el.classList.remove("drop");
       const t = e.dataTransfer.getData("text/plain");
       if (t.startsWith("photo-room:")) foMovePhotos(JSON.parse(t.slice(11)), f.path);
+      else if (t.startsWith("photo-room-folder:")) foMoveFolder(t.slice(18), f.path);
     });
     list.appendChild(el);
   }
@@ -78,6 +87,18 @@ async function foMovePhotos(paths, dest) {
   if (!paths.length) return;
   const data = await post("/api/folders/move", { paths, dest });
   await foAfter(data, `Moved ${paths.length} photo(s) with their sidecars and edits`);
+}
+
+// Move a whole folder (photos, sidecars, edits, collections and picks follow) into `dest`.
+async function foMoveFolder(path, dest) {
+  const name = path.split("/").pop();
+  if (path === dest || dest.startsWith(path + "/")) return setStatus("A folder cannot be moved into itself", true);
+  if (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) === dest : dest === "") return;   // already there
+  if (!confirm(`Move the folder "${name}" into ${dest || "the library root"}? Its photos, edits and collections follow. Undo reverses it.`)) return;
+  const inside = libFolder !== null && (libFolder === path || libFolder.startsWith(path + "/"));
+  const data = await post("/api/folders/move_folder", { path, dest });
+  if (!data.error && inside) libFolder = (dest ? dest + "/" : "") + name + libFolder.slice(path.length);
+  await foAfter(data, `Moved folder ${name}`);
 }
 
 async function foNew() {

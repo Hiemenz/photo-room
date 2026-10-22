@@ -417,7 +417,7 @@ def build_items(root: Path, paths: list[Path]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 FILTER_KEYS = ("rating_min", "rating_op", "flag", "label", "keyword", "camera", "lens", "iso_min",
-               "iso_max", "focal_min", "focal_max", "filetype", "edit", "gps", "date_from", "date_to", "q")
+               "iso_max", "focal_min", "focal_max", "filetype", "edit", "gps", "gps_box", "date_from", "date_to", "q")
 
 
 def normalize_filetype(value) -> str:
@@ -433,6 +433,28 @@ def item_filetype(it: dict) -> str:
     return os.path.splitext(it.get("src_path") or it["path"])[1].lstrip(".").lower()
 
 
+def parse_box(value) -> tuple[float, float, float, float] | None:
+    """'south,west,north,east' -> a tuple, or None when empty. Raises ValueError."""
+    if value in (None, ""):
+        return None
+    try:
+        s, w, n, e = (float(x) for x in str(value).split(","))
+    except ValueError:
+        raise ValueError("gps_box is south,west,north,east") from None
+    if not (-90 <= s <= n <= 90) or not (-180 <= w <= 180 and -180 <= e <= 180):
+        raise ValueError("gps_box is out of range")
+    return s, w, n, e
+
+
+def in_box(it: dict, box) -> bool:
+    lat, lon = it.get("lat"), it.get("lon")
+    if lat is None or lon is None:
+        return False
+    s, w, n, e = box
+    inside = w <= lon <= e if w <= e else (lon >= w or lon <= e)      # west > east crosses the antimeridian
+    return s <= lat <= n and inside
+
+
 def filter_items(items: list[dict], f: dict) -> list[dict]:
     """
     Keep items matching every given criterion.
@@ -441,7 +463,8 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
     unflagged); label (a colour or "none"); keyword (exact, case-insensitive);
     camera / lens (exact, case-insensitive); iso_min / iso_max; date_from / date_to (YYYY-MM-DD,
     inclusive); focal_min / focal_max (mm); filetype (extension, e.g. cr2);
-    edit ("edited" / "unedited"); gps ("yes" / "no"); q (every word must appear in the name, a keyword or the camera).
+    edit ("edited" / "unedited"); gps ("yes" / "no"); gps_box ("south,west,north,east", geotagged photos inside);
+    q (every word must appear in the name, a keyword or the camera).
     """
     rating = f.get("rating_min")
     rating = None if rating in (None, "") else int(rating)
@@ -463,6 +486,7 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
     gps = (f.get("gps") or "").lower()
     if gps not in ("", "yes", "no"):
         raise ValueError("gps must be yes or no")
+    box = parse_box(f.get("gps_box"))
     d_from = (f.get("date_from") or "")[:10]
     d_to = (f.get("date_to") or "")[:10]
     words = (f.get("q") or "").lower().split()
@@ -506,6 +530,8 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
         if edit and bool(it.get("edited")) != (edit == "edited"):
             continue
         if gps and bool(it.get("gps")) != (gps == "yes"):
+            continue
+        if box and not in_box(it, box):
             continue
         if d_from or d_to:
             day = it["date"][:10]

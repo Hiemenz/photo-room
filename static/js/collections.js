@@ -1,6 +1,15 @@
 // ---- Collections ---------------------------------------------------------
-let collections = [];
+// Collections nest inside collection sets (`parent`, listed depth-first with a
+// `depth`). The Quick Collection is a manual collection flagged `quick`; B adds
+// the selection to the Target Collection (the Quick Collection until another is chosen).
+let collections = [], colTarget = null;
+const colCollapsed = new Set();
 const collectionById = (id) => collections.find(c => c.id === id);
+
+function colVisible(c) {
+  for (let p = collectionById(c.parent); p; p = collectionById(p.parent)) if (colCollapsed.has(p.id)) return false;
+  return true;
+}
 
 async function colLoad() {
   let data;
@@ -11,31 +20,53 @@ async function colLoad() {
 
 function colApply(data) {
   collections = data.collections || [];
+  if ("target" in data) colTarget = data.target;
   if (libCollection && !collectionById(libCollection)) { libCollection = ""; libLoad(true); }
   const list = $("col-list");
   list.innerHTML = "";
   for (const c of collections) {
+    if (!colVisible(c)) continue;
     const el = document.createElement("div");
-    el.className = "col" + (c.id === libCollection ? " active" : "");
+    const manual = !c.smart && !c.set;
+    el.className = "col" + (c.id === libCollection ? " active" : "") + (c.set ? " set" : "")
+      + (c.id === colTarget ? " target" : "");
     el.dataset.id = c.id;
-    el.innerHTML = `<span>${c.smart ? "◆" : "▤"}</span><span class="nm"></span><span class="ct"></span>`
-      + `<button class="act" data-a="edit" title="${c.smart ? "Edit rules" : "Rename"}">✎</button>`
-      + `<button class="act" data-a="del" title="Delete collection (photos stay)">✕</button>`;
+    el.style.paddingLeft = (12 + (c.depth || 0) * 12) + "px";
+    const icon = c.set ? (colCollapsed.has(c.id) ? "▸" : "▾") : c.quick ? "◈" : c.smart ? "◆" : "▤";
+    el.innerHTML = `<span class="tw">${icon}</span><span class="nm"></span><span class="ct"></span>`
+      + (manual ? `<button class="act" data-a="target" title="${c.id === colTarget ? "This is the Target Collection (B adds the selection)" : "Make this the Target Collection (B adds the selection)"}">◎</button>` : "")
+      + (c.quick ? `<button class="act" data-a="clear" title="Empty the Quick Collection (photos stay)">Clear</button>` : "")
+      + (c.quick ? "" : `<button class="act" data-a="edit" title="${c.smart ? "Edit rules" : "Rename"}">✎</button>`
+        + `<button class="act" data-a="del" title="${c.set ? "Delete set (its collections move up)" : "Delete collection (photos stay)"}">✕</button>`);
     el.querySelector(".nm").textContent = c.name;
-    el.querySelector(".ct").textContent = c.count;
+    el.querySelector(".ct").textContent = c.set ? "" : c.count;
     el.addEventListener("click", (e) => {
       const a = e.target.dataset?.a;
       if (a === "del") return colDelete(c);
       if (a === "edit") return c.smart ? openSmartDialog(c) : colRename(c);
+      if (a === "target") return colSetTarget(c.id === colTarget && !c.quick ? "" : c.id);
+      if (a === "clear") return colClear(c);
+      if (c.set && e.target.classList.contains("tw")) {
+        colCollapsed.has(c.id) ? colCollapsed.delete(c.id) : colCollapsed.add(c.id);
+        return colApply({ collections });
+      }
       colSelect(c.id);
     });
-    if (!c.smart) {
+    if (!c.quick) {
+      el.draggable = true;
+      el.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", "photo-room-col:" + c.id);
+        e.dataTransfer.effectAllowed = "move";
+      });
+    }
+    if (manual || c.set) {
       el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("drop"); });
       el.addEventListener("dragleave", () => el.classList.remove("drop"));
       el.addEventListener("drop", (e) => {
         e.preventDefault(); el.classList.remove("drop");
         const t = e.dataTransfer.getData("text/plain");
-        if (t.startsWith("photo-room:")) colAdd(c.id, JSON.parse(t.slice(11)));
+        if (t.startsWith("photo-room-col:")) { if (c.set) colMove(t.slice(15), c.id); }
+        else if (t.startsWith("photo-room:") && manual) colAdd(c.id, JSON.parse(t.slice(11)));
       });
     }
     list.appendChild(el);
@@ -44,9 +75,9 @@ function colApply(data) {
   $("col-all-ct").textContent = "";
   const sel = $("lib-addto");
   sel.innerHTML = `<option value="">Add to collection…</option>`;
-  for (const c of collections.filter(c => !c.smart)) {
+  for (const c of collections.filter(c => !c.smart && !c.set)) {
     const o = document.createElement("option");
-    o.value = c.id; o.textContent = c.name;
+    o.value = c.id; o.textContent = c.name + (c.id === colTarget ? " (target)" : "");
     sel.appendChild(o);
   }
 }
@@ -56,12 +87,59 @@ function colSelect(id) {
   libLoad(true); colApply({ collections });
 }
 $("col-all").addEventListener("click", () => colSelect(""));
+// Dropping a collection or set on "All photographs" takes it out of its set.
+$("col-all").addEventListener("dragover", (e) => { e.preventDefault(); });
+$("col-all").addEventListener("drop", (e) => {
+  e.preventDefault();
+  const t = e.dataTransfer.getData("text/plain");
+  if (t.startsWith("photo-room-col:")) colMove(t.slice(15), "");
+});
+
+// New collections and sets go inside the selected set.
+const colParent = () => (collectionById(libCollection)?.set ? libCollection : "");
+async function colNewSet() {
+  const name = prompt("Collection set name");
+  if (!name) return;
+  const data = await post("/api/collections/create", { name, set: true, parent: colParent() });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data);
+  setStatus(`Created collection set ${name}`);
+}
+async function colMove(id, parent) {
+  const data = await post("/api/collections/move", { id, parent });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data);
+}
+async function colSetTarget(id) {
+  const data = await post("/api/collections/target", { id });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data);
+  setStatus("Target Collection: " + (collectionById(data.target)?.name || "none yet (the Quick Collection is made on first use)"));
+}
+async function colClear(c) {
+  if (!confirm(`Empty "${c.name}"? The photos themselves are not deleted.`)) return;
+  const data = await post("/api/collections/clear", { id: c.id });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data); if (libCollection === c.id) libLoad(true);
+}
+// B: add the selection to the Target Collection, or take it out when it is all in there already.
+async function colToggleTarget() {
+  const photos = libTargets();
+  if (!photos.length) return setStatus("Select a photo first", true);
+  const data = await post("/api/collections/target_toggle", { photos });
+  if (data.error) return setStatus(data.error, true);
+  colApply(data);
+  setStatus(`${data.action === "added" ? "Added" : "Removed"} ${photos.length} photo(s) ${data.action === "added" ? "to" : "from"} ${data.collection}`);
+  if (libCollection === colTarget) libLoad(true);
+}
+$("col-set").addEventListener("click", colNewSet);
+$("lib-target").addEventListener("click", colToggleTarget);
 
 async function colNew() {
   const name = prompt("Collection name");
   if (!name) return;
   const photos = libTargets();
-  const data = await post("/api/collections/create", { name, photos });
+  const data = await post("/api/collections/create", { name, photos, parent: colParent() });
   if (data.error) return setStatus(data.error, true);
   colApply(data);
   setStatus(`Created collection ${name}` + (photos.length ? ` with ${photos.length} photo(s)` : ""));
@@ -74,7 +152,8 @@ async function colRename(c) {
   colApply(data);
 }
 async function colDelete(c) {
-  if (!confirm(`Delete the collection "${c.name}"? The photos themselves are not deleted.`)) return;
+  if (!confirm(c.set ? `Delete the set "${c.name}"? Its collections move up a level and no photos are deleted.`
+    : `Delete the collection "${c.name}"? The photos themselves are not deleted.`)) return;
   const data = await post("/api/collections/delete", { id: c.id });
   if (data.error) return setStatus(data.error, true);
   colApply(data);
@@ -175,7 +254,7 @@ $("sd-save").addEventListener("click", async () => {
   const rules = readRules(), match = $("sd-match").value;
   const data = smartEditing
     ? await post("/api/collections/rules", { id: smartEditing.id, rules, match })
-    : await post("/api/collections/create", { name: $("sd-name").value, smart: true, rules, match });
+    : await post("/api/collections/create", { name: $("sd-name").value, smart: true, rules, match, parent: colParent() });
   if (data.error) return setStatus(data.error, true);
   $("smart-dlg").classList.remove("on");
   colApply(data);

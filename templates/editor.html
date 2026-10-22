@@ -96,7 +96,7 @@
     <aside id="lib-side" aria-label="Collections">
       <div class="col active" id="col-all" data-id=""><span class="nm">All photographs</span><span class="ct" id="col-all-ct"></span></div>
       <h3><span>Collections</span><span>
-        <button id="col-new" title="New collection (from the selection, if any)">+</button><button id="col-smart" title="New smart collection">+ Smart</button></span></h3>
+        <button id="col-new" title="New collection (from the selection, if any)">+</button><button id="col-set" title="New collection set (collections can be dragged into it)">+ Set</button><button id="col-smart" title="New smart collection">+ Smart</button></span></h3>
       <div id="col-list"></div>
       <h3><span>Keywords</span><span><button id="kw-new" title="New keyword">+</button></span></h3>
       <input id="kw-search" type="search" placeholder="Find keyword" aria-label="Find keyword">
@@ -118,6 +118,7 @@
   </div>
   <div id="loupe" hidden role="dialog" aria-label="Quick look">
     <img id="loupe-img" alt=""><div id="loupe-info"></div>
+    <div id="loupe-ov" hidden aria-label="Photo info (I to change)"></div>
   </div>
   <div id="lib-foot">
     <span id="lib-count"></span>
@@ -130,6 +131,20 @@
     <button id="lib-backup" title="Back up catalog, flags, history and cull data">Back up</button>
     <input type="file" id="import-files" multiple hidden>
     <input type="file" id="import-folder" webkitdirectory multiple hidden>
+    <label class="view-opt" title="Grid cell size">Size <input type="range" id="lib-cell" min="100" max="360" step="10" value="170"></label>
+    <select id="lib-density" title="Grid spacing"><option value="compact">Compact</option><option value="normal" selected>Normal</option><option value="roomy">Roomy</option></select>
+    <details id="lib-badges"><summary title="Choose what the grid cells show">Badges</summary>
+      <div class="pop">
+        <label><input type="checkbox" data-badge="name" checked> File name</label>
+        <label><input type="checkbox" data-badge="stars" checked> Stars</label>
+        <label><input type="checkbox" data-badge="label" checked> Colour label</label>
+        <label><input type="checkbox" data-badge="flag" checked> Pick / reject flag</label>
+        <label><input type="checkbox" data-badge="gps"> Geotagged pin</label>
+        <label><input type="checkbox" data-badge="edited"> Edited mark</label>
+        <label><input type="checkbox" data-badge="kind" checked> File type tag</label>
+      </div>
+    </details>
+    <button id="lib-map" title="Where the photos were taken (geotagged photos grouped into places)">Map&hellip;</button>
     <button id="lib-vc" title="Virtual copy of the selected photo (V)">Virtual copy</button>
     <button id="lib-vc-del" title="Delete the selected virtual copies; the raw is never touched">Delete copy</button>
     <button id="lib-stack" title="Stack the selected photos (Ctrl+G)">Stack</button>
@@ -138,6 +153,7 @@
     <button id="lib-stack-toggle" title="Collapse or expand every stack (S toggles the selected one)">Collapse / expand stacks</button>
     <select id="lib-addto" title="Add the selection to a collection"><option value="">Add to collection…</option></select>
     <button id="lib-rmcol" title="Remove the selection from this collection" hidden>Remove from collection</button>
+    <button id="lib-target" title="Add the selection to the Target Collection, or remove it (B)">Target (B)</button>
     <button id="lib-compare" title="Compare: a select beside a candidate (C)">Compare</button>
     <button id="lib-survey" title="Survey the selected photos (N)">Survey</button>
     <button id="lib-cull" title="Smart cull: group bursts and suggest picks and rejects (K)">Smart cull</button>
@@ -242,6 +258,19 @@
     <button id="cull-learn-close">Close</button>
   </div>
 </dialog>
+
+<div id="map-dlg" role="dialog" aria-label="Map">
+  <div class="box">
+    <div class="map-head">
+      <b>Map</b><span id="map-info"></span><span style="flex:1"></span>
+      <label>Group <select id="map-zoom"><option value="3">Country (45&deg;)</option><option value="6">Region (6&deg;)</option><option value="8" selected>Area (1.4&deg;)</option><option value="10">City (0.35&deg;)</option><option value="12">Neighbourhood (0.09&deg;)</option><option value="14">Street (0.02&deg;)</option></select></label>
+      <label title="Draw OpenStreetMap tiles behind the points (needs a network connection)"><input type="checkbox" id="map-tiles"> Background map (online)</label>
+      <button id="map-close">Close</button>
+    </div>
+    <svg id="map-plot" viewBox="0 0 640 360" role="img" aria-label="Geotagged photos"></svg>
+    <div id="map-list"></div>
+  </div>
+</div>
 
 <div id="smart-dlg" role="dialog" aria-label="Smart collection">
   <div class="box">
@@ -634,6 +663,8 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/develop-helpers.js') }}"></script>
 <script src="{{ asset('js/navigator.js') }}"></script>
 <script src="{{ asset('js/library-live.js') }}"></script>
+<script src="{{ asset('js/library-view.js') }}"></script>
+<script src="{{ asset('js/map-view.js') }}"></script>
 <script src="{{ asset('js/semantic-search.js') }}"></script>
 <script src="{{ asset('js/import.js') }}"></script>
 <script src="{{ asset('js/import-dialog.js') }}"></script>

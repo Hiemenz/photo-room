@@ -118,10 +118,50 @@ async function loupeShow() {
   }
 }
 loupeShow.n = 0;
+
+// Info overlay (I cycles: off, basic, full). Basic comes from the library row; full adds the
+// exposure and the place, read on demand with exiftool (/api/metadata), cached per photo.
+const LOUPE_INFO = ["off", "basic", "full"];
+let loupeInfoMode = "basic";
+try { const v = localStorage.getItem("loupeInfo"); if (LOUPE_INFO.includes(v)) loupeInfoMode = v; } catch (e) {}
+const loupeMeta = new Map();
+function loupeInfoLines(it, md) {
+  const lines = [];
+  const stars = it.rating > 0 ? "\u2605".repeat(it.rating) : it.rating === -1 ? "rejected" : "";
+  lines.push([it.name, stars, it.flag === "pick" ? "picked" : "", it.label].filter(Boolean).join("  "));
+  lines.push([it.camera, it.lens].filter(Boolean).join("  \u00B7  "));
+  if (md) {
+    const i = md.info || {};
+    lines.push([i.focal_length, i.aperture, i.shutter, i.iso ? "ISO " + i.iso : "", i.dimensions].filter(Boolean).join("  "));
+    if (i.gps) lines.push(i.gps.text);
+  } else {
+    lines.push([it.focal ? it.focal + " mm" : "", it.iso ? "ISO " + it.iso : ""].filter(Boolean).join("  "));
+  }
+  lines.push([it.date, it.keywords?.length ? it.keywords.join(", ") : ""].filter(Boolean).join("  \u00B7  "));
+  return lines.filter(Boolean);
+}
+async function loupeInfoPaint() {
+  const box = $("loupe-ov"), path = libActive, it = path && libItem(path);
+  if (!loupeOn || loupeInfoMode === "off" || !it) { box.hidden = true; return; }
+  const paint = (md) => { if (path === libActive && loupeOn) { box.textContent = loupeInfoLines(it, md).join("\n"); box.hidden = false; } };
+  paint(loupeMeta.get(path));
+  if (loupeInfoMode === "full" && !loupeMeta.has(path)) {
+    try {
+      const d = await (await fetch("/api/metadata?path=" + encodeURIComponent(path))).json();
+      if (d.items && d.items[0]) { loupeMeta.set(path, d.items[0]); paint(d.items[0]); }
+    } catch (e) { /* the basic lines stay */ }
+  }
+}
+function loupeInfoCycle() {
+  loupeInfoMode = LOUPE_INFO[(LOUPE_INFO.indexOf(loupeInfoMode) + 1) % LOUPE_INFO.length];
+  try { localStorage.setItem("loupeInfo", loupeInfoMode); } catch (e) {}
+  setStatus("Loupe info: " + loupeInfoMode);
+  loupeInfoPaint();
+}
 function loupeSet(on) {
   loupeOn = on && module_ === "library" && !!libActive;
   $("loupe").hidden = !loupeOn;
-  if (loupeOn) loupeShow(); else loupeShow.n++;
+  if (loupeOn) { loupeShow(); loupeInfoPaint(); } else { loupeShow.n++; $("loupe-ov").hidden = true; }
 }
 $("loupe").addEventListener("click", () => loupeSet(false));
 document.addEventListener("keydown", (e) => {
@@ -130,10 +170,11 @@ document.addEventListener("keydown", (e) => {
   if (document.querySelector("#cmp.on, #svy.on, #cull.on")) return;
   if (e.key === " ") { e.preventDefault(); e.stopImmediatePropagation(); loupeSet(!loupeOn); return; }
   if (!loupeOn) return;
+  if (e.key === "i" || e.key === "I") { e.preventDefault(); e.stopImmediatePropagation(); loupeInfoCycle(); return; }
   if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); loupeSet(false); }
   else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
     e.preventDefault(); e.stopImmediatePropagation();
-    libMove(e.key === "ArrowRight" ? 1 : -1); loupeShow();
+    libMove(e.key === "ArrowRight" ? 1 : -1); loupeShow(); loupeInfoPaint();
   }
 }, true);
 (function wrap() {

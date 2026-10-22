@@ -159,6 +159,8 @@ app.register_blueprint(backup_api.bp)
 import quick_api  # noqa: E402  (Auto Sync and Quick Develop)
 
 app.register_blueprint(quick_api.bp)
+import map_api  # noqa: E402  (Map view: geotagged photos, clustered, offline)
+app.register_blueprint(map_api.bp)
 import folders_api  # noqa: E402  (Folders panel: tree, create, safe move / rename, undo)
 
 app.register_blueprint(folders_api.bp)
@@ -2201,8 +2203,9 @@ def _all_items() -> list[dict]:
 
 def _collections_body() -> dict:
     counts = catalog.collection_counts(LIBRARY_ROOT, _all_items())
-    return {"collections": [{**c, "count": counts.get(c["id"], 0)}
-                            for c in catalog.list_collections(LIBRARY_ROOT)]}
+    cols = catalog.tree_order(catalog.list_collections(LIBRARY_ROOT))
+    return {"collections": [{**c, "count": counts.get(c["id"], 0)} for c in cols],
+            "target": catalog.target_id(LIBRARY_ROOT)}
 
 
 def _catalog_call(fn):
@@ -2247,7 +2250,8 @@ def api_collection_create():
         photos = _known_ids(payload["photos"]) if payload.get("photos") else []
         col = catalog.create_collection(
             LIBRARY_ROOT, payload.get("name"), smart=smart, rules=payload.get("rules"),
-            match=payload.get("match", "all"), photos=photos)
+            match=payload.get("match", "all"), photos=photos,
+            parent=payload.get("parent") or None, is_set=bool(payload.get("set")))
         return jsonify({"ok": True, "collection": col, **_collections_body()})
     return _catalog_call(run)
 
@@ -2272,6 +2276,60 @@ def api_collection_delete():
 
     def run():
         catalog.delete_collection(LIBRARY_ROOT, str(payload.get("id", "")))
+        return jsonify({"ok": True, **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/move", methods=["POST"])
+def api_collection_move():
+    """Put a collection or set inside a collection set (``parent`` empty: top level)."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        catalog.move_collection(LIBRARY_ROOT, str(payload.get("id", "")), payload.get("parent") or None)
+        return jsonify({"ok": True, **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/target", methods=["POST"])
+def api_collection_target():
+    """Choose the Target Collection (``id`` empty: the Quick Collection)."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        catalog.set_target(LIBRARY_ROOT, str(payload.get("id") or "") or None)
+        return jsonify({"ok": True, **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/target_toggle", methods=["POST"])
+def api_collection_target_toggle():
+    """B: add the photos to the Target Collection, or remove them if all are in it."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        ids = _known_ids(payload.get("photos"))
+        res = catalog.toggle_in_target(LIBRARY_ROOT, ids)
+        return jsonify({"ok": True, "action": res["action"], "collection": res["collection"]["name"],
+                        **_collections_body()})
+    return _catalog_call(run)
+
+
+@app.route("/api/collections/clear", methods=["POST"])
+def api_collection_clear():
+    """Empty a manual collection (typically the Quick Collection); the photos stay."""
+    payload, err = _json_or_error()
+    if err:
+        return err
+
+    def run():
+        catalog.clear_collection(LIBRARY_ROOT, str(payload.get("id", "")))
         return jsonify({"ok": True, **_collections_body()})
     return _catalog_call(run)
 
