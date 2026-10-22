@@ -45,7 +45,8 @@ _SNAP = 2e-4        # XMP stores 5 decimals; values this near 0 or 1 are 0 or 1
 # *different* photo by presets or batch apply. A virtual copy, history entry
 # or snapshot is the same photograph, so those keep everything.
 PHOTO_SPECIFIC_KEYS = frozenset({
-    "crop", "straighten", "spots", "masks",
+    "crop", "straighten", "spots", "masks", "redeye",
+    "rot90", "flip_h", "flip_v", "crop_ratio",
     "xf_vertical", "xf_horizontal", "xf_rotate", "xf_aspect",
     "xf_scale", "xf_x", "xf_y",
 })

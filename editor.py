@@ -37,6 +37,7 @@ import catalog
 import colour
 import colormix
 import editversion
+import extras
 import folders
 import fsutil
 import imgload
@@ -739,7 +740,7 @@ def _fast_base(path: Path, base: np.ndarray) -> np.ndarray:
 
 
 def fast_ok(adj: dict) -> bool:
-    return not (adj.get("spots") or adj.get("lens_profile") or adj.get("ca_remove")
+    return not (adj.get("spots") or adj.get("redeye") or adj.get("lens_profile") or adj.get("ca_remove")
                 or adj.get("_raw_frame"))
 
 
@@ -1005,6 +1006,7 @@ def save_adjustments(
     photographer's decision rather than a default.
     """
     masks_full = adj.get("masks") if "masks" in adj else None
+    extras_full = dict(adj) if any(k in adj for k in extras.KEYS) else None
     aspect = _output_aspect(frame_size, adj)
     adj = effective_adjustments(adj)
     if aspect:
@@ -1024,6 +1026,7 @@ def save_adjustments(
         verify_xmp_written(edit_target(path),
                            {"ColorTemperature": str(int(adj.get("color_temp", 5500)))})
         _save_mask_sidecar(path, masks_full)
+        _save_extras_sidecar(path, extras_full)
         return
 
     result = subprocess.run(
@@ -1042,6 +1045,7 @@ def save_adjustments(
     if sidecar:
         write_sidecar(path, adj)
     _save_mask_sidecar(path, masks_full)
+    _save_extras_sidecar(path, extras_full)
 
 
 def _output_aspect(frame_size: tuple[float, float] | None, adj: dict) -> float | None:
@@ -1063,6 +1067,12 @@ def _save_mask_sidecar(path: Path, masks_full) -> None:
         masks.save_sidecar(path, masks_full)
 
 
+def _save_extras_sidecar(path: Path, adj) -> None:
+    """Shapes, red-eye, orientation and crop ratio beside the photo (None = the caller said nothing)."""
+    if adj is not None:
+        extras.save_sidecar(path, adj)
+
+
 def read_saved_adjustments(
     path: Path,
     prefer_sidecar: bool = True,
@@ -1082,6 +1092,7 @@ def read_saved_adjustments(
     if found:
         values = dict(values or {})
         values["masks"] = found
+    values = extras.merge_into(values, extras.load_sidecar(path))
     if values and values.get("crop") and float(values.get("straighten") or 0):
         if source_size is None:
             base, _ = _load_base_render(path)
@@ -1679,6 +1690,9 @@ def api_preview():
             # Spot editing shows the uncropped frame so clicks map straight
             # onto the stored coordinates.
             adj = {**adj, "_raw_frame": True}
+        if payload.get("uncropped"):
+            # The crop tool shows the whole frame, so its box maps straight onto the picture.
+            adj = {**adj, "crop": None}
         seq = payload.get("seq")
         if not isinstance(seq, int) or isinstance(seq, bool):
             return jsonify(render_with_histogram(path, adj))
@@ -1773,7 +1787,7 @@ def api_upright():
         # result is what the sliders should be set to from neutral.
         adj = {k: v for k, v in (payload.get("adjustments") or {}).items()
                if not k.startswith("xf_")}
-        framed = retouch.apply_corrections(base, lens.attach_meta(path, adj))
+        framed = retouch.orient(retouch.apply_corrections(base, lens.attach_meta(path, adj)), adj)
         found = retouch.transform.upright(framed, mode)
         info = found.pop("info", {})
         return jsonify({"ok": True, "mode": mode, "values": found, "detected": info,
@@ -1806,13 +1820,61 @@ def api_spot_suggest():
         return jsonify({"error": describe_error(exc)}), 500
 
 
+@app.route("/api/spot/dust", methods=["POST"])
+def api_spot_dust():
+    """Propose spots for sensor dust and specks, each with a suggested source."""
+    try:
+        payload = _json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        path = _resolve_photo(payload["path"])
+        sensitivity = float(payload.get("sensitivity", 50))
+    except (ValueError, KeyError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        base, _ = _load_base_render(path)
+        found = retouch.spots.find_dust(base, sensitivity)
+        small = base
+        scale = min(1.0, 400.0 / max(base.shape[:2]))
+        if scale < 1.0 and cv2 is not None:
+            small = cv2.resize(base, (max(16, int(base.shape[1] * scale)), max(16, int(base.shape[0] * scale))),
+                               interpolation=cv2.INTER_AREA)
+        for c in found:
+            c["sx"], c["sy"] = retouch.spots.suggest_source(small, c["x"], c["y"], c["r"])
+        return jsonify({"ok": True, "candidates": found})
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
+@app.route("/api/spot/visualise", methods=["POST"])
+def api_spot_visualise():
+    """The Visualize Spots map (white page, detail in black) as a PNG data URL."""
+    try:
+        payload = _json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        path = _resolve_photo(payload["path"])
+        threshold = float(payload.get("threshold", 50))
+    except (ValueError, KeyError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        base, _ = _load_base_render(path)
+        buf = io.BytesIO()
+        Image.fromarray(retouch.spots.visualise(base, threshold), "L").save(buf, format="PNG")
+        return jsonify({"ok": True, "image": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")})
+    except Exception as exc:
+        return jsonify({"error": describe_error(exc)}), 500
+
+
 def _save_frames(path: Path, chosen: dict):
     """(frame_size, source_size) save_adjustments needs for ``chosen`` on ``path``.
 
     Used by every writer (single save, batch apply) so they cannot disagree.
     """
     needs_frame = (float(chosen.get("straighten", 0) or 0) or chosen.get("masks")
-                   or chosen.get("spots") or not retouch.transform.is_identity(chosen))
+                   or chosen.get("spots") or chosen.get("rot90") or not retouch.transform.is_identity(chosen))
     if not needs_frame:
         return None, None
     base, _ = _load_base_render(path)
@@ -2698,6 +2760,7 @@ def api_reset():
             save_adjustments(path, neutral)
         if not vc:
             masks.delete_sidecar(path)    # a virtual copy keeps its masks in the catalog
+            extras.delete_sidecar(path)
         neutral.update(copy.deepcopy(retouch.DEFAULTS))
         if vc:
             catalog.update_virtual(LIBRARY_ROOT, vc[1]["id"], adjustments=neutral)

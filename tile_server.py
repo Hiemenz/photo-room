@@ -201,7 +201,7 @@ def _complex(adj: dict) -> bool:
 
     if adj.get("spots") or adj.get("masks") or float(adj.get("straighten", 0) or 0):
         return True
-    return any(adj.get(k, d) != d for k, d in retouch.DEFAULTS.items() if k != "spots")
+    return any(adj.get(k, d) != d for k, d in retouch.DEFAULTS.items() if k not in ("spots", "crop_ratio"))
 
 
 def _crop_rect(adj: dict, w: int, h: int) -> tuple[int, int, int, int]:
@@ -226,9 +226,10 @@ def geometry_size(adj: dict, w: int, h: int) -> tuple[int, int]:
     geometry.py) and Crop, for a w x h source. Matches what the pipeline renders.
     """
     import geometry
+    import retouch
     import transform
 
-    tw, th = transform.output_size(w, h, adj)
+    tw, th = transform.output_size(*retouch.oriented_size(w, h, adj), adj)
     angle = float(adj.get("straighten", 0.0) or 0.0)
     if angle:
         kw, kh = geometry.largest_inscribed_rect(tw, th, np.deg2rad(angle))

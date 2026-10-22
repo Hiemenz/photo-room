@@ -88,6 +88,10 @@ body { padding-top: 30px; }
 }
 #lib-foot .swatch { width: 16px; height: 16px; border-radius: 3px; padding: 0; border: 1px solid var(--line); cursor: pointer; }
 #lib-foot .swatch.none { background: none; }
+#lib-foot button.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+#painter-opts { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#painter-opts[hidden], #painter-opts [hidden] { display: none; }
+#lib-grid.painting .lcell { cursor: crosshair; }
 #lib-sentinel { grid-column: 1 / -1; height: 1px; }
 #lib-body { flex: 1; display: flex; min-height: 0; }
 #lib-body #lib-grid { flex: 1; }

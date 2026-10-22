@@ -78,7 +78,9 @@ async function renderPreview(fast = false) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: abort.signal,
-      body: JSON.stringify({ path: current, adjustments: values, raw_frame: spotTool, fast, seq: ++previewSeq }),
+      // While the crop box is up the whole frame is shown, so the box's fractions map straight onto it.
+      body: JSON.stringify({ path: current, adjustments: values, raw_frame: spotTool || redeyeTool,
+                             uncropped: cropping, fast, seq: ++previewSeq }),
     });
     const data = await res.json();
     if (token !== renderToken || data.stale) return;   // a newer render superseded this
@@ -182,7 +184,7 @@ async function openFile(path) {
       ? "Showing previously saved edits"
       : "Showing auto-computed edits (not yet saved)";
 
-    for (const id of ["save", "reset", "copy", "crop-toggle", "spot-toggle", "preset-save", "reset-import", "snap-new"]) $(id).disabled = false;
+    for (const id of ["save", "reset", "copy", "crop-toggle", "spot-toggle", "spot-visualise", "spot-dust", "redeye-toggle", "preset-save", "reset-import", "snap-new"]) $(id).disabled = false;
     $("ba-bar").hidden = false;
     refreshBA();
     $("paste").disabled = !clipboard;
