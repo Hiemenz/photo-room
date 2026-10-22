@@ -65,5 +65,4 @@ After a merge the library index is rescanned so the change feed (SSE) reaches op
 Only synthetic frames (generated clipped brackets; shifted and overlapping textures) and a faked rawpy have been tested.
 Not tried on real CR2/CR3 brackets or real handheld panoramas: ghosting from moving subjects, white-balance variation between
 frames, vignetting seams, parallax, lens distortion, very large (60 MP) inputs and Pi memory limits are all unknown.
-Whether the editor opens the TIFF depends on the non-raw image loader: the Library index (`libindex.RAW_SUFFIXES`) only lists
-raw files on this branch, so until that loader lands the file is written and valid but is not listed.
+The Library lists the output TIFF and Develop opens it through the non-raw image loader (`imgload.py`).

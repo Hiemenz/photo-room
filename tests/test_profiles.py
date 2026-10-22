@@ -447,3 +447,25 @@ def test_api_list_import_delete(client):
     assert client.post("/api/profiles/delete", json={"id": "builtin-vivid"}).status_code == 400
     assert client.post("/api/profiles/delete", json={"id": pid}).get_json()["ok"] is True
     assert not P.exists(pid)
+
+
+# ---------------------------------------------------------------------------
+# Raw only, like Lightroom: JPEG / TIFF / PNG / HEIC take no camera profile
+# ---------------------------------------------------------------------------
+
+def test_for_source_drops_the_profile_for_images_only(tmp_path):
+    adj = {"camera_profile": "builtin-vivid", "exposure": 1.0}
+    for name in ("a.jpg", "a.TIF", "a.png"):
+        out = P.for_source(tmp_path / name, adj)
+        assert out["camera_profile"] == "" and out["exposure"] == 1.0
+    assert adj["camera_profile"] == "builtin-vivid"            # input untouched
+    assert P.for_source(tmp_path / "a.cr2", adj) is adj
+    assert P.for_source(tmp_path / "a.jpg", {"exposure": 1}) == {"exposure": 1}
+
+
+def test_thumb_endpoint_rejects_images(client, tmp_path, monkeypatch):
+    from PIL import Image
+    monkeypatch.setattr(editor, "LIBRARY_ROOT", tmp_path)
+    Image.new("RGB", (32, 24), (200, 100, 50)).save(tmp_path / "a.jpg")
+    r = client.get("/api/profiles/thumb", query_string={"path": "a.jpg", "id": "builtin-vivid"})
+    assert r.status_code == 400 and "raw" in r.get_json()["error"]

@@ -10,7 +10,7 @@ function profileNote(msg, isErr = false) {
 }
 
 function profileThumb(p) {
-  if (!current) return "";
+  if (!current || sourceKind === "image") return "";   // profiles are raw-only
   const q = new URLSearchParams({ path: current, id: p.id, baseline_temp: baselineTemp || 5500, v: p.rev || "" });
   return `/api/profiles/thumb?${q}`;
 }
@@ -40,6 +40,10 @@ function renderProfiles() {
 // Called by paintAll(): keep the panel in step with `values` (history jumps, a new photo, reset).
 function paintProfiles() {
   if (!$("profile-select")) return;
+  // Like Lightroom: JPEG/TIFF/PNG/HEIC have no camera profile; the panel is hidden for them.
+  const rawOnly = sourceKind === "image";
+  $("profile-panel").hidden = rawOnly;
+  if (rawOnly) return;
   if (current !== profileState.thumbFor && profileState.list.length) {
     profileState.thumbFor = current;
     const imgs = document.querySelectorAll("#profile-grid .look-tile:not(.none) img");
@@ -58,7 +62,7 @@ function paintProfiles() {
 }
 
 async function chooseProfile(id) {
-  if (!current) return;
+  if (!current || sourceKind === "image") return;
   await commitChain;
   values.camera_profile = id;
   if (id) delete values.camera_profile_foreign;

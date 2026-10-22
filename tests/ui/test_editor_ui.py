@@ -210,13 +210,13 @@ def test_hsl_tabs_switch_between_eight_band_groups(opened):
 def test_black_and_white_swaps_in_the_bw_mixer(opened):
     page = opened
     page.locator("details.panel summary", has_text="Color mixer").click()
-    page.locator("label.toggle").click()
+    page.locator("label.toggle:not(.autosync)").click()
     assert page.locator("#s-monochrome").is_checked()
     assert page.locator("#mixer-tabs").is_hidden()
     assert page.locator("#mixer-note").is_visible()
     assert page.locator("#mixer-sliders .ctrl[data-group=gray]:visible").count() == 8
     assert page.locator("#mixer-sliders .ctrl:visible").count() == 8
-    page.locator("label.toggle").click()
+    page.locator("label.toggle:not(.autosync)").click()
     assert page.locator("#mixer-tabs").is_visible()
     assert page.locator("#mixer-sliders .ctrl:visible").count() == 8
 

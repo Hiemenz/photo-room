@@ -107,7 +107,7 @@ def _require_current(adj: dict) -> None:
 
 def _render(path: Path, adj: dict, base, baseline) -> np.ndarray:
     ed = _ed()
-    return ed.apply_adjustments(base, baseline, ed.lens.attach_meta(path, adj),
+    return ed.apply_adjustments(base, baseline, ed.lens.attach_meta(path, ed.profiles.for_source(path, adj)),
                                 cache_id=str(path.resolve()))
 
 

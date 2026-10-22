@@ -152,6 +152,7 @@ async function openFile(path) {
     // JPEG/TIFF/PNG/HEIC have no sensor data: lens/CA profile corrections are raw-only.
     sourceKind = data.source_kind || "raw";
     $("lens-panel").hidden = sourceKind === "image";
+    if (typeof paintProfiles === "function") paintProfiles();
     $("meta").dataset.source = sourceKind;
     $("preview").src = data.preview;
     $("preview").hidden = false;
