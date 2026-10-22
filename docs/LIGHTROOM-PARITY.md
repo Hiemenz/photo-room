@@ -122,7 +122,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Sync / copy-paste settings | Done | `Mod+C/V`, WB re-anchored per camera; spots and crop never copied. `tests/test_batch.py` | - | - |
 | Auto Sync (edit many at once) | Missing | no code | S | M |
 | Painter tool | Missing | no code | S | L |
-| Catalog and backup | Partial | no catalogue: state is JSON/SQLite beside the photos (`.photo-room-library.json`, `.photo-room-catalog.json`, `*.photoroom.json`, `.photo-room-cull.sqlite`). Atomic writes, `.bad` quarantine; no scheduled backup | S | M |
+| Catalog and backup | Partial | no catalogue: state is JSON/SQLite beside the photos (`.photo-room-library.json`, `.photo-room-catalog.json`, `*.photoroom.json`, `.photo-room-cull.sqlite`). Atomic writes, `.bad` quarantine; `photo-room backup`/`restore` (timestamped folder or zip, keep last N, optional hash-verified raw mirror, reminder/auto on editor start) | S | M |
 | Smart previews (offline) | Partial | 2048 px 8-bit decodes for Quick look only; Develop needs the raw | M | L |
 | Smart cull / Assisted Culling | Done | `cull.py`, `cull_api.py`, `docs/AUTO-CULL.md`; burst groups, scores, learned taste, undoable apply. `tests/test_cull*.py` | - | - |
 | Map / GPS | Missing | GPS is preserved on export, never shown | M | L |
