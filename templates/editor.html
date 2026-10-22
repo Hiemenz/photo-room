@@ -302,6 +302,12 @@
 </main>
 
 <aside id="controls">
+  <div id="navigator" hidden aria-label="Navigator">
+    <div id="nav-presets" role="toolbar" aria-label="Zoom presets">
+      <button data-nav="fit">Fit</button><button data-nav="fill">Fill</button><button data-nav="1">100%</button><button data-nav="2">200%</button>
+    </div>
+    <div id="nav-view"><img id="nav-img" alt="" draggable="false"><div id="nav-rect"></div></div>
+  </div>
   <canvas id="histogram" width="560" height="152"></canvas>
   <div id="clip">
     <span id="clip-shadows">shadows 0%</span>
@@ -555,6 +561,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/panels.js') }}"></script>
 <script src="{{ asset('js/zoom.js') }}"></script>
 <script src="{{ asset('js/develop-helpers.js') }}"></script>
+<script src="{{ asset('js/navigator.js') }}"></script>
 <script src="{{ asset('js/library-live.js') }}"></script>
 <script src="{{ asset('js/import.js') }}"></script>
 <script src="{{ asset('js/card-watch.js') }}"></script>
