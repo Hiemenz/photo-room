@@ -142,8 +142,8 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Histogram, clipping overlay (J), RGB readout | Done | `/api/develop/histogram`, `/clipping`, `/wb_pick` | - | - |
 | Zoom/pan, Fit/Fill/100/200% | Done | `/api/tile`, `tests/test_tiles.py`, `tests/ui/test_zoom_ui.py` | - | - |
 | Navigator panel | Missing | ROADMAP "Not wired yet" | S | M |
-| Profile browser (Adobe Color, Landscape, Portrait...) | Missing | output is LibRaw's camera matrix to sRGB/Adobe/ProPhoto; no camera profile layer | L | H |
-| DCP / ICC camera profile import | Missing | no code | L | M |
+| Profile browser (Adobe Color, Landscape, Portrait...) | Partial | Develop > Profile: 7 built-in photo-room profiles (Standard, Neutral, Landscape, Portrait, Vivid, Flat, Monochrome) as a curve + saturation + hue-band layer after the camera-matrix conversion; written to `crs:CameraProfile`. They are not Adobe's profiles (no Adobe Color/Vivid/Standard look). `profiles.py`, `tests/test_profiles.py` | M (Adobe look parity) | H |
+| DCP / ICC camera profile import | Partial | `.dcp` HueSatMap, LookTable and ProfileToneCurve applied; ColorMatrix/ForwardMatrix parsed but not applied (image is already camera-matrix converted); matrix/TRC ICC input profiles re-interpret the colours; A2B ICC refused. Tested on synthetic profiles only, not verified against real Adobe DCPs. `profiles.py` | M | M |
 | Creative profiles / LUT looks | Done | `.cube` import + 30 built-in presets (`lut.py`, `presetlib.py`, `looks_api.py`). `tests/test_lut.py`, `tests/test_looks_*.py` | - | - |
 | Match reference look | Done (beyond Lightroom) | `matchlook.py` | - | - |
 | Black and white, B&W mixer | Done | `colormix.py`, `tests/test_colormix.py` | - | - |
@@ -283,7 +283,7 @@ Lightroom features is in the matrix above.
 | 15 | **More local sliders**: whites, blacks, hue, noise, colour tint (reuse global kernels) | Closes most of the local-adjustment slider gap | M | `masks.py`, `editor.py` |
 | 16 | **Range masks (luminance, colour) and mask combine** | The first non-geometric masking; makes brush masks reusable | M | `masks.py`, `static/js/develop-masks.js` |
 | 17 | **Keyword list panel with counts, hierarchy (`lr:HierarchicalSubject`)** | Keyword workflow beyond a text box | M | `library.py`, `libapi.py`, new JS panel |
-| 18 | **DCP / camera-profile import** (Adobe-style colour and base curve) | The largest reason an edit will not look like Lightroom's | L | `colour.py`, `render_kernels.py`, new `dcp.py` |
+| 18 | **DCP / camera-profile import** (Adobe-style colour and base curve): first version shipped (look tables and curve; camera matrices and two-illuminant blending still to do) | The largest reason an edit will not look like Lightroom's | L | `colour.py`, `render_kernels.py`, new `dcp.py` |
 | 19 | **Folders panel with move/rename** that rewrites sidecars, `*.photoroom.json`, masks JSON and catalog paths together | Library management on disk | M | `libapi.py`, `catalog.py`, `library.py` |
 | 20 | **Stacks** (auto from Smart cull burst groups) | Reduces grid noise after a burst-heavy shoot | M | `catalog.py`, `cull.py`, `static/js/library-module.js` |
 | 21 | **Spot removal: brush shape, visualise spots, dust finder** | Sensor dust is the common retouch job | M | `spots.py`, `retouch.py`, `develop-transform-lens-spots.js` |

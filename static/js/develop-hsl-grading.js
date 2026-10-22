@@ -99,5 +99,6 @@ function paintAll() {
   if (typeof paintMasks === "function") paintMasks();
   paintM8();
   if (typeof paintLooks === "function") paintLooks();
+  if (typeof paintProfiles === "function") paintProfiles();
   if (typeof refreshUpgradeBanner === "function") refreshUpgradeBanner();
 }

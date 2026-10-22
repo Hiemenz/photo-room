@@ -319,6 +319,17 @@
     <button data-ratio="1.7778">16:9</button>
     <button id="crop-reset">Reset</button>
   </div>
+  <details class="panel" id="profile-panel">
+    <summary>Profile</summary>
+    <div class="looks-row">
+      <select id="profile-select" aria-label="Camera profile"><option value="">None (camera matrix only)</option></select>
+      <button id="profile-import" title="Import a DNG camera profile (.dcp) or an ICC input profile">Import&hellip;</button>
+      <button id="profile-delete" disabled>Delete</button>
+    </div>
+    <div id="profile-grid" class="look-grid"></div>
+    <input type="file" id="profile-file" accept=".dcp,.icc,.icm" hidden>
+    <div class="hint" id="profile-note"></div>
+  </details>
   <details class="panel" id="looks-panel">
     <summary>Presets &amp; film styles</summary>
     <div class="seg" id="looks-tabs">
@@ -537,6 +548,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/ratings-filter.js') }}"></script>
 <script src="{{ asset('js/contact-sheet.js') }}"></script>
 <script src="{{ asset('js/looks.js') }}"></script>
+<script src="{{ asset('js/profiles.js') }}"></script>
 <script src="{{ asset('js/develop-crop.js') }}"></script>
 <script src="{{ asset('js/develop-tone-curve.js') }}"></script>
 <script src="{{ asset('js/develop-masks.js') }}"></script>

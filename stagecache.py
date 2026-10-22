@@ -21,6 +21,8 @@ import json
 import threading
 from collections import OrderedDict
 
+import profiles
+
 # Stage order. Index = position in the pipeline.
 GEOMETRY, TONE, SATURATION, MIX, GRADE, DETAIL, FINAL = range(7)
 STAGE_NAMES = ["geometry", "tone", "saturation", "mix", "grade", "detail", "final"]
@@ -58,7 +60,10 @@ def stage_keys(adj: dict, baseline_temp) -> list[str]:
     owned = set(IGNORED)
     for fields in STAGE_FIELDS.values():
         owned |= fields
-    keys = [_dumps({k: v for k, v in adj.items() if k not in owned}) + f"|bt={baseline_temp}"]
+    # The camera profile (a geometry-level setting: it sits right after the camera matrix) is in the
+    # dict dump above by id; its revision also covers an imported file being replaced or deleted.
+    keys = [_dumps({k: v for k, v in adj.items() if k not in owned}) + f"|bt={baseline_temp}"
+            + f"|cp={profiles.revision(adj.get('camera_profile'))}"]
     for stage in range(TONE, FINAL + 1):
         fields = STAGE_FIELDS[stage]
         part = {k: adj[k] for k in sorted(fields) if k in adj}
