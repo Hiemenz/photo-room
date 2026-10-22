@@ -4,6 +4,7 @@
     photo-room doctor [folder]        check the install and say how to fix it
     photo-room ingest ...             same as ingest.py (cards / run / watch)
     photo-room import-lightroom CATALOG --library DIR   import a Lightroom .lrcat (see lrimport.py)
+    photo-room backup <library> -o <dest> | restore <backup> <library> [--force]   snapshot / restore library state
     photo-room watch-cards [library]  import + verify + safely eject cards as they are inserted
 
 The doctor is plain standard library on purpose: it has to keep working when
@@ -296,6 +297,9 @@ def main(argv=None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "doctor":
         sys.exit(doctor_main(argv[1:]))
+    if argv and argv[0] in ("backup", "restore"):
+        import backup
+        sys.exit((backup.main if argv[0] == "backup" else backup.restore_main)(argv[1:]))
     if argv and argv[0] == "ingest":
         if preflight():
             sys.exit(launch_editor([]))  # prints the friendly message and exits 1

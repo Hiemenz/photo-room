@@ -50,8 +50,12 @@ you can run on your Mac with a real card. Companion to
   here; only the manual and generic CA controls are covered by tests.
 - **Virtual copies, history, snapshots and cull data live only beside your
   photos** (`*.photoroom.json`, `.photo-room-catalog.json`,
-  `.photo-room-cull.sqlite`). Lightroom cannot see them and there is no backup
-  tool. Copy the library folder to back them up.
+  `.photo-room-cull.sqlite`). Lightroom cannot see them. Back them up with
+  `photo-room backup <library> -o <dest>` (or the editor's Back up button);
+  restore with `photo-room restore <backup> <library>` (never overwrites
+  without `--force` or a yes at the prompt; verifies SHA-256 first). The
+  thumbnail and index caches are not backed up (they rebuild). Backup is not
+  verified against a real browser session yet (button and reminder toast).
 - **Orientation.** Portrait frames rely on LibRaw applying the camera flip
   (rawpy default). Covered by tests with fakes; check one portrait frame by eye.
 - **Security stance.** Local-only, single user. Do not expose the port.

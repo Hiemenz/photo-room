@@ -148,6 +148,9 @@ import import_api  # noqa: E402  (drag-and-drop / button import, smart previews)
 
 app.register_blueprint(import_api.bp)
 
+import backup_api  # noqa: E402  (library backup / restore, scheduled reminder)
+
+app.register_blueprint(backup_api.bp)
 import quick_api  # noqa: E402  (Auto Sync and Quick Develop)
 
 app.register_blueprint(quick_api.bp)
@@ -2861,6 +2864,9 @@ def main():
     LIBRARY_ROOT = root
 
     print(f"Editing {root}")
+    import backup
+    if backup.maybe_auto_backup(root):
+        print("Scheduled library backup started.")
     if WRITE_SIDECARS:
         print("Saves will also write .xmp sidecars.")
     print(f"Open http://127.0.0.1:{args.port}")
