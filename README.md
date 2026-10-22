@@ -551,6 +551,24 @@ settings, named `<stem>-copy<N>` (for example `IMG_0001-copy2.jpg`) so it
 never overwrites the original. Metadata comes from the raw, with the copy's
 rating, colour label and keywords applied on top.
 
+**Stacks.** Select two or more photos and press `Ctrl/Cmd+G` (or **Stack**) to
+group them; the first selected becomes the top. A collapsed stack is one grid
+cell showing its top photo with a count badge and a layered edge; click the
+badge or press `s` to expand it (members show `position/count`) and again to
+collapse. **Collapse / expand stacks** flips every stack at once, and
+`Ctrl/Cmd+Shift+G` (**Unstack**) takes the selection out of its stacks (a stack
+left with one photo dissolves; a photo belongs to one stack at a time).
+**Auto-stack** groups bursts using the Smart cull grouping (capture time plus
+look-alike hash, best frame on top) for the whole library, the open collection
+or the multi-selection; run a Smart cull analysis first, since photos not yet
+analysed are skipped and counted. Photos already in a stack are left alone.
+Ratings and filters still apply per photo: a collapsed stack shows its top, or
+its first photo matching the filter when the top does not. Stacks are stored
+under `stacks` in `.photo-room-catalog.json`; no raw or sidecar is touched, and
+Lightroom does not see them (it keeps stacks in its own catalog, with no XMP
+field to write). Endpoints: `GET /api/stacks`, `POST /api/stacks/create|remove|state|auto`;
+`/api/library?stacks=0` returns every member.
+
 **Compare (`c`).** Opens the active photo (the "select") beside a candidate.
 Left/Right step the candidate through the grid, Up promotes the candidate to
 select, `0`-`5`/`p`/`x` rate and flag the candidate. The mouse wheel zooms
@@ -658,6 +676,8 @@ type in a text box, number field or menu, and while a dialog is open.
 | `Mod`+`S` | Save adjustments |
 | `Mod`+`Shift`+`E` | Export dialog |
 | `v` | Virtual copy (Library) |
+| `Mod`+`G` / `Mod`+`Shift`+`G` | Stack / unstack the selection (Library) |
+| `s` | Collapse / expand the active photo's stack (Library) |
 | `?` | Shortcut list |
 | `Shift`+`T` | Toggle dark / light theme |
 | `j` | Clipping overlay (Develop) |

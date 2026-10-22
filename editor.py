@@ -134,6 +134,8 @@ app.register_blueprint(libapi.bp)
 app.register_blueprint(kwapi.bp)
 app.register_blueprint(metadata_api.bp)
 
+import stacks_api  # noqa: E402  (library stacks)
+app.register_blueprint(stacks_api.bp)
 import cull_api  # noqa: E402  (smart culling and Auto edit)
 
 app.register_blueprint(cull_api.bp)
@@ -2000,8 +2002,9 @@ def api_library():
         criteria = {k: args.get(k, "") for k in library.FILTER_KEYS}
         idx = _idx()
         virtuals = catalog.virtual_items(LIBRARY_ROOT, idx.items()) if catalog.has_virtuals(LIBRARY_ROOT) else []
+        stacked = catalog.has_stacks(LIBRARY_ROOT)
         folder = args.get("folder")
-        if not virtuals and not args.get("collection") and folder is None:
+        if not virtuals and not args.get("collection") and folder is None and not stacked:
             total, page, library_total = idx.query(criteria, args.get("sort", "name"),
                                                    args.get("dir", "asc") == "desc", offset, limit)
             facets = idx.facets() if offset == 0 else None
@@ -2016,6 +2019,9 @@ def api_library():
                     it["path"], folder.strip("/"), args.get("subfolders") == "1")]
             matched = library.sort_items(
                 matched, args.get("sort", "name"), args.get("dir", "asc") == "desc")
+            if stacked:
+                matched = catalog.apply_stacks(LIBRARY_ROOT, matched, everything,
+                                               args.get("stacks", "1") != "0")
             total, page, library_total = len(matched), matched[offset:offset + limit], len(everything)
             facets = library.facets(everything) if offset == 0 else None
     except KeyError as exc:

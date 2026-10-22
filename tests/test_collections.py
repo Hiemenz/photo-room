@@ -72,7 +72,7 @@ def test_collection_items_only_returns_members_present(tmp_path):
 
 def test_corrupt_store_reads_as_empty(tmp_path):
     (tmp_path / catalog.STORE_NAME).write_text("{nope")
-    assert catalog.load(tmp_path) == {"collections": [], "virtual": {}}
+    assert catalog.load(tmp_path) == {"collections": [], "virtual": {}, "stacks": {}}
     catalog.create_collection(tmp_path, "Fresh")     # and is recoverable
 
 

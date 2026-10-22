@@ -35,6 +35,9 @@ document.addEventListener("keydown", (e) => {
       if (!$("save").disabled) $("save").click();
       return;
     }
+    if (k === "g" && !e.altKey && module_ === "library" && typeof libStack === "function") {
+      e.preventDefault(); e.shiftKey ? libUnstack() : libStack(); return;
+    }
     if (k === "enter" && typeof cullIsOpen === "function" && cullIsOpen()) {
       e.preventDefault(); cullApply(); return;
     }
