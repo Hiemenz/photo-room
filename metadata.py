@@ -195,7 +195,8 @@ def parse_fields(entry: dict, fallback: bool = True) -> dict[str, str]:
 
 
 def _records(paths: list[Path], tags: list[str]) -> dict[str, dict]:
-    result = exifpool.run(["-j", "-n", *tags], files=[str(p) for p in paths])
+    result = exifpool.run(["-j", "-n", *tags], files=[str(p) for p in paths],
+                          timeout=exifpool.DEFAULT_TIMEOUT)
     try:
         entries = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
