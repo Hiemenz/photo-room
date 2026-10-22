@@ -226,14 +226,38 @@ def test_inside_matches_full_local_adjustment(photo):
 @pytest.mark.parametrize("key,value", [
     ("exposure", 1.0), ("contrast", 60), ("highlights", -60), ("shadows", 60), ("temp", 50),
     ("tint", 50), ("saturation", -60), ("clarity", 60), ("texture", 60), ("dehaze", 50), ("sharpness", 80),
+    ("whites", 60), ("blacks", -60), ("hue", 80), ("noise", 70),
 ])
 def test_every_local_slider_changes_pixels_inside_only(photo, key, value):
+    if key == "whites":
+        photo = np.clip(photo * 1.5, 0.0, 0.95)       # the whites range starts in the highlights
     m = radial(feather=0, adj={key: value}, x=0.5, y=0.5, rx=0.25, ry=0.25)
     base = apply_adjustments(photo, BASELINE, {})
     out = apply_adjustments(photo, BASELINE, {"masks": [m]})
     arr = masks.mask_array(m, SHAPE)
     assert np.abs(out[arr == 1.0] - base[arr == 1.0]).max() > 1e-3, key
     assert np.array_equal(out[arr == 0.0], base[arr == 0.0])
+
+
+def test_new_local_sliders_do_what_they_say(photo):
+    bright = np.clip(photo * 1.5, 0.0, 0.95)
+    lit = masks.apply_local(bright, {"whites": 80}, blur=editor._blur)
+    assert lit.mean() > bright.mean()
+    crushed = masks.apply_local(photo, {"blacks": -80}, blur=editor._blur)
+    assert crushed.mean() < photo.mean()
+    red = np.zeros((4, 4, 3), np.float32)
+    red[..., 0] = 0.8
+    turned = masks.apply_local(red, {"hue": 100}, blur=editor._blur)
+    assert turned[..., 1].mean() > 0.2 and turned[..., 0].mean() < 0.8     # red turns toward yellow/green
+    pastel = 0.4 + 0.1 * photo
+    spun = masks.apply_local(pastel, {"hue": 100}, blur=editor._blur)
+    assert np.allclose(spun.sum(axis=2), pastel.sum(axis=2), atol=1e-3)     # brightness is kept
+    grey = np.full((4, 4, 3), 0.4, np.float32)
+    assert np.allclose(masks.apply_local(grey, {"hue": 100}, blur=editor._blur), grey, atol=1e-5)
+    noisy = masks.apply_local(photo, {"noise": 100}, blur=editor._blur)
+    assert noisy.std() < photo.std()                                         # noise reduction smooths
+    assert masks.normalise_mask({"type": "radial", "adj": {"noise": -50}})["adj"] == {}
+    assert {"whites", "blacks", "hue", "noise"} <= {c["key"] for c in masks.LOCAL_CONTROLS}
 
 
 def test_local_slider_direction(photo):
@@ -446,3 +470,150 @@ def test_index_page_exposes_local_controls(client):
     for c in masks.LOCAL_CONTROLS:
         assert c["label"] in body
     assert "mask-panel" in body and 'id="mask-layer"' in body
+
+
+# --- range masks and combining ------------------------------------------------
+
+def split_photo():
+    """Left half dark grey, right half bright grey."""
+    img = np.full(SHAPE + (3,), 0.2, np.float32)
+    img[:, SHAPE[1] // 2:] = 0.8
+    return img
+
+
+def whole(**kw):
+    return masks.normalise_mask({"type": "range", "adj": {"exposure": 1.0}, **kw})
+
+
+def test_range_normalise_and_defaults():
+    m = masks.normalise_mask({"type": "range", "range": {"lum": {"lo": 0.9, "hi": 0.2}, "color": {"hue": 400}}})
+    assert m["range"]["lum"]["lo"] == 0.2 and m["range"]["lum"]["hi"] == 0.9
+    assert m["range"]["color"]["hue"] == 40.0
+    assert "range" not in masks.normalise_mask({"type": "linear", "range": {"lum": {"lo": 0, "hi": 1}}})
+    assert "op" not in linear(op="new") and linear(op="subtract")["op"] == "subtract"
+    assert "op" not in linear(op="bogus")
+
+
+def test_luminance_range_hard_edge_selects_exact_pixels():
+    img = split_photo()
+    m = whole(range={"lum": {"lo": 0.5, "hi": 1.0, "smooth": 0.0}})
+    arr = masks.member_array(m, img)
+    assert arr[:, : SHAPE[1] // 2].max() == 0.0 and arr[:, SHAPE[1] // 2:].min() == 1.0
+    out = masks.apply_masks(img, [m])
+    assert np.array_equal(out[:, : SHAPE[1] // 2], img[:, : SHAPE[1] // 2])      # dark side untouched
+    assert out[:, SHAPE[1] // 2:].mean() > img[:, SHAPE[1] // 2:].mean()
+
+
+def test_luminance_range_smooth_is_gradual():
+    ramp = np.tile(np.linspace(0, 1, 64, dtype=np.float32)[None, :, None], (4, 1, 3))
+    soft = masks.range_array({"lum": {"lo": 0.4, "hi": 0.6, "smooth": 0.4}}, ramp)[0]
+    hard = masks.range_array({"lum": {"lo": 0.4, "hi": 0.6, "smooth": 0.0}}, ramp)[0]
+    assert ((soft > 0) & (soft < 1)).sum() > ((hard > 0) & (hard < 1)).sum()
+    assert soft[0] == 0 and soft[-1] == 0
+    assert soft[int(0.5 * 63)] == pytest.approx(1.0)
+
+
+def test_colour_range_selects_hue_and_ignores_grey():
+    img = np.full((8, 8, 3), 0.5, np.float32)
+    img[:, :2] = (0.8, 0.2, 0.2)       # red
+    img[:, 2:4] = (0.2, 0.2, 0.8)      # blue
+    arr = masks.range_array({"color": {"hue": 0, "tol": 30, "smooth": 0.0, "sat_min": 0.0}}, img)
+    assert arr[:, :2].min() == 1.0 and arr[:, 2:4].max() == 0.0 and arr[:, 4:].max() == 0.0
+    blue = masks.range_array({"color": {"hue": 240, "tol": 30, "smooth": 0.0, "sat_min": 0.0}}, img)
+    assert blue[:, 2:4].min() == 1.0 and blue[:, :2].max() == 0.0
+    wrap = masks.range_array({"color": {"hue": 350, "tol": 20, "smooth": 0.0, "sat_min": 0.0}}, img)
+    assert wrap[:, :2].min() == 1.0                     # hue wraps around 360
+    strict = masks.range_array({"color": {"hue": 0, "tol": 30, "smooth": 0.0, "sat_min": 0.9}}, img)
+    assert strict.max() == 0.0
+
+
+def test_range_multiplies_geometry():
+    img = split_photo()
+    g = radial(feather=0, x=0.75, y=0.5, rx=0.2, ry=0.2, range={"lum": {"lo": 0.5, "hi": 1.0, "smooth": 0.0}})
+    arr = masks.member_array(g, img)
+    shape_only = masks.mask_array(g, SHAPE)
+    assert np.array_equal(arr, shape_only * (img[..., 0] >= 0.5))
+
+
+def test_combine_ops_are_pixel_exact():
+    img = split_photo()
+    a = linear(feather=0)                                  # top half
+    b = radial(feather=0, x=0.5, y=0.5, rx=0.25, ry=0.25)
+    ga, gb = masks.mask_array(a, SHAPE), masks.mask_array(b, SHAPE)
+    for op, want in (("add", ga + gb - ga * gb), ("subtract", ga * (1 - gb)), ("intersect", ga * gb)):
+        group = masks.groups(masks.normalise_masks([a, {**b, "op": op}]))
+        assert len(group) == 1
+        assert np.allclose(masks.group_array(group[0], img), want), op
+    # the combined group uses the first mask's sliders, once
+    sub = masks.apply_masks(img, [a, {**b, "op": "subtract", "adj": {"saturation": -100}}])
+    plain = masks.apply_masks(img, [a])
+    hole = (gb == 1.0) & (ga > 0.0)
+    assert hole.any()
+    assert np.array_equal(sub[hole], img[hole]) and np.allclose(sub[gb == 0.0], plain[gb == 0.0])
+
+
+def test_intersect_and_add_render():
+    img = np.random.default_rng(2).random(SHAPE + (3,)).astype(np.float32) * 0.6 + 0.1
+    a, b = linear(feather=0), radial(feather=0)
+    both = masks.apply_masks(img, [a, {**b, "op": "intersect"}])
+    arr = masks.mask_array(a, SHAPE) * masks.mask_array(b, SHAPE)
+    ref = np.clip(img + (masks.apply_local(img, a["adj"], editor._blur) - img) * arr[..., None], 0, 1)
+    assert np.allclose(both, ref, atol=1e-6)
+    united = masks.apply_masks(img, [a, {**b, "op": "add"}])
+    assert (np.abs(united - img).sum(axis=2) > 0).sum() > (np.abs(both - img).sum(axis=2) > 0).sum()
+
+
+def test_disabled_member_is_skipped_and_orphan_combiner_stands_alone():
+    img = split_photo()
+    a, b = linear(feather=0), radial(feather=0)
+    off = masks.apply_masks(img, [a, {**b, "op": "subtract", "enabled": False}])
+    assert np.array_equal(off, masks.apply_masks(img, [a]))
+    lone = masks.apply_masks(img, [{**b, "op": "subtract"}])        # nothing before it: acts as its own mask
+    assert np.array_equal(lone, masks.apply_masks(img, [b]))
+
+
+def test_range_mask_renders_through_the_pipeline(photo):
+    m = whole(range={"lum": {"lo": 0.5, "hi": 1.0, "smooth": 0.2}}, adj={"exposure": 1.0})
+    base = apply_adjustments(photo, BASELINE, {})
+    out = apply_adjustments(photo, BASELINE, {"masks": [m]})
+    assert not np.array_equal(out, base)
+    assert np.array_equal(out, apply_adjustments(photo, BASELINE, {"masks": [m]}))
+    assert np.array_equal(out, masks.apply_masks(base, [m]))      # selection read from the finished edit
+
+
+@needs_exiftool
+def test_range_and_combine_survive_sidecar_and_xmp(tmp_path):
+    photo = tmp_path / "IMG_7.CR2"
+    photo.write_bytes(b"fake-cr2")
+    original = masks.normalise_masks([
+        linear(name="Sky", adj={"exposure": -0.5, "whites": 20, "hue": 10},
+               range={"lum": {"lo": 0.5, "hi": 1.0, "smooth": 0.3}}),
+        radial(op="subtract", rx=0.1, ry=0.1, range={"color": {"hue": 30, "tol": 20}}),
+        masks.normalise_mask({"type": "range", "name": "Shadows", "adj": {"shadows": 30},
+                              "range": {"lum": {"lo": 0.0, "hi": 0.3, "smooth": 0.2}}}),
+    ])
+    save_adjustments(photo, {"masks": original}, frame_size=(3000, 2000))
+    assert read_saved_adjustments(photo)["masks"] == original
+    args = masks.xmp_arguments(original)
+    assert args[0].count("What=Mask/Gradient") == 1 and "Mask/CircularGradient" not in args[0]
+    assert "LocalWhites2012=20" in args[0] and "LocalHue=10" in args[0]
+    assert masks.xmp_counts(original) == (1, 0, 0)
+
+
+@needs_exiftool
+def test_real_exiftool_keeps_new_local_tags(tmp_path):
+    photo = tmp_path / "IMG_8.CR2"
+    photo.write_bytes(b"fake-cr2")
+    original = masks.normalise_masks([linear(adj={"whites": 20, "blacks": -15, "hue": 10, "noise": 40})])
+    save_adjustments(photo, {"masks": original}, frame_size=(3000, 2000))
+    masks.delete_sidecar(photo)
+    back = read_saved_adjustments(photo)["masks"][0]["adj"]
+    assert back == {"whites": 20, "blacks": -15, "hue": 10, "noise": 40}
+
+
+def test_overlay_shows_range():
+    img = split_photo()
+    m = whole(range={"lum": {"lo": 0.5, "hi": 1.0, "smooth": 0.0}})
+    png = masks.overlay_png(m, SHAPE, img=img)
+    alpha = np.asarray(Image.open(io.BytesIO(png)))[..., 3]
+    assert alpha[:, : SHAPE[1] // 2].max() == 0 and alpha[:, SHAPE[1] // 2:].min() > 0

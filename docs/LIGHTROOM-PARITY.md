@@ -173,9 +173,9 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Lightroom feature | Status | Evidence | Effort | Value |
 |---|---|---|---|---|
 | Graduated, radial, brush masks | Done | `masks.py`; max 16 per photo; `tests/test_masks.py`, `tests/ui/test_masks_ui.py` | - | - |
-| Local sliders | Partial | 11: exposure, contrast, highlights, shadows, temp, tint, saturation, clarity, texture, dehaze, sharpness (`masks._LOCAL`). Missing whites, blacks, hue, noise, moire, defringe, curve, colour tint | M | M |
-| Range masks (luminance, colour, depth) | Missing | no code | M | M |
-| Combine masks (add / subtract / intersect) | Missing | masks are independent; only brush Erase subtracts | M | M |
+| Local sliders | Partial | 15: exposure, contrast, highlights, shadows, whites, blacks, temp, tint, hue, saturation, clarity, texture, dehaze, sharpness, noise (`masks._LOCAL`; whites/blacks reuse the global tone kernel, noise the global denoise kernel; XMP `LocalWhites2012`, `LocalBlacks2012`, `LocalHue`, `LocalLuminanceNoise`). Missing moire, defringe, curve, colour tint | S | M |
+| Range masks (luminance, colour, depth) | Partial | Luminance and colour range on any mask, plus a whole-picture Range mask (`masks.range_array`); smooth edges, hue wraps, neutral pixels excluded. Pixel tests in `tests/test_masks.py`, UI in `tests/ui/test_masks_ui.py`. Stored in the JSON sidecar only (not written to Lightroom XMP, Lightroom-made range masks not read). No depth range | S | M |
+| Combine masks (add / subtract / intersect) | Done | per-mask `op` folds a mask into the previous one (`masks.groups`, `group_array`); the group uses the first mask's sliders. Sidecar only; XMP gets the first mask. `tests/test_masks.py` | - | - |
 | Mask XMP readable by Lightroom | Partial (unverified) | Camera Raw structure, round-trips through exiftool; never opened in Lightroom (README says so). Lightroom-made AI/range masks are not imported | M to verify | H |
 | AI masks: subject, sky, background, people | Won't do (for now) | ROADMAP "Not planned"; open models via onnxruntime would be the route | L | H |
 | Adaptive presets | Won't do | need AI masks | L | L |
@@ -268,8 +268,8 @@ Lightroom features is in the matrix above.
 | 12 | **Import dialog**: choose frames, destination, rename template, keywords/copyright/preset on import, Move vs Copy | The Lightroom Import experience; ROADMAP "Not wired yet" | M | `import_api.py`, `cardwatch.py`, `static/js/import.js` |
 | 13 | **Carry XMP sidecars with imported raws** (copy `IMG.xmp` beside the raw when present) | Prerequisite for any Lightroom round trip | S | `ingest.py`, `cardwatch.py`, `import_api.py` |
 | 14 | **Export sizing and destination**: short edge, megapixels, percent, subfolder, same-as-original, Export with Previous | Daily export ergonomics | S | `exporter.py`, `export_api.py`, export dialog |
-| 15 | **More local sliders**: whites, blacks, hue, noise, colour tint (reuse global kernels) | Closes most of the local-adjustment slider gap | M | `masks.py`, `editor.py` |
-| 16 | **Range masks (luminance, colour) and mask combine** | The first non-geometric masking; makes brush masks reusable | M | `masks.py`, `static/js/develop-masks.js` |
+| 15 | **More local sliders**: ~~whites, blacks, hue, noise~~ done; colour tint still to do (reuse global kernels) | Closes most of the local-adjustment slider gap | M | `masks.py`, `editor.py` |
+| 16 | ~~**Range masks (luminance, colour) and mask combine**~~ done | The first non-geometric masking; makes brush masks reusable | M | `masks.py`, `static/js/develop-masks.js` |
 | 17 | ~~**Keyword list panel with counts, hierarchy (`lr:HierarchicalSubject`)**~~ done | Keyword workflow beyond a text box | M | `keywordlib.py`, `kwapi.py`, `static/js/keyword-panel.js` |
 | 18 | **DCP / camera-profile import** (Adobe-style colour and base curve): first version shipped (look tables and curve; camera matrices and two-illuminant blending still to do) | The largest reason an edit will not look like Lightroom's | L | `colour.py`, `render_kernels.py`, new `dcp.py` |
 | 19 | **Folders panel with move/rename** that rewrites sidecars, `*.photoroom.json`, masks JSON and catalog paths together | Library management on disk | M | `libapi.py`, `catalog.py`, `library.py` |

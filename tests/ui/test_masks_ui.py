@@ -106,3 +106,24 @@ def test_dragging_a_pin_moves_the_mask(opened):
     page.mouse.move(cx, cy + 40, steps=5)
     page.mouse.up()
     assert page.evaluate("values.masks[0].y") > y0
+
+
+def test_range_mask_and_combine_controls(opened):
+    page = opened
+    open_panel(page)
+    page.locator('#mask-tools [data-tool="radial"]').click()
+    draw(page, 0.5, 0.5, 0.7, 0.7)
+    assert page.locator("#mask-combine select").count() == 0          # the first mask cannot combine
+    page.locator('#mask-tools [data-tool="range"]').click()
+    assert page.evaluate("values.masks.map(m => m.type)") == ["radial", "range"]
+    assert page.evaluate("values.masks[1].range.lum.hi") == 0.4
+    page.locator("#mask-combine select").select_option("intersect")
+    assert page.evaluate("values.masks[1].op") == "intersect"
+    assert page.locator("#mask-sliders").is_hidden()                    # it uses the first mask's sliders
+    page.locator("#mask-range input[type=checkbox]").nth(1).check()      # colour range on
+    assert page.evaluate("values.masks[1].range.color.tol") == 30
+    page.locator("#mask-combine select").select_option("new")
+    assert page.evaluate("values.masks[1].op") is None
+    set_range(page, "m-whites", 40)
+    assert page.evaluate("values.masks[1].adj.whites") == 40
+    assert page.errors == []

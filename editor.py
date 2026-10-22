@@ -1745,8 +1745,10 @@ def api_mask_overlay():
         base, _ = _load_base_render(path)
         # The frame the preview shows: spots and lens first, then transform, straighten, crop.
         framed = retouch.apply_transform(retouch.apply_corrections(base, adj), adj)
-        shape = apply_geometry(framed, adj).shape[:2]
-        png = masks.overlay_png(found[0], shape)
+        geo = apply_geometry(framed, adj)
+        shape = geo.shape[:2]
+        # Range selections read the framed picture (before the other edits) so they show.
+        png = masks.overlay_png(found[0], shape, img=geo if found[0].get("range") else None)
         return jsonify({"overlay": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
                         "width": shape[1], "height": shape[0]})
     except Exception as exc:

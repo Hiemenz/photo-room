@@ -228,13 +228,24 @@ the photo:
   point lists and rasterised on demand, never as a bitmap.
 
 Every mask has its own local sliders: Exposure, Contrast, Highlights, Shadows,
-Temp, Tint, Saturation, Clarity, Texture, Dehaze and Sharpness. The local
+Temp, Tint, Saturation, Clarity, Texture, Dehaze, Sharpness, Whites, Blacks,
+Hue (turns colours up to 45 degrees) and Noise reduction. The local
 adjustment is rendered over the whole picture and blended through the soft
 mask, so outside the mask the pixels are exactly the unmasked render, and a
 mask whose sliders are all zero changes nothing. A photo can have up to 16
 masks; the list lets you select, enable/disable, **Duplicate**, **Invert** and
 **Delete** (the Delete key) them. Press **O** (or tick *Show mask*) for a red
 tint of the selected mask.
+
+**Range masks.** Any mask can be limited to pixels of a certain brightness
+(*Luminance range*) or colour (*Colour range*: hue, width, smoothness, minimum
+saturation); the **Range** tool adds a whole-picture mask for a pure range
+selection. **Combine** (every mask after the first) folds a mask into the one
+above it: Add, Subtract or Intersect. A combined group uses the sliders of its
+first mask. Ranges are read from the picture at the point the masks run, so
+preview, 100% tiles and export select the same pixels. Ranges and combined
+masks are kept in the JSON sidecar only; the XMP carries the first mask's shape
+and sliders.
 
 Mask positions are fractions of the cropped, straightened picture, so they are
 the same in the preview and in the full-resolution export. Masks are part of

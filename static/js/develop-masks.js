@@ -6,7 +6,8 @@ let maskSel = null;          // id of the selected mask
 let maskTool = null;         // "linear" | "radial" | "brush" while armed to draw a new one
 let maskOverlayOn = false;   // O key: red tint of the selected mask
 const brushOpts = { size: 0.04, feather: 50, flow: 100, density: 100, erase: false };
-const MASK_NAMES = { linear: "Graduated", radial: "Radial", brush: "Brush" };
+const MASK_NAMES = { linear: "Graduated", radial: "Radial", brush: "Brush", range: "Range" };
+const COMBINE_LABELS = { new: "Separate adjustment", add: "Add to previous", subtract: "Subtract from previous", intersect: "Intersect with previous" };
 const MAX_MASKS = 16;
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -18,6 +19,7 @@ maskPanel.innerHTML = `<summary>Masks</summary>
     <button data-tool="linear" title="Graduated filter: drag from where the effect is full to where it fades out">Graduated</button>
     <button data-tool="radial" title="Radial filter: drag out from the centre">Radial</button>
     <button data-tool="brush" title="Adjustment brush: paint on the photo">Brush</button>
+    <button data-tool="range" title="Range mask: select the whole picture by luminance or colour">Range</button>
   </div>
   <div id="mask-hint">Pick a tool, then drag on the photo.</div>
   <div id="mask-list"></div>
@@ -29,6 +31,8 @@ maskPanel.innerHTML = `<summary>Masks</summary>
   <label class="opt" style="margin-top:10px"><input type="checkbox" id="mask-show"><span>Show mask (O)</span></label>
   <div id="mask-edit" hidden>
     <div id="mask-geo"></div>
+    <div id="mask-combine"></div>
+    <div id="mask-range"></div>
     <div id="mask-sliders"></div>
   </div>`;
 $("sliders").appendChild(maskPanel);
@@ -132,6 +136,76 @@ function buildGeo() {
   }
 }
 
+// Combine with the previous mask: the first mask in the list always starts its own adjustment.
+function buildCombine() {
+  const host = $("mask-combine");
+  host.innerHTML = "";
+  const m = selMask(), list = maskList();
+  if (!m || list.indexOf(m) < 1) return;
+  const wrap = document.createElement("div");
+  wrap.className = "ctrl";
+  wrap.innerHTML = `<div class="ctrl-head"><label for="mask-op">Combine</label></div>
+    <select id="mask-op">${Object.entries(COMBINE_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select>`;
+  const sel = wrap.querySelector("select");
+  sel.value = m.op || "new";
+  sel.addEventListener("change", () => {
+    if (sel.value === "new") delete m.op; else m.op = sel.value;
+    paintMasks(); schedulePreview(); refreshMaskOverlay(); commit("Combine mask");
+  });
+  host.appendChild(wrap);
+  if (m.op && m.op !== "new") {
+    const note = document.createElement("div");
+    note.style.cssText = "font-size:11px;color:var(--muted);margin-top:4px";
+    note.textContent = "Uses the sliders of the mask it joins.";
+    host.appendChild(note);
+  }
+}
+
+// Range selection: luminance window and/or a colour (hue) window read from the picture.
+const RANGE_LUM = { lo: 0, hi: 1, smooth: 0.2 };
+const RANGE_COLOR = { hue: 0, tol: 30, smooth: 0.3, sat_min: 0 };
+function rangeSlider(host, label, min, max, step, get, set, fmt) {    // release is committed by the shared handler
+  geoSlider(host, label, min, max, step, get, v => { set(v); maskChanged(); }, fmt);
+}
+function buildRange() {
+  const host = $("mask-range");
+  host.innerHTML = "";
+  const m = selMask();
+  if (!m) return;
+  const rng = () => (m.range = m.range || {});
+  const tidy = () => { if (!Object.keys(m.range || {}).length) delete m.range; };
+  const toggle = (label, key, defaults) => {
+    const row = document.createElement("label");
+    row.className = "opt";
+    row.innerHTML = `<input type="checkbox"><span>${label}</span>`;
+    const box = row.querySelector("input");
+    box.checked = !!(m.range && m.range[key]);
+    box.addEventListener("change", () => {
+      if (box.checked) rng()[key] = { ...defaults }; else { delete m.range[key]; tidy(); }
+      paintMasks(); schedulePreview(); refreshMaskOverlay(); commit(`Mask ${label.toLowerCase()}`);
+    });
+    host.appendChild(row);
+    return box.checked;
+  };
+  const note = document.createElement("div");
+  note.style.cssText = "font-size:11px;color:var(--muted);margin-top:12px";
+  note.textContent = "Range (limits the mask to matching pixels)";
+  host.appendChild(note);
+  if (toggle("Luminance range", "lum", RANGE_LUM)) {
+    const l = () => m.range.lum, pct = v => `${Math.round(v)}%`;
+    rangeSlider(host, "Lightest from", 0, 100, 1, () => Math.round(l().lo * 100), v => { l().lo = Math.min(v / 100, l().hi); }, pct);
+    rangeSlider(host, "Darkest to", 0, 100, 1, () => Math.round(l().hi * 100), v => { l().hi = Math.max(v / 100, l().lo); }, pct);
+    rangeSlider(host, "Smoothness", 0, 100, 1, () => Math.round(l().smooth * 100), v => { l().smooth = v / 100; }, pct);
+  }
+  if (toggle("Colour range", "color", RANGE_COLOR)) {
+    const c = () => m.range.color, pct = v => `${Math.round(v)}%`;
+    rangeSlider(host, "Hue", 0, 360, 1, () => Math.round(c().hue), v => { c().hue = v; }, v => `${Math.round(v)}°`);
+    rangeSlider(host, "Range", 1, 180, 1, () => Math.round(c().tol), v => { c().tol = v; }, v => `±${Math.round(v)}°`);
+    rangeSlider(host, "Smoothness", 0, 100, 1, () => Math.round(c().smooth * 100), v => { c().smooth = v / 100; }, pct);
+    rangeSlider(host, "Min saturation", 0, 100, 1, () => Math.round(c().sat_min * 100), v => { c().sat_min = v / 100; }, pct);
+  }
+}
+
 function paintMasks() {
   const list = maskList();
   if (maskSel && !selMask()) maskSel = null;
@@ -142,7 +216,8 @@ function paintMasks() {
     row.className = "mask-row" + (m.id === maskSel ? " sel" : "") + (m.enabled === false ? " off" : "");
     row.innerHTML = `<span class="eye" title="Enable / disable">${m.enabled === false ? "○" : "●"}</span><span class="nm"></span><span class="kind"></span>`;
     row.querySelector(".nm").textContent = m.name || MASK_NAMES[m.type];
-    row.querySelector(".kind").textContent = (m.invert ? "inv " : "") + MASK_NAMES[m.type];
+    row.querySelector(".kind").textContent = (m.op && m.op !== "new" ? m.op + " " : "") + (m.range ? "range " : "")
+      + (m.invert ? "inv " : "") + MASK_NAMES[m.type];
     row.addEventListener("click", (e) => {
       if (e.target.classList.contains("eye")) {
         m.enabled = m.enabled === false;
@@ -157,16 +232,21 @@ function paintMasks() {
   const m = selMask();
   $("mask-actions").hidden = !m;
   $("mask-edit").hidden = !m && maskTool !== "brush";
-  $("mask-sliders").hidden = !m;
+  const joined = !!m && !!m.op && m.op !== "new" && maskList().indexOf(m) > 0;
+  $("mask-sliders").hidden = !m || joined;
+  $("mask-inv").hidden = !!m && m.type === "range";
   $("mask-hint").textContent = maskTool === "linear" ? "Drag from where the effect is full to where it fades out."
     : maskTool === "radial" ? "Drag out from the centre of the ellipse."
     : maskTool === "brush" ? "Paint on the photo to create a brush mask."
+    : m && m.type === "range" ? "Tick Luminance or Colour range below to choose which pixels the mask selects."
     : m && m.type === "brush" ? "Drag on the photo to add a stroke (hold Alt to erase)."
     : m ? "Drag the pins on the photo to move or reshape the mask." : "Pick a tool, then drag on the photo.";
   $("mask-show").checked = maskOverlayOn;
   MASK_CONTROLS.forEach(paintMaskValue);
   MASK_CONTROLS.forEach(c => { $(`m-${c.key}`).value = (m && m.adj && m.adj[c.key]) || 0; });
   buildGeo();
+  buildCombine();
+  buildRange();
   layoutMaskLayer();
 }
 
@@ -239,7 +319,7 @@ function drawMaskHandles() {
   const svg = $("mask-svg");
   svg.innerHTML = "";
   const m = selMask();
-  if (!m || !$("mask-layer").classList.contains("on") || m.type === "brush") return;
+  if (!m || !$("mask-layer").classList.contains("on") || m.type === "brush" || m.type === "range") return;
   const f = frameRect();
   const g = svgEl("g", { transform: `translate(${f.left} ${f.top})` }, svg);
   if (m.type === "linear") {
@@ -379,6 +459,14 @@ function addMask(proto, label) {
 // ---- Panel wiring ------------------------------------------------------------
 document.querySelectorAll("#mask-tools button").forEach(b => b.addEventListener("click", () => {
   if (!current) return;
+  if (b.dataset.tool === "range") {
+    // No geometry to draw: the mask is the whole picture, narrowed by its range.
+    const m = addMask({ type: "range", range: { lum: { ...RANGE_LUM, hi: 0.4 } } }, "Range");
+    if (!m) return;
+    maskTool = null;
+    paintMasks(); schedulePreview(); commit("Add range mask");
+    return;
+  }
   maskTool = maskTool === b.dataset.tool ? null : b.dataset.tool;
   if (maskTool) { maskSel = maskTool === "brush" ? null : maskSel; }
   paintMasks();

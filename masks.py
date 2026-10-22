@@ -32,6 +32,22 @@ picture (0..1, y down), so it is the same at preview and full resolution:
              pts is a flat [x0, y0, x1, y1, ...] list - strokes are kept as
              compact stroke data, never as a bitmap, and rasterised on demand.
 
+    range    no geometry: the whole picture, to be narrowed by a ``range``.
+
+Any mask may carry a ``range`` that multiplies its shape by a tonal or colour
+selection read from the picture itself::
+
+    "range": {"lum": {"lo": 0.0, "hi": 0.4, "smooth": 0.3},
+              "color": {"hue": 210, "tol": 30, "smooth": 0.3, "sat_min": 0.1}}
+
+``lum`` keeps pixels whose luminance is within lo..hi (0..1, display coded)
+with soft edges of ``smooth`` (0..1); ``color`` keeps hues within ``tol``
+degrees of ``hue`` and saturated above ``sat_min``. Both are optional.
+
+``op`` combines a mask with the one before it: "new" (default) starts its own
+adjustment; "add", "subtract" and "intersect" fold the mask's shape into the
+group started by the previous "new" mask, whose sliders the whole group uses.
+
 The mask value is a float 0..1 per pixel; a local adjustment is rendered over
 the whole picture and blended through the mask, so outside the mask the
 pixels are bit-for-bit what they were.
@@ -53,7 +69,9 @@ MAX_MASKS = 16
 MAX_STROKES = 200
 MAX_POINTS = 2000            # points per stroke
 MAX_DABS = 3000              # dabs per stroke while rasterising
-MASK_TYPES = ("linear", "radial", "brush")
+MASK_TYPES = ("linear", "radial", "brush", "range")
+GEOMETRY_TYPES = ("linear", "radial", "brush")     # the kinds Camera Raw XMP can carry
+COMBINE_OPS = ("new", "add", "subtract", "intersect")
 
 # (key, label, min, max, step, XMP tag)
 _LOCAL = [
@@ -68,11 +86,17 @@ _LOCAL = [
     ("texture",    "Texture",    -100, 100, 1, "LocalTexture"),
     ("dehaze",     "Dehaze",     -100, 100, 1, "LocalDehaze"),
     ("sharpness",  "Sharpness",  -100, 100, 1, "LocalSharpness"),
+    ("whites",     "Whites",     -100, 100, 1, "LocalWhites2012"),
+    ("blacks",     "Blacks",     -100, 100, 1, "LocalBlacks2012"),
+    ("hue",        "Hue",        -100, 100, 1, "LocalHue"),
+    ("noise",      "Noise reduction", 0, 100, 1, "LocalLuminanceNoise"),
 ]
 LOCAL_CONTROLS = [{"key": k, "label": lab, "min": lo, "max": hi, "step": st, "default": 0}
                   for k, lab, lo, hi, st, _ in _LOCAL]
 LOCAL_LIMITS = {k: (lo, hi) for k, _, lo, hi, _, _ in _LOCAL}
 LOCAL_XMP_TAGS = {k: tag for k, _, _, _, _, tag in _LOCAL}
+
+HUE_SHIFT_DEGREES = 45.0     # local Hue +-100 turns the colours by this much
 
 BRUSH_DEFAULTS = {"size": 0.04, "feather": 50.0, "flow": 100.0, "density": 100.0}
 
@@ -129,6 +153,29 @@ def _stroke(raw) -> dict | None:
     }
 
 
+def _range(raw) -> dict:
+    """A clean range block ({} when it selects everything)."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict = {}
+    lum = raw.get("lum")
+    if isinstance(lum, dict):
+        lo = _num(lum.get("lo"), 0.0, 0.0, 1.0)
+        hi = _num(lum.get("hi"), 1.0, 0.0, 1.0)
+        if lo > hi:
+            lo, hi = hi, lo
+        if lo > 0.0 or hi < 1.0:
+            out["lum"] = {"lo": round(lo, 4), "hi": round(hi, 4),
+                          "smooth": round(_num(lum.get("smooth"), 0.2, 0.0, 1.0), 3)}
+    col = raw.get("color")
+    if isinstance(col, dict) and col.get("hue") is not None:
+        out["color"] = {"hue": round(_num(col.get("hue"), 0.0, -1e6, 1e6) % 360.0, 2),
+                        "tol": round(_num(col.get("tol"), 30.0, 1.0, 180.0), 2),
+                        "smooth": round(_num(col.get("smooth"), 0.3, 0.0, 1.0), 3),
+                        "sat_min": round(_num(col.get("sat_min"), 0.0, 0.0, 1.0), 3)}
+    return out
+
+
 def normalise_mask(raw, seen_ids: set | None = None) -> dict | None:
     """A clean copy of one mask, or None if it is not a usable mask."""
     if not isinstance(raw, dict) or raw.get("type") not in MASK_TYPES:
@@ -147,6 +194,12 @@ def normalise_mask(raw, seen_ids: set | None = None) -> dict | None:
         "invert": bool(raw.get("invert", False)),
         "enabled": bool(raw.get("enabled", True)),
     }
+    op = raw.get("op")
+    if op in COMBINE_OPS and op != "new":
+        out["op"] = op
+    rng = _range(raw.get("range"))
+    if rng:
+        out["range"] = rng
     adj = {}
     src = raw.get("adj") if isinstance(raw.get("adj"), dict) else {}
     for key, (lo, hi) in LOCAL_LIMITS.items():
@@ -167,7 +220,7 @@ def normalise_mask(raw, seen_ids: set | None = None) -> dict | None:
                    ry=round(_num(raw.get("ry"), 0.25, 0.005, 1.5), 4),
                    angle=_wrap_angle(raw.get("angle")),
                    feather=round(_num(raw.get("feather"), 50.0, 0, 100), 2))
-    else:
+    elif kind == "brush":
         strokes = raw.get("strokes") if isinstance(raw.get("strokes"), list) else []
         cleaned = [s for s in (_stroke(s) for s in strokes[:MAX_STROKES]) if s]
         out["strokes"] = cleaned
@@ -196,11 +249,27 @@ def has_effect(mask: dict) -> bool:
     return any(float(mask.get("adj", {}).get(k, 0) or 0) != 0 for k in LOCAL_LIMITS)
 
 
+def groups(masks: list[dict]) -> list[list[dict]]:
+    """
+    Masks grouped by adjustment: each "new" mask (or a combiner with nothing
+    before it) starts a group and the add / subtract / intersect masks that
+    follow it fold into that group. ``masks`` must be normalised.
+    """
+    out: list[list[dict]] = []
+    for m in masks:
+        if m.get("op", "new") != "new" and out:
+            out[-1].append(m)
+        else:
+            out.append([m])
+    return out
+
+
 def scale_for_strength(masks, strength: float) -> list[dict]:
     """Scale every local slider by the edit-strength factor (see editor.effective_adjustments)."""
     out = normalise_masks(masks)
     for m in out:
         m["adj"] = {k: round(v * strength, 3) for k, v in m["adj"].items()}
+        m["adj"] = {k: v for k, v in m["adj"].items() if v}
     return out
 
 
@@ -322,9 +391,74 @@ def mask_array(m: dict, shape: tuple[int, int]) -> np.ndarray:
         arr = radial_mask(shape, m)
     elif kind == "brush":
         arr = brush_mask(shape, m)
+    elif kind == "range":
+        return np.ones(shape, dtype=np.float32)
     else:
         raise ValueError(f"unknown mask type {kind!r}")
     return (1.0 - arr) if m.get("invert") else arr
+
+
+def _hue_sat(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """HSV hue (degrees) and saturation of an RGB float image."""
+    mx, mn = img.max(axis=2), img.min(axis=2)
+    d = mx - mn
+    safe = np.where(d > 1e-6, d, 1.0)
+    r, g, b = img[:, :, 0], img[:, :, 1], img[:, :, 2]
+    hue = np.where(mx == r, ((g - b) / safe) % 6.0,
+                   np.where(mx == g, (b - r) / safe + 2.0, (r - g) / safe + 4.0)) * 60.0
+    sat = np.where(mx > 1e-6, d / np.maximum(mx, 1e-6), 0.0)
+    return np.where(d > 1e-6, hue, 0.0).astype(np.float32), sat.astype(np.float32)
+
+
+def range_array(rng: dict, img: np.ndarray) -> np.ndarray:
+    """The luminance / colour range selection of ``img`` as a float32 (H, W) array in 0..1."""
+    out = np.ones(img.shape[:2], dtype=np.float32)
+    lum = rng.get("lum")
+    if lum:
+        L = _luma(img)
+        s = float(lum["smooth"]) * 0.5
+        if s > 0.0:
+            low = _smoothstep((L - (float(lum["lo"]) - s)) / s) if lum["lo"] > 0 else 1.0
+            high = 1.0 - _smoothstep((L - float(lum["hi"])) / s) if lum["hi"] < 1 else 1.0
+        else:
+            low = (L >= float(lum["lo"])).astype(np.float32)
+            high = (L <= float(lum["hi"])).astype(np.float32)
+        out = out * low * high
+    col = rng.get("color")
+    if col:
+        hue, sat = _hue_sat(np.clip(img, 0.0, 1.0))
+        dist = np.abs((hue - float(col["hue"]) + 180.0) % 360.0 - 180.0)
+        soft = max(float(col["smooth"]) * 90.0, 1e-3)
+        near = 1.0 - _smoothstep((dist - float(col["tol"])) / soft)
+        out = out * near * _smoothstep((sat - float(col["sat_min"])) / 0.05)
+    return out.astype(np.float32)
+
+
+def member_array(m: dict, img: np.ndarray) -> np.ndarray:
+    """One mask's shape times its range selection, read from ``img``."""
+    arr = mask_array(m, img.shape[:2])
+    if m.get("range"):
+        arr = arr * range_array(m["range"], img)
+    return arr
+
+
+def group_array(group: list[dict], img: np.ndarray) -> np.ndarray | None:
+    """The combined mask of a group (see ``groups``), or None when nothing is enabled."""
+    arr = None
+    for i, m in enumerate(group):
+        if not m.get("enabled", True):
+            continue
+        a = member_array(m, img)
+        op = m.get("op", "new") if i else "new"
+        if arr is None:
+            arr = a
+        elif op == "add":
+            arr = arr + a - arr * a
+        elif op == "subtract":
+            arr = arr * (1.0 - a)
+        elif op == "intersect":
+            arr = arr * a
+    return arr
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +472,19 @@ def _luma(img: np.ndarray) -> np.ndarray:
 def _default_blur(plane: np.ndarray, radius: float) -> np.ndarray:
     from editor import _blur           # lazy: editor imports this module
     return _blur(plane, radius)
+
+
+def _hue_rotate(img: np.ndarray, degrees: float) -> np.ndarray:
+    """Turn the colours around the grey axis by ``degrees`` (luminance-preserving rotation)."""
+    a = math.radians(degrees)
+    c, s = math.cos(a), math.sin(a)
+    third, root = 1.0 / 3.0, math.sqrt(1.0 / 3.0)
+    m = np.array([
+        [c + (1 - c) * third, third * (1 - c) - root * s, third * (1 - c) + root * s],
+        [third * (1 - c) + root * s, c + third * (1 - c), third * (1 - c) - root * s],
+        [third * (1 - c) - root * s, third * (1 - c) + root * s, c + third * (1 - c)],
+    ], dtype=np.float32)
+    return np.clip(img @ m.T, 0.0, 1.0)
 
 
 def _apply_light_legacy(img: np.ndarray, g) -> np.ndarray:
@@ -399,11 +546,18 @@ def apply_local(img: np.ndarray, adj: dict, blur=None, space: str = "srgb", lega
     else:
         out = _apply_light(img, g, space)
 
+    if g("hue"):
+        out = _hue_rotate(out, g("hue") / 100.0 * HUE_SHIFT_DEGREES)
     if g("saturation"):
         gray = _luma(out)[:, :, None]
         out = gray + (out - gray) * (1.0 + g("saturation") / 100.0)
         out = np.clip(out, 0.0, 1.0)
 
+    if g("noise"):
+        import render_kernels
+        amount = min(max(g("noise"), 0.0), 100.0)
+        out = render_kernels.denoise_stage(np.ascontiguousarray(out, dtype=np.float32),
+                                           {"luminance_nr": amount, "color_nr": amount})
     clarity, texture, dehaze, sharp = g("clarity"), g("texture"), g("dehaze"), g("sharpness")
     if clarity or texture or dehaze or sharp:
         edge = max(out.shape[0], out.shape[1])
@@ -435,24 +589,28 @@ def apply_masks(img: np.ndarray, masks, blur=None, space: str = "srgb", legacy: 
     """
     if not masks:
         return img
-    shape = img.shape[:2]
     out = img
-    for m in normalise_masks(masks):
-        if not has_effect(m):
+    for group in groups(normalise_masks(masks)):
+        if not has_effect(group[0]):
             continue
-        arr = mask_array(m, shape)
-        if not arr.any():
+        arr = group_array(group, out)
+        if arr is None or not arr.any():
             continue
-        local = apply_local(out, m["adj"], blur, space=space, legacy=legacy)
+        local = apply_local(out, group[0]["adj"], blur, space=space, legacy=legacy)
         out = np.clip(out + (local - out) * arr[:, :, None], 0.0, 1.0)
     return out
 
 
-def overlay_png(m: dict, shape: tuple[int, int], opacity: float = 0.55) -> bytes:
-    """The mask as a red RGBA PNG (alpha = mask * opacity) for the O-key overlay."""
+def overlay_png(m: dict, shape: tuple[int, int], opacity: float = 0.55, img: np.ndarray | None = None) -> bytes:
+    """
+    The mask as a red RGBA PNG (alpha = mask * opacity) for the O-key overlay.
+    ``img`` (the picture at ``shape``) lets a range selection show; without it
+    only the shape is drawn.
+    """
     import io
     from PIL import Image
-    arr = mask_array(normalise_mask(m) or m, shape)
+    clean = normalise_mask(m) or m
+    arr = member_array(clean, img) if img is not None and img.shape[:2] == tuple(shape) else mask_array(clean, shape)
     rgba = np.zeros(shape + (4,), dtype=np.uint8)
     rgba[..., 0], rgba[..., 1], rgba[..., 2] = 255, 40, 40
     rgba[..., 3] = (np.clip(arr, 0.0, 1.0) * opacity * 255.0 + 0.5).astype(np.uint8)
@@ -535,9 +693,10 @@ def _brush_correction(m: dict) -> str:
 
 def _xmp_masks(masks) -> list[dict]:
     """The masks that make it into the XMP: effective ones with some geometry."""
-    return [m for m in normalise_masks(masks)
-            if m.get("enabled", True) and any(m["adj"].values())
-            and (m["type"] != "brush" or m["strokes"])]
+    # Range selections and combined (add / subtract / intersect) masks only live in the JSON sidecar.
+    return [g[0] for g in groups(normalise_masks(masks))
+            if g[0].get("enabled", True) and any(g[0]["adj"].values())
+            and g[0]["type"] in GEOMETRY_TYPES and (g[0]["type"] != "brush" or g[0]["strokes"])]
 
 
 def xmp_arguments(masks, aspect: float | None = None) -> list[str]:
@@ -558,7 +717,7 @@ def xmp_arguments(masks, aspect: float | None = None) -> list[str]:
 def xmp_counts(masks) -> tuple[int, int, int]:
     """(linear, radial, brush) counts as the XMP will hold them."""
     eff = _xmp_masks(masks)
-    return tuple(sum(1 for m in eff if m["type"] == t) for t in MASK_TYPES)  # type: ignore[return-value]
+    return tuple(sum(1 for m in eff if m["type"] == t) for t in GEOMETRY_TYPES)  # type: ignore[return-value]
 
 
 def _truthy(v) -> bool:
