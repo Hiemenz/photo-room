@@ -135,7 +135,7 @@ def test_preview_rejects_bad_templates(client, template):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("body,fragment", [
-    ({"format": "gif"}, "jpeg, png, tiff or webp"),
+    ({"format": "gif"}, "jpeg, png, tiff, webp, avif or jxl"),
     ({"quality": 0}, "quality"),
     ({"colorspace": "cmyk"}, "colour space"),
     ({"long_edge": 4}, "long edge"),
