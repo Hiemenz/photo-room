@@ -12,7 +12,7 @@ Rules this module never breaks:
   files already moved back.
 * A photo moves together with its companions: same-stem raws / JPEG / ``.xmp``
   and, for each of those, ``<name>.photoroom.json`` (edit history),
-  ``<name>.masks.json`` and the virtual copies' ``<name>.vc-xxxxxxxx.*`` files.
+  ``<name>.masks.json``, ``<name>.develop.json`` and the virtual copies' ``<name>.vc-xxxxxxxx.*`` files.
 * Everything that remembers a photo by its library path follows it: the
   catalog (virtual copies, collection membership), the pick flags in
   ``.photo-room-library.json`` and the cull database. (The index's pick set is
@@ -167,7 +167,7 @@ def group_files(photo: Path) -> list[Path]:
         raise MoveError(f"No such photo: {photo.name}")
     found = set(members)
     for m in members:
-        pat = re.compile(re.escape(m) + r"(?:\.photoroom\.json|\.masks\.json|" + _VC_FILE + ")$")
+        pat = re.compile(re.escape(m) + r"(?:\.photoroom\.json|\.masks\.json|\.develop\.json|" + _VC_FILE + ")$")
         found.update(n for n in names if pat.fullmatch(n))
     out = [d / n for n in sorted(found)]
     for p in out:

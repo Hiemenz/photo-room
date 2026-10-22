@@ -65,6 +65,7 @@ async function zoomFetchMeta() {
 function zoomBlocker() {
   if (typeof cropping !== "undefined" && cropping) return "Crop";
   if (typeof spotTool !== "undefined" && spotTool) return "Spot removal";
+  if (typeof guideDraw !== "undefined" && guideDraw) return "Guided upright";
   if ($("mask-layer").classList.contains("on") || $("crop-layer").classList.contains("on")) return "Mask or crop";
   if (typeof baMode !== "undefined" && baMode !== "off") return "Before / After";
   return null;

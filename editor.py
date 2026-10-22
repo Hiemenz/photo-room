@@ -173,6 +173,9 @@ app.register_blueprint(merge_api.bp)
 import timelapse_api  # noqa: E402  (Timelapse dialog)
 
 app.register_blueprint(timelapse_api.bp)
+import proof_api  # noqa: E402  (targeted adjustment, soft proofing, reference view, Develop sidecar)
+
+app.register_blueprint(proof_api.bp)
 
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
@@ -1778,12 +1781,15 @@ def api_upright():
         adj = {k: v for k, v in (payload.get("adjustments") or {}).items()
                if not k.startswith("xf_")}
         framed = retouch.apply_corrections(base, lens.attach_meta(path, adj))
-        found = retouch.transform.upright(framed, mode)
+        guides = payload.get("guides")
+        if guides is not None and not isinstance(guides, list):
+            return jsonify({"error": "guides must be a list of {x1, y1, x2, y2}"}), 400
+        found = retouch.transform.upright(framed, mode, guides)
         info = found.pop("info", {})
         return jsonify({"ok": True, "mode": mode, "values": found, "detected": info,
                         "message": ("No clear lines found; nothing changed"
                                     if all(found[k] == retouch.transform.DEFAULTS[k] for k in found)
-                                    else f"Upright ({mode}) from {info.get('lines', 0)} lines")})
+                                    else f"{'Guided upright' if guides is not None else 'Upright'} ({mode}) from {info.get('lines', 0)} lines")})
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
 

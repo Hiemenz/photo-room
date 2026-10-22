@@ -141,7 +141,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 |---|---|---|---|---|
 | Parametric curve | Done | `tonecurve.py`, `crs:Parametric*`; `tests/test_tone_curve.py` | - | - |
 | Point curve RGB + per channel | Done | monotone cubic, `crs:ToneCurvePV2012*`; checked with real exiftool in `tests/test_real_exiftool_xmp.py` | - | - |
-| Targeted adjustment tool (on-image drag) | Missing | no on-image tool for curve or HSL | S | L |
+| Targeted adjustment tool (on-image drag) | Done | `targeted.py`, `/api/develop/targeted`, `static/js/develop-onimage.js`: pick Curve / Hue / Sat / Lum, drag up or down on the photo; moves the RGB curve point at that tone or the colour-mixer band under the cursor, one undo step per drag. Fit zoom only. `tests/test_group_g.py` | - | - |
 | HSL: 8 bands (hue, sat, luminance) | Done | `colormix.py` | - | - |
 | Point Color | Missing | no code | M | L |
 | Colour grading (3 wheels + global, blending, balance) | Done | `colormix.py`, `crs:ColorGrade*` | - | - |
@@ -162,7 +162,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Lens profile correction | Partial (optional extra, unverified here) | `lens.py` via `lensfunpy` (`uv sync --extra lens`); not installed on this Pi, so the profile path was not run. `doctor` reports it as WARN. `tests/test_m8.py` | S to verify | M |
 | Manual distortion, vignette fix, CA removal, defringe | Done | `lens.py` | - | - |
 | Transform (vertical, horizontal, rotate, aspect, scale, offset) | Done | `transform.py`, one homography, auto-crop to clean rectangle | - | - |
-| Upright (Auto, Level, Vertical, Full) | Partial | OpenCV Canny + Hough, `/api/upright`; no Guided Upright | M | L |
+| Upright (Auto, Level, Vertical, Full, Guided) | Done | OpenCV Canny + Hough, `/api/upright`; Guided: up to four user-drawn lines (`guides` in the same request) feed `transform.upright`, two lines are enough per direction; lines are kept in `*.develop.json`. `tests/test_group_g.py` | - | - |
 | Crop: free + 1:1, 4:3, 3:2, 16:9, thirds, straighten | Partial | `#crop-bar`; no portrait/landscape flip, no original or custom ratio, no 90-degree rotate or flip, no other overlays | S | M |
 | Spot removal: circle clone/heal | Done | `spots.py`, `retouch.py`, `crs:RetouchAreas` | - | - |
 | Spot removal: brush shape, visualise spots, dust finder | Missing | circles only | M | M |
@@ -187,7 +187,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Post-crop vignette | Missing | only the lens-profile vignette correction exists | S | M |
 | Grain | Missing | no code | S | M |
 | Calibration (primaries, shadow tint) | Missing | no code | M | L |
-| Soft proofing | Missing | no code (`PIL.ImageCms` could do it) | M | L |
+| Soft proofing | Done | `softproof.py` (`PIL.ImageCms`), `/api/develop/softproof`: ICC profile list (system colour folders, `PHOTO_ROOM_ICC_DIR`), rendering intent, simulate paper and ink (absolute colorimetric), black point compensation, out-of-gamut warning with percentage; set-up kept in `*.develop.json`. Display is assumed sRGB; Fit zoom only. `tests/test_group_g.py` | - | - |
 
 ### 8. Develop: history, snapshots, undo
 
@@ -197,7 +197,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Snapshots | Done | up to 50 per photo | - | - |
 | Before/after: split, side by side, `\` | Done | `before-after*.js` | - | - |
 | Reset to import, revert | Done | `/api/history/reset_to_import`, `/api/reset` | - | - |
-| Reference view | Missing | no code | S | L |
+| Reference view | Done | `Reference` in the Before/After bar: another library photo, as saved, beside the working photo (`/api/develop/reference`, `before-after-views.js`); choice kept in `*.develop.json`. `tests/test_group_g.py` | - | - |
 | Edit strength (scale the whole edit) | Done (extra) | `GLOBAL_CONTROLS` | - | - |
 | Learned personal style, auto-edit | Done (extra, not in Lightroom) | `style.py` (DuckDB), `docs/AUTO-CULL.md` | - | - |
 
@@ -280,10 +280,8 @@ Lightroom features is in the matrix above.
 | 24 | **AI denoise (optional extra, onnxruntime)** after package 1 lands | Best-in-class NR for ISO 6400+ | L | new `denoise_ai.py`, `pyproject.toml` extra |
 | 25 | **AI subject / sky masks (optional extra)** | Fastest local-edit workflow in Lightroom today | L | new `aimask.py`, `masks.py` |
 
-Smaller items not in the top 25: Calibration panel (M), targeted adjustment
-tool (S), Point Color (M), soft proofing (M), Guided Upright (M), red eye (S),
-reference view (S), Painter (S),
-contact-sheet PDF (S), post-export actions (S). (Done: grid density options, collection sets, Map view, move-folder UI.)
+Smaller items not in the top 25: Calibration panel (M), Point Color (M), red eye (S), Painter (S),
+contact-sheet PDF (S), post-export actions (S). (Done: targeted adjustment tool, soft proofing, Guided Upright, reference view, grid density options, collection sets, Map view, move-folder UI.)
 
 ## Already queued (not repeated above)
 

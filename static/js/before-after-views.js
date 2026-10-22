@@ -1,6 +1,7 @@
 // ---- Before / after views ------------------------------------------------
 // Split: the Before image is clipped to the left of a draggable divider.
 // Side by side: two panes. Before = the as-imported (auto) settings.
+// Reference: the Before pane shows another photo instead (set in develop-onimage.js).
 async function ensureBefore() {
   if (beforeSrc || !current) return;
   const path = current;
@@ -12,12 +13,20 @@ async function ensureBefore() {
 
 function layoutBA() {
   const layer = $("ba-layer");
-  layer.classList.toggle("side", baMode === "side");
+  layer.classList.toggle("side", baMode === "side" || baMode === "ref");
   $("ba-before").style.clipPath = baMode === "split" ? `inset(0 ${100 - baSplit}% 0 0)` : "none";
   $("ba-divider").style.left = `${baSplit}%`;
 }
 
 async function refreshBA() {
+  // Reference view: the other photo (as saved) takes the Before pane. Without one yet, ask for it.
+  if (baMode === "ref" && current) {
+    if (refPath && !refSrc) await loadReference();
+    if (!refSrc) { fillRefPicker(); $("ref-pick").hidden = false; baMode = "off"; }
+    else $("ref-pick").hidden = true;
+  } else if ($("ref-pick")) $("ref-pick").hidden = true;
+  const tagB = document.querySelector("#ba-layer .tag.b");
+  if (tagB) tagB.textContent = baMode === "ref" ? "REFERENCE" : "BEFORE";
   document.querySelectorAll("#ba-bar button").forEach(b => b.classList.toggle("active", b.dataset.ba === baMode));
   const on = baMode !== "off" && !!current;
   $("ba-layer").classList.toggle("on", on);
@@ -25,8 +34,8 @@ async function refreshBA() {
   if (typeof layoutMaskLayer === "function") layoutMaskLayer();
   if (!on) return;
   $("ba-after").src = $("preview").src;
-  await ensureBefore();
-  if (beforeSrc) $("ba-before").src = beforeSrc;
+  if (baMode === "ref") $("ba-before").src = refSrc;
+  else { await ensureBefore(); if (beforeSrc) $("ba-before").src = beforeSrc; }
   layoutBA();
 }
 

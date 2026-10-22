@@ -206,3 +206,10 @@ details.panel > summary { cursor: pointer; font-weight: 600; user-select: none; 
 #quick-develop .qd-group { display: inline-flex; align-items: center; gap: 1px; }
 #quick-develop .qd-group > span { min-width: 58px; text-align: center; }
 #quick-develop button { padding: 1px 5px; font-size: 11px; }
+
+/* On-image tools: guided upright lines, soft proof overlay, reference picker */
+#guide-svg { position: absolute; z-index: 5; display: none; touch-action: none; cursor: crosshair; overflow: visible; }
+#guide-svg .guide-line { stroke: #ffd23f; stroke-width: 2.5px; vector-effect: non-scaling-stroke; pointer-events: stroke; filter: drop-shadow(0 0 2px rgba(0,0,0,.8)); }
+#guide-bar .seg button.active, #tat-bar button.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+#proof-overlay { position: absolute; z-index: 3; pointer-events: none; }
+#ref-pick { font-size: 11px; max-width: 160px; }

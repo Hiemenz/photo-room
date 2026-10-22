@@ -78,7 +78,7 @@ async function renderPreview(fast = false) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: abort.signal,
-      body: JSON.stringify({ path: current, adjustments: values, raw_frame: spotTool, fast, seq: ++previewSeq }),
+      body: JSON.stringify({ path: current, adjustments: values, raw_frame: spotTool || (typeof guideDraw !== "undefined" && guideDraw), fast, seq: ++previewSeq }),
     });
     const data = await res.json();
     if (token !== renderToken || data.stale) return;   // a newer render superseded this

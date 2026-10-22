@@ -293,7 +293,32 @@ def _minimise(fn, lo: float, hi: float, coarse: float, fine: float) -> float:
     return float(min(grid, key=fn))
 
 
-def upright(img: np.ndarray, mode: str = "auto") -> dict:
+MAX_GUIDES = 4      # Guided Upright takes up to four user-drawn lines
+
+
+def guide_lines(guides, width: int, height: int) -> np.ndarray:
+    """
+    Pixel segments (N, 4) from normalised guides ``[{x1, y1, x2, y2}, ...]``.
+
+    Malformed, non-finite and (near) zero-length guides are dropped; at most
+    ``MAX_GUIDES`` are kept. Coordinates are clamped to the frame.
+    """
+    rows = []
+    for g in list(guides or [])[:MAX_GUIDES]:
+        try:
+            x1, y1, x2, y2 = (float(g[k]) for k in ("x1", "y1", "x2", "y2"))
+        except (TypeError, KeyError, ValueError):
+            continue
+        if not all(np.isfinite([x1, y1, x2, y2])):
+            continue
+        x1, x2 = (min(1.0, max(0.0, v)) * width for v in (x1, x2))
+        y1, y2 = (min(1.0, max(0.0, v)) * height for v in (y1, y2))
+        if np.hypot(x2 - x1, y2 - y1) >= 0.02 * min(width, height):
+            rows.append((x1, y1, x2, y2))
+    return np.array(rows, dtype=np.float64).reshape(-1, 4)
+
+
+def upright(img: np.ndarray, mode: str = "auto", guides=None) -> dict:
     """
     Suggest transform slider values that straighten the picture.
 
@@ -301,14 +326,20 @@ def upright(img: np.ndarray, mode: str = "auto") -> dict:
     ``full`` also fixes converging horizontals; ``auto`` picks whichever of
     those the detected lines support. Anything inconclusive returns the
     neutral values, so the button never makes a picture worse by guessing.
+
+    ``guides`` (Guided Upright) replaces line detection with the user's own
+    lines, normalised ``{x1, y1, x2, y2}`` in the frame ``img`` shows. Because
+    the user chose them, two lines are enough to correct a direction.
     """
     if mode not in UPRIGHT_MODES:
         raise ValueError(f"unknown upright mode {mode!r}")
     h, w = img.shape[:2]
     result = dict(DEFAULTS)
-    lines = detect_lines(img)
+    guided = guides is not None
+    lines = guide_lines(guides, w, h) if guided else detect_lines(img)
+    need = 2 if guided else 3
     horiz, vert = _split(lines)
-    info = {"lines": int(len(lines)), "horizontal": int(len(horiz)), "vertical": int(len(vert))}
+    info = {"guided": guided, "lines": int(len(lines)), "horizontal": int(len(horiz)), "vertical": int(len(vert))}
 
     def build(**kw):
         a = dict(DEFAULTS)
@@ -333,13 +364,13 @@ def upright(img: np.ndarray, mode: str = "auto") -> dict:
     def cost_v(v):
         return _skew_cost(vert, build(xf_rotate=rot, xf_vertical=v), True)
 
-    if len(vert) >= 3:
+    if len(vert) >= need:
         v = _minimise(cost_v, -100, 100, 4.0, 0.5)
         if cost_v(v) < 0.7 * cost_v(0.0):
             result["xf_vertical"] = round(v, 1)
 
     # --- Horizontal: converging horizontals.
-    if mode in ("full", "auto") and len(horiz) >= 3:
+    if mode in ("full", "auto") and len(horiz) >= need:
         vv = result["xf_vertical"]
 
         def cost_h(hh):

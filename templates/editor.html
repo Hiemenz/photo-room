@@ -332,6 +332,8 @@
     <button data-ba="off" class="active" title="Edited view (\ toggles Before)">After</button>
     <button data-ba="split" title="Split view: drag the divider">Split</button>
     <button data-ba="side" title="Before and after side by side">Side by side</button>
+    <button data-ba="ref" title="Compare with a reference photo side by side">Reference</button>
+    <select id="ref-pick" hidden aria-label="Reference photo"></select>
   </div>
   <div id="ba-layer">
     <img id="ba-before" alt=""><img id="ba-after" alt="">
@@ -642,6 +644,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/profiles.js') }}"></script>
 <script src="{{ asset('js/develop-crop.js') }}"></script>
 <script src="{{ asset('js/develop-tone-curve.js') }}"></script>
+<script src="{{ asset('js/develop-onimage.js') }}"></script>
 <script src="{{ asset('js/develop-masks.js') }}"></script>
 <script src="{{ asset('js/selection.js') }}"></script>
 <script src="{{ asset('js/before-after.js') }}"></script>
