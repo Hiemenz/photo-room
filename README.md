@@ -60,6 +60,7 @@ Start with `uv run photo-room doctor`; it checks everything below and prints the
 - `exiftool` — `brew install exiftool` (macOS) or `sudo apt install libimage-exiftool-perl` (Debian/Ubuntu/Raspberry Pi OS)
 - Python 3.12+ with [uv](https://docs.astral.sh/uv/)
 - Optional: `uv sync --extra semantic` enables on-device semantic search and Find similar (see docs/SEMANTIC-SEARCH.md); the model is downloaded only by `python semantic.py download --yes`.
+- Optional: `uv sync --extra avif --extra jxl` adds AVIF and JPEG XL to the Export dialog and `export --format` (via `pillow-avif-plugin` / `pillow-jxl-plugin`).
 - Optional: `uv sync --extra lens` installs `lensfunpy` for lens profiles
   (see "Lens corrections"); everything else works without it.
 - Optional: [Adobe DNG Converter](https://helpx.adobe.com/camera-raw/using/adobe-dng-converter.html)

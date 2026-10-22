@@ -39,11 +39,39 @@ import render_kernels
 from process import EXIFTOOL_TIMEOUT, RAW_SUFFIXES, run_tool
 
 FORMATS = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg",
-           "tiff": ".tif", "tif": ".tif", "webp": ".webp"}
+           "tiff": ".tif", "tif": ".tif", "webp": ".webp",
+           "avif": ".avif", "jxl": ".jxl"}
+# Formats that need an optional Pillow plugin: format -> (module, Pillow save name).
+PLUGIN_FORMATS = {"avif": ("pillow_avif", "AVIF"), "jxl": ("pillow_jxl", "JXL")}
 SIXTEEN_BIT_FORMATS = ("png", "tiff")
 # Lightroom-style metadata choices (see metadata_args).
 METADATA_MODES = ("all", "copyright", "no_location", "no_develop", "none")
 COLOR_SPACES = ("srgb", "adobergb", "prophoto")
+DEST_MODES = ("folder", "subfolder", "original", "ask")
+# Pillow 12 can carry its own AVIF codec; the plugins register one otherwise.
+_EXTRAS_HINT = {"avif": "pillow-avif-plugin (uv sync --extra avif)",
+                "jxl": "pillow-jxl-plugin (uv sync --extra jxl)"}
+
+
+def format_available(fmt: str) -> bool:
+    """True when Pillow can write ``fmt`` (AVIF / JPEG XL need an optional plugin)."""
+    fmt = fmt.lower()
+    if fmt not in PLUGIN_FORMATS:
+        return fmt in FORMATS
+    module, save_name = PLUGIN_FORMATS[fmt]
+    Image.init()
+    if save_name in Image.SAVE:
+        return True
+    try:
+        __import__(module)
+    except Exception:  # ImportError, or a plugin that fails to load its codec
+        return False
+    Image.init()
+    return save_name in Image.SAVE
+
+
+def available_formats() -> list[str]:
+    return ["jpeg", "png", "tiff", "webp"] + [f for f in PLUGIN_FORMATS if format_available(f)]
 
 # Tags that describe the *file* or the rendering rather than the photograph.
 # Copying them would be wrong (dimensions, orientation already applied by the
@@ -75,12 +103,16 @@ class ExportOptions:
     png_compression: int = 1        # zlib level 0-9 (Pillow's old default, 6, is ~4x slower)
     full_sensor: bool = False       # raw: the whole decoded sensor area instead of the camera's default crop
     optimize_jpeg: bool = False     # optimal Huffman tables: ~5% smaller, ~2x slower to encode
+    custom_text: str = ""           # the {text} filename token
 
     def validate(self) -> "ExportOptions":
         fmt = self.format.lower()
         if fmt not in FORMATS:
-            raise ValueError(f"format must be jpeg, png, tiff or webp, not {self.format!r}")
+            raise ValueError(f"format must be jpeg, png, tiff, webp, avif or jxl, not {self.format!r}")
         self.format = {"jpg": "jpeg", "tif": "tiff"}.get(fmt, fmt)
+        if not format_available(self.format):
+            raise ValueError(f"{self.format.upper()} output needs {_EXTRAS_HINT[self.format]}, which is not installed")
+        self.custom_text = _clean_token_text(self.custom_text)
         mode = str(self.metadata or "all").lower().replace(" ", "_").replace("-", "_")
         if mode not in METADATA_MODES:
             raise ValueError(f"metadata must be one of {', '.join(METADATA_MODES)}")
@@ -520,8 +552,45 @@ def _shoot_date(path: Path) -> str:
 
 _NUM_SPEC = re.compile(r"^0?\d{1,2}d?$")
 _STR_SPEC = re.compile(r"^[<>^]?\d{0,2}s?$")
-_TEMPLATE_FIELDS = {"name": _STR_SPEC, "date": _STR_SPEC,
+_TEMPLATE_FIELDS = {"name": _STR_SPEC, "date": _STR_SPEC, "rating": _NUM_SPEC,
+                    "camera": _STR_SPEC, "keyword": _STR_SPEC, "text": _STR_SPEC,
                     "seq": _NUM_SPEC, "width": _NUM_SPEC, "height": _NUM_SPEC}
+
+
+def _clean_token_text(value) -> str:
+    """Text safe inside a file name: no separators, control characters or leading dots."""
+    text = re.sub(r"[/\\\x00-\x1f]", "-", str(value or "")).strip().lstrip(".")
+    return text[:60]
+
+
+def name_facts(source: Path, template: str) -> dict[str, str]:
+    """
+    {rating} {camera} {keyword} for a photo, read only when the template uses them.
+    Rating comes from the sidecar (where edits are saved), camera and the first
+    keyword from the file or its sidecar.
+    """
+    facts = {"rating": "0", "camera": "", "keyword": ""}
+    if not any(f"{{{k}" in template for k in ("rating", "camera", "keyword")):
+        return facts
+    try:
+        meta = process._exiftool_get(source, "Model")
+        facts["camera"] = "" if meta.get("Model", "-") == "-" else meta["Model"]
+        side = process.read_target(source)
+        if not side.exists():
+            side = source
+        got = process._exiftool_get(side, "XMP-xmp:Rating", "XMP-dc:Subject")
+        try:
+            facts["rating"] = str(max(0, int(float(got.get("XMP-xmp:Rating", "0")))))
+        except ValueError:
+            pass
+        kws = got.get("XMP-dc:Subject", "-")
+        if kws not in ("-", ""):
+            facts["keyword"] = kws.split(",")[0].strip()
+    except Exception:
+        pass  # a name token never fails an export; it falls back to empty
+    for key in ("camera", "keyword"):
+        facts[key] = _clean_token_text(facts[key])
+    return facts
 
 
 def _check_template(template: str) -> None:
@@ -542,16 +611,16 @@ def _check_template(template: str) -> None:
         if field not in _TEMPLATE_FIELDS or conv:
             raise ValueError(
                 f"bad filename template {template!r}: unknown field {{{field}}} "
-                "(use name, date, seq, width, height)")
+                "(use name, date, seq, width, height, rating, camera, keyword, text)")
         if spec and not _TEMPLATE_FIELDS[field].match(spec):
             raise ValueError(f"bad filename template {template!r}: unsupported format {spec!r}")
 
 
 def output_name(source: Path, template: str, ext: str, seq: int,
-                size: tuple[int, int], stem: str | None = None) -> str:
+                size: tuple[int, int], stem: str | None = None, text: str = "") -> str:
     """
     Expand a filename template. Tokens: {name} {date} {seq} {width} {height}
-    ({seq:04d} pads). Path separators are rejected so a template cannot
+    {rating} {camera} {keyword} {text} ({seq:04d} pads; {text} is the literal text option). Path separators are rejected so a template cannot
     write outside the output folder. ``stem`` replaces the source's file stem
     for {name} (a virtual copy passes ``IMG_0001-copy2``).
     """
@@ -561,6 +630,7 @@ def output_name(source: Path, template: str, ext: str, seq: int,
         stem = template.format(
             name=stem or source.stem, seq=seq, width=size[0], height=size[1],
             date=_shoot_date(source) if needs_date else "",
+            text=_clean_token_text(text), **name_facts(source, template),
         )
     except (KeyError, IndexError, ValueError) as exc:
         raise ValueError(f"bad filename template {template!r}: {exc}") from None
@@ -620,7 +690,7 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
     out_dir.mkdir(parents=True, exist_ok=True)
     ext = FORMATS[opts.format]
     name = output_name(source, opts.template, ext, seq, size,
-                       stem=virtual_stem(source, virtual) if virtual else None)
+                       stem=virtual_stem(source, virtual) if virtual else None, text=opts.custom_text)
     dest = claim_output(out_dir, name, overwrite)
 
     try:
@@ -632,6 +702,8 @@ def export_photo(source: Path, out_dir: Path, opts: ExportOptions, seq: int = 1,
             img.save(dest, "TIFF", compression="tiff_lzw", icc_profile=icc)
         elif opts.format == "webp":
             img.save(dest, "WEBP", quality=int(opts.quality), method=4, icc_profile=icc)
+        elif opts.format in PLUGIN_FORMATS:
+            img.save(dest, PLUGIN_FORMATS[opts.format][1], quality=int(opts.quality), icc_profile=icc)
         elif opts.format == "jpeg":
             img.save(dest, "JPEG", quality=int(opts.quality), subsampling=0 if opts.quality >= 90 else 2,
                      optimize=bool(opts.optimize_jpeg), icc_profile=icc)

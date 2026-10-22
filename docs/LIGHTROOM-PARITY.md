@@ -208,18 +208,19 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Export JPEG / PNG / TIFF (8/16-bit) / WebP, full-res render from the raw | Done | `exporter.py`, `export_api.py`; `tests/test_export*.py` | - | - |
 | Keep all metadata (EXIF, GPS, IPTC, XMP, ICC, MakerNotes) | Done | exiftool `-TagsFromFile -all:all`; `tests/test_real_exiftool_export.py`, `tests/test_real_raw_e2e.py` (real CR2 incl. Canon MakerNotes). Real 1000D CR2 on the Pi: Make, Model, LensModel, ISO, ExposureTime survive | - | - |
 | Metadata options (copyright only, strip location, drop develop settings) | Done | `ExportOptions.metadata`, `exporter.metadata_args`, `#ex-meta`; `tests/test_export_formats_metadata.py`. Person/face tags are not stripped | - | - |
-| Format: TIFF, PSD, DNG, WebP, AVIF, JPEG XL | Partial | TIFF and WebP done (`--format`, `exporter.FORMATS`); PSD, DNG, AVIF, JPEG XL missing | S | L |
+| Format: TIFF, PSD, DNG, WebP, AVIF, JPEG XL | Partial | TIFF and WebP done (`--format`, `exporter.FORMATS`); AVIF and JPEG XL work when the optional `pillow-avif-plugin` / `pillow-jxl-plugin` are installed (`uv sync --extra avif --extra jxl`; the dialog lists only installed formats, 8-bit, metadata copy is exiftool best effort); PSD, DNG missing. `tests/test_export_group_d.py` | S | L |
 | 16-bit output | Done | 16-bit PNG and TIFF (`write_png16`, `write_tiff16`) | - | - |
 | Colour space: sRGB, Adobe RGB, ProPhoto with embedded ICC | Done | `exporter.py`; custom ICC absent | - | - |
 | Resize | Partial | long edge only, never upscales | S | M |
-| Naming template | Partial | `{name} {date} {seq} {width} {height}`; no text, `{rating}`, `{camera}`, `{keyword}` | S | M |
-| Destination | Partial | one folder, outside the library; no subfolder, same-as-original, ask | S | M |
+| Naming template | Done | `{name} {date} {seq} {width} {height} {rating} {camera} {keyword} {text}` (`--template`, `--text`, literal text option); `{keyword}` is the first keyword; values are made filename-safe; no sequence-start or custom-token editor | - | - |
+| Destination | Done | chosen folder (outside the library), sub-folder of it, same folder as each original (never overwrites; `-1`, `-2`), or ask each time (`dest_mode`, `--subfolder`, `--same-as-original`) | - | - |
 | Output sharpening, watermark | Done | `export_finish.py` | - | - |
 | Export presets (4 built-in + user) | Done | `export_presets.py` | - | - |
 | Queue, progress, cancel, resume after restart | Done | `export_queue.json`, `/api/export/jobs\|cancel\|resume` | - | - |
 | Timelapse video (selection / collection / folder; deflicker, stabilise, ffmpeg) | Done | `timelapse.py`, `timelapse_api.py`, `static/js/timelapse.js`; `tests/test_timelapse.py` | - | - |
-| Export with Previous | Missing | presets cover it manually | S | L |
-| Post-processing (open in app, run action) | Missing | no code | S | L |
+| Export with Previous | Done | last settings kept in `export_last.json`; button and Ctrl/Cmd+Alt+Shift+E in the dialog, `/api/export/previous`, CLI `export --previous` | - | - |
+| Post-processing (open in app, run action) | Done | `postexport.py`: open in an app / default viewer, or run a command as an argument list (no shell, 30 s timeout, `{files}`/`{folder}`); CLI `--post-open`, `--post-command`. Results shown in the dialog | - | - |
+| Contact sheet PDF | Done | `contactsheet_pdf.py`, dialog section, `/api/export/contact-sheet`, CLI `export --contact-sheet`; A4/Letter, columns, heading, file names; no print module layouts or templates | - | - |
 | Print module | Won't do | ROADMAP "Not planned" | L | L |
 | Web module, Book, Slideshow | Won't do | ROADMAP "Not planned" | L | L |
 | Contact-sheet PDF | Missing | not the same as the grid; no code | S | L |
@@ -267,7 +268,7 @@ Lightroom features is in the matrix above.
 | 11 | (Done) **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
 | 12 | **Import dialog**: choose frames, destination, rename template, keywords/copyright/preset on import, Move vs Copy | The Lightroom Import experience; ROADMAP "Not wired yet" | M | `import_api.py`, `cardwatch.py`, `static/js/import.js` |
 | 13 | **Carry XMP sidecars with imported raws** (copy `IMG.xmp` beside the raw when present) | Prerequisite for any Lightroom round trip | S | `ingest.py`, `cardwatch.py`, `import_api.py` |
-| 14 | **Export sizing and destination**: short edge, megapixels, percent, subfolder, same-as-original, Export with Previous | Daily export ergonomics | S | `exporter.py`, `export_api.py`, export dialog |
+| 14 | (Partly done: subfolder, same-as-original, Export with Previous) **Export sizing and destination**: short edge, megapixels, percent | Daily export ergonomics | S | `exporter.py`, `export_api.py`, export dialog |
 | 15 | **More local sliders**: whites, blacks, hue, noise, colour tint (reuse global kernels) | Closes most of the local-adjustment slider gap | M | `masks.py`, `editor.py` |
 | 16 | **Range masks (luminance, colour) and mask combine** | The first non-geometric masking; makes brush masks reusable | M | `masks.py`, `static/js/develop-masks.js` |
 | 17 | ~~**Keyword list panel with counts, hierarchy (`lr:HierarchicalSubject`)**~~ done | Keyword workflow beyond a text box | M | `keywordlib.py`, `kwapi.py`, `static/js/keyword-panel.js` |
@@ -283,7 +284,7 @@ Lightroom features is in the matrix above.
 Smaller items not in the top 25: Calibration panel (M), targeted adjustment
 tool (S), Point Color (M), soft proofing (M), Guided Upright (M), red eye (S),
 reference view (S), grid density options (S), Painter (S), collection sets (S),
-contact-sheet PDF (S), post-export actions (S), Map module (M).
+Map module (M).
 
 ## Already queued (not repeated above)
 

@@ -21,7 +21,17 @@
     metadata: el("ex-meta").value,
     sharpen: el("ex-sharp").value ? { for: el("ex-sharp").value, amount: el("ex-sharp-amt").value } : null,
     watermark: watermark(),
+    dest_mode: el("ex-dest-mode").value,
+    subfolder: el("ex-subfolder").value.trim(),
+    custom_text: el("ex-text").value,
+    post_action: postAction(),
   });
+  const postAction = () => {
+    const kind = el("ex-post").value;
+    if (kind === "open") return { type: "open", app: el("ex-post-app").value.trim() };
+    if (kind === "command" && el("ex-post-cmd").value.trim()) return { type: "command", argv: el("ex-post-cmd").value };
+    return null;
+  };
   const watermark = () => {
     const type = el("ex-wm").value;
     if (!type) return null;
@@ -39,6 +49,13 @@
     el("ex-meta").value = st.keep_metadata === false ? "none" : (st.metadata || "all");
     if (st.template) el("ex-template").value = st.template;
     if (st.dest) el("ex-dest").value = st.dest;
+    el("ex-dest-mode").value = st.dest_mode || "folder";
+    el("ex-subfolder").value = st.subfolder || "";
+    el("ex-text").value = st.custom_text || "";
+    const pa = st.post_action;
+    el("ex-post").value = pa ? pa.type : "";
+    el("ex-post-app").value = pa && pa.type === "open" ? pa.app || "" : "";
+    el("ex-post-cmd").value = pa && pa.type === "command" ? (Array.isArray(pa.argv) ? pa.argv.join(" ") : pa.argv) : "";
     el("ex-sharp").value = st.sharpen ? st.sharpen.for : "";
     el("ex-sharp-amt").value = st.sharpen ? st.sharpen.amount : "standard";
     const w = st.watermark;
@@ -70,6 +87,14 @@
     el("ex-q-row").hidden = !["jpeg", "webp"].includes(fmt);
     el("ex-depth-row").hidden = !["png", "tiff"].includes(fmt);
     el("ex-q-val").textContent = el("ex-quality").value;
+    const mode = el("ex-dest-mode").value, postKind = el("ex-post").value;
+    el("ex-dest-row").hidden = mode === "original";
+    el("ex-sub-row").hidden = mode !== "subfolder";
+    el("ex-text-row").hidden = !el("ex-template").value.includes("{text");
+    el("ex-post-app-row").hidden = postKind !== "open";
+    el("ex-post-cmd-row").hidden = postKind !== "command";
+    el("ex-post-hint").hidden = postKind !== "command";
+    el("ex-sheet-go").disabled = !selected.size && !current;
     el("ex-edge").disabled = el("ex-resize").value !== "edge";
     const wm = el("ex-wm").value;
     el("ex-wm-opts").hidden = !wm;
@@ -102,6 +127,11 @@
         try {
           const d = await (await fetch("/api/export/defaults")).json();
           el("ex-dest").value = d.dest;
+          for (const f of ["avif", "jxl"]) {
+            const o = el("ex-format").querySelector(`[value="${f}"]`);
+            o.hidden = o.disabled = !d.formats.includes(f);
+          }
+          el("ex-prev").disabled = !d.has_previous;
           if (!d.exiftool) msg("exiftool is not installed; exporting will fail until it is.", true);
         } catch (e) {}
       }
@@ -164,21 +194,51 @@
     if (active.length && dlg.open) queueTimer = setTimeout(refreshQueue, 500);
     else if (!active.length && jobs.length) {
       const last = jobs[jobs.length - 1];
-      if (last.state !== "interrupted") msg(`Export ${last.state}: ${last.written.length} of ${last.total} to ${last.dest}` + (last.failed.length ? ` -- ${last.failed.length} failed` : ""), !!last.failed.length);
+      const after = last.post && last.post.message ? `. After export: ${last.post.message}` : "";
+      if (last.state !== "interrupted") msg(`Export ${last.state}: ${last.written.length} of ${last.total} to ${last.dest}` + (last.failed.length ? ` -- ${last.failed.length} failed` : "") + after, !!last.failed.length || !!(last.post && !last.post.ok));
+    }
+  }
+
+  async function saveOpenPhoto() {
+    if (!(el("ex-save").checked && current && ["current", "folder", "selected"].includes(el("ex-scope").value)
+        && (el("ex-scope").value !== "selected" || selected.has(current)))) return true;
+    msg("Saving edits…");
+    const saved = await post("/api/save", { path: current, adjustments: { ...values, _baseline_temp: baselineTemp } });
+    if (saved.error) { msg(saved.error, true); return false; }
+    return true;
+  }
+
+  // Export with Previous: the last export's settings, applied to the photos chosen now.
+  async function exportPrevious() {
+    if (running) return;
+    running = true; el("ex-go").disabled = el("ex-prev").disabled = true;
+    try {
+      if (dlg.open) { el("ex-progress").hidden = false; el("ex-bar").style.width = "0"; }
+      const scope = selected.size > 1 ? "selected" : (current ? "current" : "folder");
+      if (!(await saveOpenPhoto())) return;
+      msg("Starting…");
+      const job = await post("/api/export/previous", { scope, path: current, paths: [...selected] });
+      if (job.error) { msg(job.error, true); if (!dlg.open) alert(job.error); return; }
+      if (!dlg.open) await open();
+      await refreshQueue();
+    } catch (e) {
+      msg(String(e), true);
+    } finally {
+      running = false; el("ex-go").disabled = el("ex-prev").disabled = false;
     }
   }
 
   async function go() {
     if (running) return;
+    if (el("ex-dest-mode").value === "ask") {
+      const where = prompt("Export to which folder?", el("ex-dest").value);
+      if (!where) return;
+      el("ex-dest").value = where;
+    }
     running = true; el("ex-go").disabled = true;
     el("ex-progress").hidden = false; el("ex-bar").style.width = "0";
     try {
-      if (el("ex-save").checked && current && ["current", "folder", "selected"].includes(el("ex-scope").value)
-          && (el("ex-scope").value !== "selected" || selected.has(current))) {
-        msg("Saving edits…");
-        const saved = await post("/api/save", { path: current, adjustments: { ...values, _baseline_temp: baselineTemp } });
-        if (saved.error) { msg(saved.error, true); return; }
-      }
+      if (!(await saveOpenPhoto())) return;
       msg("Starting…");
       const job = await post("/api/export", options());
       if (job.error) { msg(job.error, true); return; }
@@ -193,6 +253,17 @@
   el("export-open").addEventListener("click", open);
   el("ex-cancel").addEventListener("click", () => dlg.close());
   el("ex-go").addEventListener("click", go);
+  el("ex-prev").addEventListener("click", exportPrevious);
+  el("ex-sheet-go").addEventListener("click", async () => {
+    msg("Building the contact sheet…");
+    try {
+      const r = await post("/api/export/contact-sheet", {
+        scope: selected.size ? "selected" : "current", path: current, paths: [...selected], dest: el("ex-dest").value,
+        columns: +el("ex-sheet-cols").value, page: el("ex-sheet-page").value, title: el("ex-sheet-title").value,
+      });
+      msg(r.error ? r.error : `Contact sheet of ${r.count} photo(s): ${r.path}`, !!r.error);
+    } catch (e) { msg(String(e), true); }
+  });
   el("ex-preset").addEventListener("change", () => {
     const p = presets.find((x) => x.name === el("ex-preset").value);
     el("ex-preset-del").disabled = !p || p.builtin;
@@ -218,6 +289,10 @@
     el(id).addEventListener("input", syncControls);
     el(id).addEventListener("change", syncControls);
   }
+  for (const id of ["ex-dest-mode", "ex-subfolder", "ex-text", "ex-post", "ex-post-app", "ex-post-cmd"]) {
+    el(id).addEventListener("input", syncControls);
+    el(id).addEventListener("change", syncControls);
+  }
   for (const id of ["ex-scope", "ex-template", "ex-format", "ex-quality", "ex-depth", "ex-cs", "ex-resize", "ex-edge", "ex-dest"]) {
     el(id).addEventListener("input", syncControls);
     el(id).addEventListener("change", syncControls);
@@ -225,6 +300,11 @@
   // Arrow keys in the dialog's controls must not step through photos behind it.
   dlg.addEventListener("keydown", (e) => e.stopPropagation());
   document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.altKey && (e.key === "E" || e.key === "e")) {
+      e.preventDefault();
+      exportPrevious();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "E" || e.key === "e")) {
       e.preventDefault();
       dlg.open ? dlg.close() : open();

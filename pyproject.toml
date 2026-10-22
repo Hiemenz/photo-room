@@ -31,6 +31,9 @@ heic = ["pillow-heif>=0.16"]
 # ONNX model. Never required: without it search falls back to names/keywords/EXIF.
 # The model itself is downloaded only by `python semantic.py download --yes`.
 semantic = ["onnxruntime>=1.18", "tokenizers>=0.19"]
+# AVIF / JPEG XL export. Each is offered in the Export dialog only when installed.
+avif = ["pillow-avif-plugin>=1.4"]
+jxl = ["pillow-jxl-plugin>=1.3"]
 
 
 [project.scripts]

@@ -992,17 +992,45 @@ def cmd_export(args: argparse.Namespace) -> None:
         print("No photos found.", file=sys.stderr)
         sys.exit(1)
 
+    if args.contact_sheet:
+        _cmd_contact_sheet(args, sources)
+        return
+
+    import export_presets
+    import postexport
     try:
-        opts = exporter.ExportOptions(
-            format=args.format, quality=args.quality, long_edge=args.long_edge,
-            colorspace=args.colorspace, template=args.template,
-            keep_metadata=not args.no_metadata, metadata=args.metadata, bit_depth=args.bit_depth,
-        ).validate()
+        if args.previous:
+            last = export_presets.load_last()
+            if last is None:
+                raise ValueError("there is no previous export to repeat")
+            settings = dict(last)
+            if args.output:
+                settings["dest"] = args.output
+            dest_cfg = {"dest_mode": settings.get("dest_mode", "folder"), "subfolder": settings.get("subfolder", ""),
+                        "post_action": settings.get("post_action")}
+        else:
+            settings = {
+                "format": args.format, "quality": args.quality, "long_edge": args.long_edge,
+                "colorspace": args.colorspace, "template": args.template,
+                "keep_metadata": not args.no_metadata, "metadata": args.metadata,
+                "bit_depth": args.bit_depth, "custom_text": args.text, "dest": args.output or "",
+                "dest_mode": "original" if args.same_as_original else ("subfolder" if args.subfolder else "folder"),
+                "subfolder": args.subfolder or "",
+            }
+            if args.post_command:
+                settings["post_action"] = {"type": "command", "argv": args.post_command}
+            elif args.post_open is not None:
+                settings["post_action"] = {"type": "open", "app": args.post_open}
+            dest_cfg = export_presets.destination_settings(settings)
+        opts = export_presets.options_from_payload(settings)
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(2)
+    same_dir = dest_cfg["dest_mode"] == "original"
 
-    out_dir = Path(args.output) if args.output else Path.cwd() / "export"
+    out_dir = Path(settings.get("dest") or "") if settings.get("dest") else Path.cwd() / "export"
+    if dest_cfg["dest_mode"] == "subfolder":
+        out_dir = out_dir / dest_cfg["subfolder"]
     written, failed = [], []
     # (raw, virtual copy or None): each virtual copy exports as its own file.
     jobs: list[tuple[Path, dict | None]] = []
@@ -1016,17 +1044,41 @@ def cmd_export(args: argparse.Namespace) -> None:
                 break
     for seq, (src, virt) in enumerate(tqdm(jobs, unit="file", desc="Exporting"), start=1):
         try:
-            dest = exporter.export_photo(src, out_dir, opts, seq=seq, virtual=virt)
+            dest = exporter.export_photo(src, src.parent if same_dir else out_dir, opts, seq=seq, virtual=virt)
             written.append(dest)
             if args.verbose:
                 tqdm.write(f"  {src.name} -> {dest}")
         except Exception as exc:
             tqdm.write(f"  ERROR {src.name}: {exc}", file=sys.stderr)
             failed.append(src.name)
-    print(f"\nExported {len(written)} file(s) to {out_dir}", end="")
+    print(f"\nExported {len(written)} file(s) to {'the original folders' if same_dir else out_dir}", end="")
     print(f", {len(failed)} failed: {', '.join(failed)}" if failed else ".")
+    export_presets.save_last({**settings, **dest_cfg, "dest": settings.get("dest") or str(out_dir)})
+    if dest_cfg["post_action"] and written:
+        result = postexport.run_action(dest_cfg["post_action"], [str(w) for w in written])
+        if result["message"]:
+            print(f"Post-export: {result['message']}", file=sys.stderr if not result["ok"] else sys.stdout)
     if failed:
         sys.exit(1)
+
+
+def _cmd_contact_sheet(args: argparse.Namespace, sources: list[Path]) -> None:
+    """``export --contact-sheet sheet.pdf``: a PDF of thumbnails instead of exported files."""
+    import contactsheet_pdf
+    import thumbs
+
+    def fallback(p):
+        rgb, _, _ = decode_for_analysis(p)
+        return rgb
+
+    try:
+        out = contactsheet_pdf.write_pdf(
+            Path(args.contact_sheet), sources, lambda p: thumbs.build(p, fallback, 320),
+            columns=args.sheet_columns, page=args.sheet_page, title=args.sheet_title or "")
+    except (ValueError, OSError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
+    print(f"Wrote a contact sheet of {len(sources)} photo(s) to {out}.")
 
 
 def _unbuffer_stdout() -> None:
@@ -1303,13 +1355,31 @@ def main():
     ex = subs.add_parser("export", help="Render edited photos to PNG/JPEG, keeping all metadata")
     ex.add_argument("inputs", nargs="+", help="Raw/DNG file(s) or folder(s)")
     ex.add_argument("-o", "--output", help="Output folder (default: ./export)")
-    ex.add_argument("--format", choices=["png", "jpeg", "jpg", "tiff", "tif", "webp"], default="jpeg")
+    ex.add_argument("--format", choices=["png", "jpeg", "jpg", "tiff", "tif", "webp", "avif", "jxl"],
+                    default="jpeg", help="Output format (avif / jxl need the optional Pillow plugins)")
     ex.add_argument("--quality", type=int, default=92, help="JPEG quality 1-100 (default: 92)")
     ex.add_argument("--long-edge", type=int, help="Resize so the longer side is this many pixels (never upscales)")
     ex.add_argument("--colorspace", choices=["srgb", "adobergb", "prophoto"],
                     help="Output colour space (raw default: srgb; other images keep their profile)")
     ex.add_argument("--template", default="{name}",
-                    help="Filename template: {name} {date} {seq} {width} {height} (default: {name})")
+                    help="Filename template: {name} {date} {seq} {width} {height} {rating} {camera} "
+                         "{keyword} {text} (default: {name})")
+    ex.add_argument("--text", default="", help="Literal text for the {text} filename token")
+    ex.add_argument("--subfolder", help="Export into this sub-folder of the output folder")
+    ex.add_argument("--same-as-original", action="store_true",
+                    help="Write each file next to its original (ignores -o)")
+    ex.add_argument("--previous", action="store_true",
+                    help="Reuse the settings of the previous export (-o still overrides the folder)")
+    ex.add_argument("--post-open", nargs="?", const="", metavar="APP",
+                    help="After exporting, open the files in APP (default application when omitted)")
+    ex.add_argument("--post-command", nargs="+", metavar="ARG",
+                    help="After exporting, run this program with the written files appended "
+                         "(no shell; a {files} argument is replaced by the files)")
+    ex.add_argument("--contact-sheet", metavar="FILE.pdf",
+                    help="Write a PDF contact sheet of the photos instead of exporting")
+    ex.add_argument("--sheet-columns", type=int, default=4, help="Contact sheet columns (default: 4)")
+    ex.add_argument("--sheet-page", choices=["a4", "letter"], default="a4")
+    ex.add_argument("--sheet-title", help="Contact sheet heading")
     ex.add_argument("--bit-depth", type=int, choices=[8, 16], default=8,
                     help="PNG bit depth per channel (16 is PNG only; default: 8)")
     ex.add_argument("--metadata", choices=["all", "copyright", "no_location", "no_develop", "none"],
