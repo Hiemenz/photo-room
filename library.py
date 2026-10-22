@@ -367,6 +367,23 @@ def build_items(root: Path, paths: list[Path]) -> list[dict]:
 # Filtering and sorting (pure)
 # ---------------------------------------------------------------------------
 
+FILTER_KEYS = ("rating_min", "rating_op", "flag", "label", "keyword", "camera", "lens", "iso_min",
+               "iso_max", "focal_min", "focal_max", "filetype", "edit", "gps", "date_from", "date_to", "q")
+
+
+def normalize_filetype(value) -> str:
+    """'.CR2' / 'cr2' -> 'cr2'."""
+    value = str(value or "").strip().lower().lstrip(".")
+    if not value or not value.isalnum():
+        raise ValueError("A file type is letters and digits, like cr2 or dng")
+    return value
+
+
+def item_filetype(it: dict) -> str:
+    """Lower-case extension of the photo (a virtual copy has its source's)."""
+    return os.path.splitext(it.get("src_path") or it["path"])[1].lstrip(".").lower()
+
+
 def filter_items(items: list[dict], f: dict) -> list[dict]:
     """
     Keep items matching every given criterion.
@@ -374,7 +391,8 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
     rating_min + rating_op ("ge" default, "eq", "le"); flag (pick / reject /
     unflagged); label (a colour or "none"); keyword (exact, case-insensitive);
     camera / lens (exact, case-insensitive); iso_min / iso_max; date_from / date_to (YYYY-MM-DD,
-    inclusive); q (every word must appear in the name, a keyword or the camera).
+    inclusive); focal_min / focal_max (mm); filetype (extension, e.g. cr2);
+    edit ("edited" / "unedited"); gps ("yes" / "no"); q (every word must appear in the name, a keyword or the camera).
     """
     rating = f.get("rating_min")
     rating = None if rating in (None, "") else int(rating)
@@ -387,6 +405,15 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
     lens = (f.get("lens") or "").strip().lower()
     iso_min = None if f.get("iso_min") in (None, "") else int(f["iso_min"])
     iso_max = None if f.get("iso_max") in (None, "") else int(f["iso_max"])
+    focal_min = None if f.get("focal_min") in (None, "") else float(f["focal_min"])
+    focal_max = None if f.get("focal_max") in (None, "") else float(f["focal_max"])
+    filetype = normalize_filetype(f["filetype"]) if f.get("filetype") else ""
+    edit = (f.get("edit") or "").lower()
+    if edit not in ("", "edited", "unedited"):
+        raise ValueError("edit must be edited or unedited")
+    gps = (f.get("gps") or "").lower()
+    if gps not in ("", "yes", "no"):
+        raise ValueError("gps must be yes or no")
     d_from = (f.get("date_from") or "")[:10]
     d_to = (f.get("date_to") or "")[:10]
     words = (f.get("q") or "").lower().split()
@@ -421,6 +448,16 @@ def filter_items(items: list[dict], f: dict) -> list[dict]:
             iso = it.get("iso") or 0
             if not iso or (iso_min is not None and iso < iso_min) or (iso_max is not None and iso > iso_max):
                 continue
+        if focal_min is not None or focal_max is not None:
+            fl = it.get("focal") or 0
+            if not fl or (focal_min is not None and fl < focal_min) or (focal_max is not None and fl > focal_max):
+                continue
+        if filetype and item_filetype(it) != filetype:
+            continue
+        if edit and bool(it.get("edited")) != (edit == "edited"):
+            continue
+        if gps and bool(it.get("gps")) != (gps == "yes"):
+            continue
         if d_from or d_to:
             day = it["date"][:10]
             if not day or (d_from and day < d_from) or (d_to and day > d_to):
@@ -474,6 +511,7 @@ def facets(items: list[dict]) -> dict:
     """Values for the filter bar's dropdowns, from the whole library."""
     cams: dict[str, int] = {}
     lenses: set[str] = set()
+    types: set[str] = set()
     kws: dict[str, list] = {}
     labels = {name: 0 for name in LABELS}
     for it in items:
@@ -481,6 +519,7 @@ def facets(items: list[dict]) -> dict:
             cams[it["camera"]] = cams.get(it["camera"], 0) + 1
         if it.get("lens"):
             lenses.add(it["lens"])
+        types.add(item_filetype(it))
         if it["label"]:
             labels[it["label"]] += 1
         for k in it["keywords"]:
@@ -489,6 +528,7 @@ def facets(items: list[dict]) -> dict:
     return {
         "cameras": sorted(cams),
         "lenses": sorted(lenses),
+        "filetypes": sorted(t for t in types if t),
         "keywords": [{"keyword": v[0], "count": v[1]} for _, v in sorted(kws.items())],
         "labels": labels,
         "labels_order": LABELS,

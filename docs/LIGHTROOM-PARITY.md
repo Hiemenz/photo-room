@@ -55,7 +55,7 @@ macOS and nothing was opened in Lightroom; see [KNOWN-LIMITS.md](KNOWN-LIMITS.md
    `VIDEO_SUFFIXES`); `libindex.RAW_SUFFIXES` lists raws and DNGs only. A
    RAW+JPEG card therefore leaves JPEGs and MP4s in the date folders that no
    grid, filter or export will ever list.
-4. **The Library filter backend is ahead of its UI.** `library.filter_items`
+4. **(Resolved) The Library filter backend was ahead of its UI.** `library.filter_items`
    and `SORT_KEYS` support lens and ISO filters and sorting; `#lib-bar` in
    `templates/editor.html` has no lens or ISO control. Smart-collection rules
    (`catalog.RULE_OPS`) cover rating, flag, label, keyword, camera and date only.
@@ -109,14 +109,14 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Stacks | Missing | no code (Smart cull already groups bursts, so the data exists) | M | M |
 | Virtual copies | Done | `catalog.py`, `/api/virtual/*`; own edits/rating/keywords, exported as `<stem>-copyN`. Catalog-only: Lightroom cannot see them | - | - |
 | Collections | Done | `catalog.py`, `/api/collections/*` | - | - |
-| Smart collections | Partial | rating, flag, label, keyword, camera, date (`catalog.RULE_OPS`); no lens, ISO, focal length, edit state, file type | S | M |
+| Smart collections | Partial | rating, flag, label, keyword, camera, date, lens, ISO, focal length, edit state, file type (`catalog.RULE_OPS`; rule builder in the smart-collection dialog); no GPS or exposure-program rules | S | M |
 | Collection sets, Quick/Target collection | Missing | flat list of collections | S | L |
 | Keywording (add/remove, autocomplete) | Partial | comma list on the selection, `XMP-dc:Subject`, datalist (`/api/keywords`); no keyword list panel with counts | S | M |
 | Keyword hierarchy, synonyms, export flags | Missing | no `HierarchicalSubject` anywhere | M | M |
 | Metadata panel (read EXIF/IPTC) | Missing | no EXIF readout anywhere in `templates/editor.html` or `static/js` | S | H |
 | Metadata editing (title, caption, creator, copyright, location) | Missing | only rating, label, keywords are written; no `Copyright`/`Caption` write path | M | H |
 | Metadata presets | Missing | no code | S | H (for copyright) |
-| Library filter bar | Partial | rating, flag, label, keyword, camera, date range, free text, sort by 8 keys (`library.filter_items`); lens/ISO exist in the API only (finding 4); no focal length, file type, edit status, GPS | S | M |
+| Library filter bar | Partial | rating, flag, label, keyword, camera, lens, ISO range, focal length range, file type, edited/unedited, GPS present, date range, free text, sort by 8 keys (`library.filter_items`, `#lib-bar`); "edited" means the photo or its sidecar carries Camera Raw develop settings | S | M |
 | Folders panel (tree, move, rename, delete) | Missing | `/api/files` is a flat list; nothing in the app moves or renames raws (safe by design) | M | M |
 | Quick Develop | Partial | Apply current or copied settings to a selection (`/api/batch_apply`, `/api/looks/preset/apply_batch`); no relative-step panel | S | L |
 | Sync / copy-paste settings | Done | `Mod+C/V`, WB re-anchored per camera; spots and crop never copied. `tests/test_batch.py` | - | - |
@@ -276,7 +276,7 @@ Lightroom features is in the matrix above.
 | 8 | **Library shows JPEG/HEIC (and hides RAW+JPEG twins)**, no longer orphans what `watch-cards` imports; videos listed but not editable | Finding 3 | M | `libindex.py`, `process.py`, `thumbs.py`, `cardwatch.py` |
 | 9 | **Post-crop vignette and grain** | Standard look tools, tiny maths, seeded so preview equals export | S | `render_kernels.py`, `editor.py`, XMP map |
 | 10 | **Crop completeness**: flip orientation, 90-degree rotate, original/custom ratio, ratio lock, more overlays | Common daily operations; portrait crops are awkward now | S | `static/js/develop-crop.js`, `geometry.py` |
-| 11 | **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
+| 11 | (Done) **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
 | 12 | **Import dialog**: choose frames, destination, rename template, keywords/copyright/preset on import, Move vs Copy | The Lightroom Import experience; ROADMAP "Not wired yet" | M | `import_api.py`, `cardwatch.py`, `static/js/import.js` |
 | 13 | **Carry XMP sidecars with imported raws** (copy `IMG.xmp` beside the raw when present) | Prerequisite for any Lightroom round trip | S | `ingest.py`, `cardwatch.py`, `import_api.py` |
 | 14 | **Export sizing and destination**: short edge, megapixels, percent, subfolder, same-as-original, Export with Previous | Daily export ergonomics | S | `exporter.py`, `export_api.py`, export dialog |
