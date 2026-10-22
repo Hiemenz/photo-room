@@ -108,7 +108,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Quick Develop | Done | Library strip with relative step buttons (small and large steps for exposure, contrast, highlights, shadows, whites, blacks, temp, tint, vibrance, saturation, clarity, texture, dehaze) and Undo: `static/js/quick-develop.js`, `/api/sync_settings` and `/api/sync_undo` (`quick_api.py`). One History step per photo; framing, spots and masks untouched; absolute copy still via `/api/batch_apply`. `tests/test_quick_sync.py`. Not browser-verified | - | - |
 | Sync / copy-paste settings | Done | `Mod+C/V`, WB re-anchored per camera; spots and crop never copied. `tests/test_batch.py` | - | - |
 | Auto Sync (edit many at once) | Done | Develop switch: with other photos selected, each slider release is sent to them via `/api/sync_settings` (WB re-anchored per camera, crop/straighten/spots/masks excluded, one History step per photo, undoable via `/api/sync_undo`). Slider release only (not curve, masks, HSL wheels). `tests/test_quick_sync.py`; UI not browser-verified | - | - |
-| Painter tool | Missing | no code | S | L |
+| Painter tool | Done | Library footer `Painter`: choose rating, flag, colour label, keywords or the open photo's develop settings, then click or drag over grid cells (Esc stops). Reuses the existing `/api/rate`, `/api/flag`, `/api/label`, `/api/keywords` and `/api/batch_apply` calls one photo at a time, so framing, spots and masks stay out of Settings. `static/js/painter.js`, `tests/ui/test_painter_ui.py`. Does not paint presets or metadata presets | - | - |
 | Catalog and backup | Partial | no catalogue: state is JSON/SQLite beside the photos (`.photo-room-library.json`, `.photo-room-catalog.json`, `*.photoroom.json`, `.photo-room-cull.sqlite`). Atomic writes, `.bad` quarantine; `photo-room backup`/`restore` (timestamped folder or zip, keep last N, optional hash-verified raw mirror, reminder/auto on editor start) | S | M |
 | Smart previews (offline) | Partial | 2048 px 8-bit decodes for Quick look only; Develop needs the raw | M | L |
 | Smart cull / Assisted Culling | Done | `cull.py`, `cull_api.py`, `docs/AUTO-CULL.md`; burst groups, scores, learned taste, undoable apply. `tests/test_cull*.py` | - | - |
@@ -163,10 +163,10 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Manual distortion, vignette fix, CA removal, defringe | Done | `lens.py` | - | - |
 | Transform (vertical, horizontal, rotate, aspect, scale, offset) | Done | `transform.py`, one homography, auto-crop to clean rectangle | - | - |
 | Upright (Auto, Level, Vertical, Full, Guided) | Done | OpenCV Canny + Hough, `/api/upright`; Guided: up to four user-drawn lines (`guides` in the same request) feed `transform.upright`, two lines are enough per direction; lines are kept in `*.develop.json`. `tests/test_group_g.py` | - | - |
-| Crop: free + 1:1, 4:3, 3:2, 16:9, thirds, straighten | Partial | `#crop-bar`; no portrait/landscape flip, no original or custom ratio, no 90-degree rotate or flip, no other overlays | S | M |
+| Crop: ratios, orientation, rotate / flip, overlays, straighten | Done | `#crop-bar`: Free, Original, 1:1, 4:3, 3:2, 16:9, custom w:h, portrait/landscape swap (X), 90-degree rotate left/right and mirror H/V (`rot90`, `flip_h`, `flip_v`, applied before the perspective transform by `retouch.orient`; the crop box and ratio follow the turn), overlays: thirds, grid, diagonal, triangle, golden ratio, golden spiral (O cycles, remembered). The whole frame is shown while the box is up. Ratio lock is `crop_ratio` (`""`, `"orig"`, `"w:h"`). Crop itself still goes to `crs:Crop*`; ratio and turns live in `<photo>.extras.json` (Lightroom ignores them, so a photo turned here shows unturned there). `static/js/develop-crop-options.js`, `tests/test_group_c.py`, `tests/ui/test_group_c_ui.py`. Perspective sliders act on the turned frame; masks drawn before a turn are not rotated | - | - |
 | Spot removal: circle clone/heal | Done | `spots.py`, `retouch.py`, `crs:RetouchAreas` | - | - |
-| Spot removal: brush shape, visualise spots, dust finder | Missing | circles only | M | M |
-| Red eye / pet eye | Missing | no code | S | L |
+| Spot removal: brush shape, visualise spots, dust finder | Done | `shape` circle or square (`spots.py`; square is written to XMP as an ellipse and kept exact in `<photo>.extras.json`); `Visualize spots` (`spots.visualise`, `/api/spot/visualise`) shows detail as dark marks on white with a threshold slider; `Find dust` (`spots.find_dust`, black-hat filter and blob size/roundness tests, `/api/spot/dust`) proposes spots with automatic sources, accepted one by one or all at once. Deterministic. `tests/test_group_c.py`, `tests/ui/test_group_c_ui.py`. No brush stroke painting, no per-photo dust-map reuse | - | - |
+| Red eye / pet eye | Done | `redeye.py` (key `redeye`, up to 16 eyes of `x, y, r, kind, amount, darken`), applied on the original frame with the spots so preview, tiles and export match; `Red eye / pet eye` panel with a click-to-place eye tool. Stored in `<photo>.extras.json` only (no Camera Raw equivalent is written). No automatic eye detection | - | - |
 
 ### 6. Develop: local adjustments and masks
 
@@ -263,7 +263,7 @@ Lightroom features is in the matrix above.
 | 7 | **Export formats: 16-bit TIFF and WebP** (AVIF later), same metadata copy | 16-bit hand-off to other editors and print labs; JPEG/PNG only today | S | `exporter.py`, `process.py`, `test_real_exiftool_export.py` |
 | 8 | **Library shows JPEG/HEIC (and hides RAW+JPEG twins)**, no longer orphans what `watch-cards` imports; videos listed but not editable | Finding 3 | M | `libindex.py`, `process.py`, `thumbs.py`, `cardwatch.py` |
 | 9 | ~~**Post-crop vignette and grain**~~ (done) | Standard look tools, tiny maths, seeded so preview equals export | S | `render_kernels.py`, `editor.py`, XMP map |
-| 10 | **Crop completeness**: flip orientation, 90-degree rotate, original/custom ratio, ratio lock, more overlays | Common daily operations; portrait crops are awkward now | S | `static/js/develop-crop.js`, `geometry.py` |
+| 10 | (Done) **Crop completeness**: flip orientation, 90-degree rotate, original/custom ratio, ratio lock, more overlays | Common daily operations; portrait crops are awkward now | S | `static/js/develop-crop.js`, `geometry.py` |
 | 11 | (Done) **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
 | 12 | **Import dialog**: choose frames, destination, rename template, keywords/copyright/preset on import, Move vs Copy | The Lightroom Import experience; ROADMAP "Not wired yet" | M | `import_api.py`, `cardwatch.py`, `static/js/import.js` |
 | 13 | **Carry XMP sidecars with imported raws** (copy `IMG.xmp` beside the raw when present) | Prerequisite for any Lightroom round trip | S | `ingest.py`, `cardwatch.py`, `import_api.py` |
@@ -274,14 +274,13 @@ Lightroom features is in the matrix above.
 | 18 | **DCP / camera-profile import** (Adobe-style colour and base curve): first version shipped (look tables and curve; camera matrices and two-illuminant blending still to do) | The largest reason an edit will not look like Lightroom's | L | `colour.py`, `render_kernels.py`, new `dcp.py` |
 | 19 | **Folders panel with move/rename** that rewrites sidecars, `*.photoroom.json`, masks JSON and catalog paths together | Library management on disk | M | `libapi.py`, `catalog.py`, `library.py` |
 | 20 | **Stacks** (auto from Smart cull burst groups) (done) | Reduces grid noise after a burst-heavy shoot | M | `catalog.py`, `cull.py`, `static/js/library-module.js` |
-| 21 | **Spot removal: brush shape, visualise spots, dust finder** | Sensor dust is the common retouch job | M | `spots.py`, `retouch.py`, `develop-transform-lens-spots.js` |
+| 21 | (Done) **Spot removal: brush shape, visualise spots, dust finder** | Sensor dust is the common retouch job | M | `spots.py`, `retouch.py`, `develop-transform-lens-spots.js` |
 | 22 | **Navigator mini-view and loupe info overlay** (loupe overlay done) | Orientation while zoomed; ROADMAP "Not wired yet" | S | `zoom.js`, `library-live.js` |
 | 23 | **Backup / export of library state** (catalog, flags, history, cull DB) to a zip, with restore | The "catalogue" is files beside the photos with no backup | S | new `backup.py`, `photo_room_cli.py` |
 | 24 | **AI denoise (optional extra, onnxruntime)** after package 1 lands | Best-in-class NR for ISO 6400+ | L | new `denoise_ai.py`, `pyproject.toml` extra |
 | 25 | **AI subject / sky masks (optional extra)** | Fastest local-edit workflow in Lightroom today | L | new `aimask.py`, `masks.py` |
 
-Smaller items not in the top 25: red eye (S), Painter (S),
-contact-sheet PDF (S), post-export actions (S). (Done: targeted adjustment tool, soft proofing, Guided Upright, reference view, grid density options, collection sets, Map view, move-folder UI.)
+Smaller items not in the top 25: contact-sheet PDF (S), post-export actions (S). (Done: targeted adjustment tool, soft proofing, Guided Upright, reference view, red eye, Painter, grid density options, collection sets, Map view, move-folder UI.)
 
 ## Already queued (not repeated above)
 

@@ -252,7 +252,7 @@ function paintMasks() {
 
 // ---- Canvas: layer placement, handles, overlay -----------------------------
 function layoutMaskLayer() {
-  const on = !!current && maskPanelOpen() && !cropping && !spotTool && !$("preview").hidden && baMode === "off";
+  const on = !!current && maskPanelOpen() && !cropping && !spotTool && !redeyeTool && !$("preview").hidden && baMode === "off";
   $("mask-layer").classList.toggle("on", on);
   if (!on) { $("mask-svg").innerHTML = ""; $("mask-overlay").style.display = "none"; return; }
   const f = frameRect();
@@ -481,10 +481,10 @@ let previewLayoutKey = "";
 $("preview").addEventListener("load", () => {
   const img = $("preview"), r = img.getBoundingClientRect();
   const key = [r.left, r.top, r.width, r.height].map(v => v.toFixed(1)).join() + "|"
-    + (img.naturalWidth / img.naturalHeight).toFixed(2) + "|" + current + "|" + spotTool + "|" + cropping;
+    + (img.naturalWidth / img.naturalHeight).toFixed(2) + "|" + current + "|" + spotTool + "|" + redeyeTool + "|" + cropping;
   if (key === previewLayoutKey) return;
   previewLayoutKey = key;
-  paintSpots(); paintCropBox(); layoutMaskLayer();
+  paintSpots(); paintEyes(); paintCropBox(); layoutMaskLayer();
 });
 $("mask-show").addEventListener("change", (e) => { setMaskOverlay(e.target.checked); });
 function setMaskOverlay(on) {

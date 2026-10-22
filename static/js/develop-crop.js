@@ -36,6 +36,7 @@ $("crop-toggle").addEventListener("click", () => {
     if (!values.crop) values.crop = { left: 0, top: 0, right: 1, bottom: 1 };
     paintCropBox();
   }
+  schedulePreview();   // while cropping the whole frame is shown (see renderPreview)
 });
 
 $("crop-reset").addEventListener("click", () => {
@@ -43,15 +44,8 @@ $("crop-reset").addEventListener("click", () => {
   commit("Reset crop");
 });
 
-document.querySelectorAll("#crop-bar button[data-ratio]").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll("#crop-bar button[data-ratio]")
-      .forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    cropRatio = btn.dataset.ratio === "free" ? null : parseFloat(btn.dataset.ratio);
-    if (cropRatio) applyRatio();
-  });
-});
+// The ratio buttons, custom ratio, orientation, rotate / mirror and overlays
+// live in develop-crop-options.js.
 
 function applyRatio() {
   // Ratios are in screen terms, so the frame's own proportions have to be

@@ -161,6 +161,28 @@
     <button id="lib-compare" title="Compare: a select beside a candidate (C)">Compare</button>
     <button id="lib-survey" title="Survey the selected photos (N)">Survey</button>
     <button id="lib-cull" title="Smart cull: group bursts and suggest picks and rejects (K)">Smart cull</button>
+    <button id="lib-painter" title="Painter: choose what to paint, then click or drag over photos (Esc to stop)">Painter</button>
+    <span id="painter-opts" hidden>
+      <select id="painter-kind" aria-label="Paint">
+        <option value="rating">Rating</option><option value="flag">Flag</option>
+        <option value="label">Colour label</option><option value="keywords">Keywords</option>
+        <option value="settings">Settings</option>
+      </select>
+      <select id="painter-rating" aria-label="Rating to paint">
+        <option value="5">5 stars</option><option value="4">4 stars</option><option value="3">3 stars</option>
+        <option value="2">2 stars</option><option value="1">1 star</option><option value="0">No rating</option>
+        <option value="-1">Rejected</option>
+      </select>
+      <select id="painter-flag" aria-label="Flag to paint" hidden>
+        <option value="pick">Pick</option><option value="reject">Reject</option><option value="none">Unflagged</option>
+      </select>
+      <select id="painter-label" aria-label="Label to paint" hidden>
+        <option value="Red">Red</option><option value="Yellow">Yellow</option><option value="Green">Green</option>
+        <option value="Blue">Blue</option><option value="Purple">Purple</option><option value="none">No label</option>
+      </select>
+      <input id="painter-kw" placeholder="Keywords to paint (comma separated)" size="26" list="kw-list" hidden>
+      <span id="painter-note"></span>
+    </span>
     <span class="sep" style="flex:1"></span>
     <span>Label:</span>
     <button class="swatch lbl-Red" data-label="Red" title="Red (6)"></button>
@@ -355,8 +377,6 @@
       <div class="handle ne" data-corner="ne"></div>
       <div class="handle sw" data-corner="sw"></div>
       <div class="handle se" data-corner="se"></div>
-      <svg id="crop-guides" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
-      <svg id="crop-guides" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
       <svg id="crop-guides" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
     </div>
   </div>
@@ -664,6 +684,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/develop-hsl-grading.js') }}"></script>
 <script src="{{ asset('js/develop-effects.js') }}"></script>
 <script src="{{ asset('js/develop-transform-lens-spots.js') }}"></script>
+<script src="{{ asset('js/develop-redeye.js') }}"></script>
 <script src="{{ asset('js/preview.js') }}"></script>
 <script src="{{ asset('js/develop-upgrade.js') }}"></script>
 <script src="{{ asset('js/actions.js') }}"></script>
@@ -672,6 +693,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/looks.js') }}"></script>
 <script src="{{ asset('js/profiles.js') }}"></script>
 <script src="{{ asset('js/develop-crop.js') }}"></script>
+<script src="{{ asset('js/develop-crop-options.js') }}"></script>
 <script src="{{ asset('js/develop-tone-curve.js') }}"></script>
 <script src="{{ asset('js/develop-onimage.js') }}"></script>
 <script src="{{ asset('js/develop-masks.js') }}"></script>
@@ -686,6 +708,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/collections.js') }}"></script>
 <script src="{{ asset('js/keyword-panel.js') }}"></script>
 <script src="{{ asset('js/stacks.js') }}"></script>
+<script src="{{ asset('js/painter.js') }}"></script>
 <script src="{{ asset('js/library-folders.js') }}"></script>
 <script src="{{ asset('js/compare-survey.js') }}"></script>
 <script src="{{ asset('js/cull.js') }}"></script>
