@@ -58,13 +58,24 @@ you can run on your Mac with a real card. Companion to
 
 ## Known defects (not unverified; confirmed in code)
 
-- The **Noise reduction** slider has no effect on pixels, preview or export
-  (details in LIGHTROOM-PARITY.md, Finding 1).
-- `photo-room ingest cards` and `ingest watch` only look in `/Volumes`; on
-  Linux use `ingest run <mount>` or `photo-room watch-cards`.
-- JPEG, HEIC and video files copied from a card by `watch-cards` are not listed
-  in the Library.
-- Export is JPEG or PNG only; "Keep metadata" is all or nothing.
+- JPEG, HEIC and video files from `watch-cards` are now listed in the Library
+  (fixed), but only as browse-and-rate items: JPEG/HEIC cells have thumbnails
+  and a "view only" tag, video cells are placeholders, and double-click shows
+  a notice instead of opening Develop. Develop and export still start from a
+  raw decode, so editing a JPEG is not supported. HEIC thumbnails need the
+  optional `pillow-heif` package (otherwise the cell shows a "HEIC"
+  placeholder). In a RAW+JPEG pair only the raw is listed (both would share
+  one `.xmp`). Video thumbnails are not generated.
+- Export formats are JPEG, PNG, TIFF (8/16-bit) and WebP (8-bit). WebP carries
+  EXIF/XMP/ICC but no IPTC block. 16-bit is PNG and TIFF only. TIFF 16-bit is
+  uncompressed (large); 8-bit TIFF uses LZW.
+- Metadata options: All, Copyright only, All except location (strip GPS and
+  IPTC/XMP place names), All except camera raw develop settings, None. Develop
+  settings (`crs:`) are never copied in any mode because the edits are baked
+  into the pixels; the "develop" mode additionally drops MakerNotes and
+  `aux`. Location stripping covers GPS and the standard city/state/country/
+  sub-location fields, not free text in captions or keywords, and not
+  MakerNotes-internal GPS in "All".
 
 ## Manual QA checklist (Mac with a real card)
 
@@ -125,8 +136,8 @@ first). Tick each item and write down anything odd, with the time it took.
 - [ ] Crop (`r`) + Straighten + Transform, Upright Auto.
 - [ ] Masks: graduated, radial, brush; toggle overlay `o`.
 - [ ] Spot removal on a dust speck.
-- [ ] Noise reduction slider on a high-ISO frame: expect NO visible change
-      (known defect). Record that.
+- [ ] Noise reduction and Colour noise reduction on a high-ISO frame: grain and colour speckle
+      shrink at 100% zoom and in an export, edges stay sharp. Record the drag lag.
 - [ ] Trackpad pinch and Cmd shortcuts (`Cmd+Z`, `Cmd+S`, `Cmd+Shift+E`) work.
 - [ ] Safari and Firefox open the page and the sliders respond (only Chromium
       is tested).

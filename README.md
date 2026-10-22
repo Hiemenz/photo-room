@@ -152,10 +152,10 @@ failed and what to do next, with a **Try again** button where retrying makes sen
 Clicking a slider's number resets that one slider. Opening a photo shows
 its saved edits, or the auto-computed ones if it has none.
 
-Noise reduction is written to the file but deliberately not shown in the
-preview. The preview is a half-size render, and downsampling already hides
-the noise this removes, so previewing it there would misrepresent the
-full-resolution result in both directions.
+Noise reduction (**Noise reduction** for luminance, **Colour noise reduction** for chroma) is
+applied in the preview, the 100% tiles and the export, before sharpening and clarity. Its radii
+scale with the frame size so the small preview and the full-size export show the same amount of
+smoothing. Both values are written to `crs:LuminanceSmoothing` and `crs:ColorNoiseReduction`.
 
 ### Colour mixer and colour grading
 
@@ -413,6 +413,35 @@ Picking a rejected photo un-rejects it, and rejecting a picked one drops the
 pick. Writing label and keywords modifies the file's XMP in place, as ratings
 already do, so that photo's thumbnail is rebuilt once.
 
+#### Metadata panel
+
+The **Metadata** panel sits in the Develop side panel and, in the Library, to the
+right of the grid. It shows a read-only readout (camera, lens, ISO, shutter,
+aperture, focal length, capture time, GPS and pixel size) and lets you edit
+**title, caption, creator, copyright, copyright status and usage terms** for the
+selected photos. A field is saved when you leave it (or press `Enter`), and only
+the field you changed is written, so a multi-photo selection with differing
+titles shows *Mixed* and keeps them. **Undo** puts back what the sidecar held
+before. Single-key shortcuts are ignored while you type in these fields.
+
+| Field | Stored as (in the `.xmp` sidecar; the raw is never written) |
+|---|---|
+| Title | `XMP-dc:Title` |
+| Caption | `XMP-dc:Description` |
+| Creator | `XMP-dc:Creator` |
+| Copyright | `XMP-dc:Rights` |
+| Copyright status | `XMP-xmpRights:Marked` (Copyrighted = True, Public domain = False, Unknown = absent) |
+| Usage terms | `XMP-xmpRights:UsageTerms` |
+
+**Metadata presets** are named sets of those fields (for example a *Copyright*
+preset with creator, copyright and status). *Save...* stores the filled fields;
+*Apply* writes only those fields to the selection and leaves the rest alone;
+*Delete* removes the preset. They live in `.photo-room-metadata-presets.json` in
+the library root. Exports read the sidecar, so the new fields travel in every
+metadata mode; "Copyright and contact only" carries creator, copyright, status
+and usage terms but not title or caption. Endpoints: `GET/POST /api/metadata`,
+`GET/POST /api/metadata/presets`, `POST /api/metadata/presets/apply|delete`.
+
 Large libraries stay quick: the grid never decodes a raw. Metadata is read in
 batched `exiftool -fast2` passes and cached in memory by file size and
 modification time (changes made elsewhere are picked up automatically), the
@@ -634,6 +663,7 @@ type in a text box, number field or menu, and while a dialog is open.
 | `j` | Clipping overlay (Develop) |
 | `z` | Zoom: toggle Fit and 100% (Develop) |
 | `]` / `[` | Hide / show the adjustments panel / the photo list |
+| `Enter` / `Tab` in a Metadata field | Save that field to the sidecar (Undo button in the panel) |
 | `Space` | Quick look at the highlighted photo (Library) |
 
 ### Reverting
@@ -665,9 +695,9 @@ LUT into the pixels and keep all metadata.
 ## Card ingest
 
 ```bash
-uv run photo-room ingest cards                          # what's mounted, and what looks like a card
+uv run photo-room ingest cards                          # cards under /Volumes (macOS) or /media, /run/media, /mnt (Linux)
 uv run photo-room ingest watch -o ~/Pictures/library/   # wait for a card, then ingest it
-uv run photo-room ingest run /Volumes/EOS_DIGITAL -o ~/Pictures/library/
+uv run photo-room ingest run /Volumes/EOS_DIGITAL -o ~/Pictures/library/   # Linux: /media/$USER/EOS_DIGITAL
 
 # Develop a shoot again after the learned style has improved
 uv run photo-room ingest run /Volumes/EOS_DIGITAL -o ~/Pictures/library/ --no-skip

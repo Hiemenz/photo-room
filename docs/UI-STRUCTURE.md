@@ -32,6 +32,7 @@ CSS (`static/css/`, in cascade order)
 | `library.css` | module picker, Library grid, Compare/Survey, virtual copies |
 | `history.css` | History / snapshots, before-after |
 | `dialogs.css` | Export dialog |
+| `metadata.css` | Metadata panel and the Library's right-hand panel |
 | `ui.css` | panel hiding, accordion, toasts, zoom bar and tile pane, clipping overlay, WB tools, import and Quick look |
 
 JS (`static/js/`, in load order)
@@ -66,6 +67,7 @@ JS (`static/js/`, in load order)
 | `zoom.js` | Fit / Fill / 100% / 200%, wheel, pinch, pan, tile pane (wraps `openFile` and `schedulePreview`) |
 | `develop-helpers.js` | Auto tone, Auto WB, WB presets, eyedropper, clipping overlay (J) |
 | `library-live.js` | change-feed (SSE) updates of the grid, Quick look and smart previews |
+| `metadata.js` | Metadata panel: EXIF readout, title/caption/rights editing, presets (the panel moves between Develop and the Library's right side) |
 | `import.js` | Import button, folder picker, drag and drop, progress panel |
 | `init.js` | startup calls (keep last of the app scripts) |
 | `export-dialog.js` | Export dialog (self-contained IIFE) |

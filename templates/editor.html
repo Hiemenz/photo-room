@@ -33,6 +33,7 @@
 <link rel="stylesheet" href="{{ asset('css/cull.css') }}">
 <link rel="stylesheet" href="{{ asset('css/looks.css') }}">
 <link rel="stylesheet" href="{{ asset('css/ui.css') }}">
+<link rel="stylesheet" href="{{ asset('css/metadata.css') }}">
 </head>
 <body>
 
@@ -72,6 +73,14 @@
     </select>
     <select id="lf-keyword" title="Keyword"><option value="">Any keyword</option></select>
     <select id="lf-camera" title="Camera"><option value="">Any camera</option></select>
+    <select id="lf-lens" title="Lens"><option value="">Any lens</option></select>
+    <input id="lf-iso-min" type="number" min="0" step="1" placeholder="ISO min" title="Minimum ISO" style="width:70px">
+    <input id="lf-iso-max" type="number" min="0" step="1" placeholder="ISO max" title="Maximum ISO" style="width:70px">
+    <input id="lf-focal-min" type="number" min="0" step="1" placeholder="mm min" title="Minimum focal length (mm)" style="width:70px">
+    <input id="lf-focal-max" type="number" min="0" step="1" placeholder="mm max" title="Maximum focal length (mm)" style="width:70px">
+    <select id="lf-filetype" title="File type"><option value="">Any file type</option></select>
+    <select id="lf-edit" title="Edit status"><option value="">Edited or not</option><option value="edited">Edited</option><option value="unedited">Unedited</option></select>
+    <select id="lf-gps" title="GPS"><option value="">Any location</option><option value="yes">Has GPS</option><option value="no">No GPS</option></select>
     <input id="lf-from" type="date" title="From date"><input id="lf-to" type="date" title="To date">
     <input id="lf-q" type="search" placeholder="Search name, keyword, camera">
     <span class="sep"></span>
@@ -92,8 +101,13 @@
       <h3><span>Keywords</span><span><button id="kw-new" title="New keyword">+</button></span></h3>
       <input id="kw-search" type="search" placeholder="Find keyword" aria-label="Find keyword">
       <div id="kw-tree" role="tree" aria-label="Keyword list"></div>
+      <h3><span>Folders</span><span>
+        <label class="fo-sub" title="Show photos of subfolders too"><input type="checkbox" id="fo-sub" checked> sub</label>
+        <button id="fo-new" title="New folder inside the selected folder">+</button><button id="fo-undo" title="Undo the last move or rename" disabled>Undo</button></span></h3>
+      <div id="fo-list"></div>
     </aside>
     <div id="lib-grid"></div>
+    <aside id="lib-meta" aria-label="Metadata"></aside>
     <div id="lib-drop" hidden><div>Drop photos or a folder to import them<small>Copied with a checksum check; nothing is overwritten and duplicates are skipped</small></div></div>
   </div>
   <div id="import-panel" hidden role="status" aria-live="polite">
@@ -305,6 +319,12 @@
 </main>
 
 <aside id="controls">
+  <div id="navigator" hidden aria-label="Navigator">
+    <div id="nav-presets" role="toolbar" aria-label="Zoom presets">
+      <button data-nav="fit">Fit</button><button data-nav="fill">Fill</button><button data-nav="1">100%</button><button data-nav="2">200%</button>
+    </div>
+    <div id="nav-view"><img id="nav-img" alt="" draggable="false"><div id="nav-rect"></div></div>
+  </div>
   <canvas id="histogram" width="560" height="152"></canvas>
   <div id="clip">
     <span id="clip-shadows">shadows 0%</span>
@@ -394,6 +414,33 @@
       <ul id="match-report" class="hint"></ul>
     </section>
   </details>
+  <details class="panel" id="meta-panel" open>
+    <summary>Metadata</summary>
+    <div id="meta-target" class="meta-note">No photo</div>
+    <dl id="meta-info"></dl>
+    <div id="meta-edit">
+      <label>Title<input id="meta-title" data-field="title" maxlength="2000" autocomplete="off"></label>
+      <label>Caption<textarea id="meta-caption" data-field="caption" rows="3" maxlength="2000"></textarea></label>
+      <label>Creator<input id="meta-creator" data-field="creator" maxlength="2000" autocomplete="off"></label>
+      <label>Copyright<input id="meta-copyright" data-field="copyright" maxlength="2000" autocomplete="off" placeholder="(c) 2026 Your Name"></label>
+      <label>Copyright status
+        <select id="meta-status" data-field="copyright_status">
+          <option value="unknown">Unknown</option><option value="copyrighted">Copyrighted</option>
+          <option value="public_domain">Public domain</option>
+        </select></label>
+      <label>Usage terms<textarea id="meta-usage_terms" data-field="usage_terms" rows="2" maxlength="2000"></textarea></label>
+      <div class="meta-row">
+        <span class="meta-note">Saved to the .xmp sidecar when you leave a field. The raw is never touched.</span>
+        <button id="meta-undo" type="button" disabled title="Undo the last metadata change">Undo</button>
+      </div>
+    </div>
+    <div id="meta-presets" class="meta-row">
+      <select id="meta-preset" aria-label="Metadata preset"><option value="">Metadata preset&hellip;</option></select>
+      <button id="meta-preset-apply" type="button" disabled title="Write the preset's filled fields to the selection">Apply</button>
+      <button id="meta-preset-save" type="button" title="Save the filled fields as a preset">Save&hellip;</button>
+      <button id="meta-preset-del" type="button" disabled title="Delete the chosen preset">Delete</button>
+    </div>
+  </details>
   <div id="globals"></div>
   <div id="meta">
     <strong>No photo</strong><span id="source"></span>
@@ -456,10 +503,10 @@
     <div class="hint">Tokens: {name} {date} {seq} {seq:04d} {width} {height}.
       Result: <span id="ex-preview"></span></div>
     <label class="row">Format
-      <select id="ex-format"><option value="jpeg">JPEG</option><option value="png">PNG</option></select></label>
+      <select id="ex-format"><option value="jpeg">JPEG</option><option value="png">PNG</option><option value="tiff">TIFF</option><option value="webp">WebP</option></select></label>
     <label class="row" id="ex-q-row">Quality
       <span style="display:flex;gap:8px;align-items:center"><input type="range" id="ex-quality" min="1" max="100" value="92" style="flex:1"><output id="ex-q-val">92</output></span></label>
-    <label class="row" id="ex-depth-row">PNG bit depth
+    <label class="row" id="ex-depth-row">Bit depth (PNG, TIFF)
       <select id="ex-depth"><option value="8">8-bit</option><option value="16">16-bit</option></select></label>
     <label class="row">Colour space
       <select id="ex-cs">
@@ -493,8 +540,14 @@
       <label class="row">Margin (%) <input type="number" id="ex-wm-margin" min="0" max="40" step="0.5" value="2"></label>
       <div class="hint">Watermarks and sharpening are drawn on the exported file only; the preview and the original are untouched.</div>
     </div>
-    <label style="font-size:12px"><input type="checkbox" id="ex-meta" checked>
-      Keep all metadata (EXIF, GPS, IPTC, XMP)</label>
+    <label class="row">Metadata
+      <select id="ex-meta">
+        <option value="all">All (EXIF, GPS, IPTC, XMP)</option>
+        <option value="copyright">Copyright only</option>
+        <option value="no_location">All except location (strip GPS)</option>
+        <option value="no_develop">All except camera raw develop settings</option>
+        <option value="none">None</option>
+      </select></label>
     <label style="font-size:12px"><input type="checkbox" id="ex-save" checked>
       Save the open photo's edits first</label>
     <div class="hint">Exports render the saved edits at full resolution, not the preview.</div>
@@ -553,15 +606,19 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/library-module.js') }}"></script>
 <script src="{{ asset('js/collections.js') }}"></script>
 <script src="{{ asset('js/keyword-panel.js') }}"></script>
+<script src="{{ asset('js/library-folders.js') }}"></script>
 <script src="{{ asset('js/compare-survey.js') }}"></script>
 <script src="{{ asset('js/cull.js') }}"></script>
 <script src="{{ asset('js/library-files.js') }}"></script>
 <script src="{{ asset('js/panels.js') }}"></script>
 <script src="{{ asset('js/zoom.js') }}"></script>
 <script src="{{ asset('js/develop-helpers.js') }}"></script>
+<script src="{{ asset('js/navigator.js') }}"></script>
 <script src="{{ asset('js/library-live.js') }}"></script>
 <script src="{{ asset('js/import.js') }}"></script>
 <script src="{{ asset('js/card-watch.js') }}"></script>
+<script src="{{ asset('js/metadata.js') }}"></script>
+<script src="{{ asset('js/quick-develop.js') }}"></script>
 <script src="{{ asset('js/init.js') }}"></script>
 <script src="{{ asset('js/export-dialog.js') }}"></script>
 </body>

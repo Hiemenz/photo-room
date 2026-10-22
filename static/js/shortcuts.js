@@ -39,6 +39,10 @@ const SHORTCUTS = [
     ["Z", "Zoom: toggle Fit and 100%"], ["Wheel / pinch / drag", "Zoom and pan the photo"],
     ["Double-click", "Zoom to 100% at that point and back"],
   ]],
+  ["Metadata panel", [
+    ["Enter", "Save the title / creator / copyright field you are in"],
+    ["Tab", "Save and move to the next field (shortcut keys are off while typing)"],
+  ]],
   ["Panels", [
     ["]", "Hide / show the adjustments panel"], ["[", "Hide / show the photo list"],
     ["Space (Library)", "Quick look at the highlighted photo"],

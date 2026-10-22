@@ -46,9 +46,15 @@ CHUNK = 400
 CHANGE_LOG = 20000
 SQLITE_SYNCHRONOUS = "NORMAL"   # WAL + NORMAL survives a process crash; FULL also survives power loss
 
-RAW_SUFFIXES = (".cr2", ".cr3", ".nef", ".arw", ".raf", ".orf", ".rw2", ".dng")
+RAW_SUFFIXES = library.RAW_SUFFIXES
 READ_TAGS = ["-XMP-xmp:Rating", "-XMP-xmp:Label", "-XMP-dc:Subject", "-XMP-lr:HierarchicalSubject", "-Model", "-LensModel",
-             "-ISO", "-DateTimeOriginal", "-CreateDate"]
+             "-ISO", "-DateTimeOriginal", "-CreateDate", "-FocalLength#", "-GPSLatitude#",
+             "-XMP-crs:ProcessVersion", "-XMP-crs:Exposure2012", "-XMP-crs:Contrast2012",
+             "-XMP-crs:Highlights2012", "-XMP-crs:Shadows2012", "-XMP-crs:ColorTemperature",
+             "-XMP-crs:Vibrance", "-XMP-crs:Saturation", "-XMP-crs:Temperature"]
+# Any of these in the photo or its sidecar means it has been developed ("edited").
+EDIT_TAGS = ("ProcessVersion", "Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012",
+             "ColorTemperature", "Vibrance", "Saturation", "Temperature")
 MUTABLE = ("rating", "label", "keywords", "hier", "pick")
 
 
@@ -59,7 +65,9 @@ def _flag(rating: int, pick: bool) -> str:
 def _record(rel: str, meta: dict, pick: bool) -> dict:
     return {"path": rel, "name": rel.rsplit("/", 1)[-1], "rating": meta["rating"], "label": meta["label"],
             "keywords": meta["keywords"], "hier": meta.get("hier", []), "camera": meta["camera"], "lens": meta.get("lens", ""),
-            "iso": meta.get("iso", 0), "date": meta["date"], "flag": _flag(meta["rating"], pick)}
+            "iso": meta.get("iso", 0), "focal": meta.get("focal", 0), "edited": bool(meta.get("edited")),
+            "gps": bool(meta.get("gps")), "date": meta["date"], "flag": _flag(meta["rating"], pick),
+            "kind": (kind := library.kind_of(rel) or "raw"), "editable": kind == "raw"}
 
 
 def parse_meta(entry: dict, side: dict | None = None, dng: bool = False) -> dict:
@@ -81,6 +89,13 @@ def parse_meta(entry: dict, side: dict | None = None, dng: bool = False) -> dict
     meta["hier"] = keywordlib.parse_hier(side if side is not None and (not dng or "HierarchicalSubject" in side) else entry)
     meta["lens"] = " ".join(str(entry.get("LensModel") or "").split())
     meta["iso"] = iso
+    try:
+        meta["focal"] = round(float(entry.get("FocalLength") or 0), 1)
+    except (TypeError, ValueError):
+        meta["focal"] = 0
+    both = [entry] + ([side] if side is not None else [])
+    meta["gps"] = any(e.get("GPSLatitude") not in (None, "") for e in both)
+    meta["edited"] = any(t in e for e in both for t in EDIT_TAGS)
     return meta
 
 
@@ -148,7 +163,8 @@ class Index:
         for rel, sig, data, pick in db.execute("SELECT rel, sig, data, pick FROM photos"):
             try:
                 meta = json.loads(data)
-                self._sigs[rel] = tuple(json.loads(sig))
+                if "gps" in meta:       # rows from before focal/edit/GPS were indexed get re-read
+                    self._sigs[rel] = tuple(json.loads(sig))
             except ValueError:
                 continue
             if "hier" not in meta:
@@ -199,9 +215,23 @@ class Index:
                 self._db.execute("ROLLBACK")
                 raise
 
+    def carry_picks(self, mapping: dict[str, str]) -> None:
+        """Photos were moved on disk (old rel -> new rel): keep their pick flags.
+
+        Call ``flush()`` before the move and ``scan()`` after it; the scan drops
+        the old paths and indexes the new ones with the picks carried here.
+        """
+        with self._lock:
+            moved = [n for o, n in mapping.items() if o in self._picks]
+            self._picks.update(moved)
+        if moved:
+            self._db_tx([("UPDATE photos SET pick=1 WHERE rel=?", [(n,) for n in moved], True)])
+
     def _meta_of(self, rec: dict) -> dict:
-        return {k: rec.get(k, []) if k == "hier" else rec[k]
-                for k in ("rating", "label", "keywords", "hier", "camera", "lens", "iso", "date")}
+        out = {k: rec[k] for k in ("rating", "label", "keywords", "camera", "lens", "iso", "date")}
+        out["hier"] = rec.get("hier", [])
+        out.update(focal=rec.get("focal", 0), edited=bool(rec.get("edited")), gps=bool(rec.get("gps")))
+        return out
 
     # ------------------------------------------------------------- reading
     def touch(self) -> None:
@@ -270,14 +300,19 @@ class Index:
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
             names = None
+            raw_stems = {os.path.splitext(f)[0] for f in filenames
+                         if os.path.splitext(f)[1].lower() in RAW_SUFFIXES}
             for fn in filenames:
                 stem, ext = os.path.splitext(fn)
                 ext = ext.lower()
-                if ext not in RAW_SUFFIXES:
+                kind = library.kind_of(fn)
+                if not kind:
                     continue
+                if kind == "image" and stem in raw_stems:
+                    continue         # RAW+JPEG pair: the raw is the photo, and both would share one .xmp
                 if names is None:
                     names = set(filenames)
-                key = (dirpath, stem)
+                key = (dirpath, stem if kind == "raw" else fn)
                 prev = chosen.get(key)
                 if prev is None or (not prev[1] and ext == ".dng"):
                     chosen[key] = (fn, ext == ".dng", names)
