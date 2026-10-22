@@ -133,7 +133,15 @@ so every edit records which maths it was made with:
 * The exporter hands the 16-bit linear decode straight to the pipeline and resizes it in linear
   light (gamma-correct downscaling). Edits needing display-coded pixels (spots, lens corrections,
   edit version 1) get an encoded copy instead.
-* Non-raw sources (JPEG/TIFF) are 8-bit and assumed sRGB-coded unless an output space is
-  chosen; their edits run in the same linear maths, but they cannot gain precision.
+* Non-raw sources (JPEG, TIFF, PNG, HEIC with `pillow-heif`) enter through `imgload.py`: Pillow
+  decode, EXIF orientation applied, the embedded ICC profile converted to the working space
+  (untagged = sRGB; the working space is the export space, sRGB in Develop), then linearised
+  to uint16 exactly like a raw decode. They flow through the same stages (`_linear_input`),
+  so exposure, tone, HSL, grading, curves, masks, LUTs and geometry behave as for a raw.
+  Differences: 8-bit precision (heavy edits band sooner; 16-bit RGB PNG/TIFF is read at 8 bits
+  by Pillow), no camera white balance (the baseline is a nominal 5500 K, so Temp is a relative
+  warm/cool move and Tint is relative), no lens-profile correction (`lens.attach_meta` skips
+  images; the Lens panel is hidden), no camera crop. Highlights already clipped in the file
+  cannot be recovered.
 * Not changed: the camera's default crop, detail-stage Gaussian blur quantisation, the
   spot-healing patch.

@@ -123,7 +123,7 @@ function libCell(it) {
   else img.dataset.src = `/api/thumb?path=${encodeURIComponent(it.path)}`;
   img.addEventListener("error", noThumb);
   const tag = document.createElement("div"); tag.className = "kindtag";
-  tag.textContent = kind === "raw" ? "" : (kind === "video" ? "VIDEO" : ext + " \u00B7 view only");
+  tag.textContent = kind === "raw" ? "" : (kind === "video" ? "VIDEO" : it.editable === false ? ext + " \u00B7 view only" : ext);
   const badge = document.createElement("div"); badge.className = "badge";
   const meta = document.createElement("div"); meta.className = "meta";
   meta.innerHTML = `<span class="dot"></span><span class="nm"></span><span class="st"></span>`;
@@ -132,8 +132,10 @@ function libCell(it) {
   cell.addEventListener("click", (e) => libClick(e, it.path));
   cell.addEventListener("dblclick", () => {
     if (it.editable === false) {
-      toast(kind === "video" ? "Videos can't be edited" : "JPEG/HEIC files are view-only",
-        { kind: "info", why: "photo-room edits raw files. This file is listed so you can see, rate and flag it." });
+      toast(kind === "video" ? "Videos can't be edited" : "HEIC files are view-only here",
+        { kind: "info", why: kind === "video"
+          ? "photo-room edits raw and still-image files. This file is listed so you can see, rate and flag it."
+          : "Install pillow-heif (uv sync --extra heic) to edit HEIC files. Until then they can be seen, rated and flagged." });
       return;
     }
     openInDevelop(it.path);

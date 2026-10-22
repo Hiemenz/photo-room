@@ -128,10 +128,9 @@ def _source_size(path: Path) -> tuple[int, int] | None:
 
             with rawpy.imread(str(path)) as raw:
                 return int(raw.sizes.width), int(raw.sizes.height)
-        from PIL import Image
+        import imgload
 
-        with Image.open(path) as im:
-            return im.size
+        return imgload.oriented_size(path)
     except Exception:
         return None
 

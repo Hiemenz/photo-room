@@ -25,6 +25,8 @@ dependencies = [
 # Needs a C++ build or a wheel for your platform; without it the manual
 # lens sliders and the generic chromatic-aberration fix still work.
 lens = ["lensfunpy>=1.15"]
+# Edit HEIC/HEIF files (Pillow reads them through pillow-heif).
+heic = ["pillow-heif>=0.16"]
 
 
 [project.scripts]

@@ -161,6 +161,9 @@ def attach_meta(path: Path, adj: dict) -> dict:
     """
     if not adj.get("lens_profile") or not lensfun_available():
         return adj
+    import imgload
+    if imgload.is_image(path):      # a JPEG/TIFF/PNG is already what the camera or editor made of the lens
+        return adj
     meta = exif_meta(path)
     if not meta:
         return adj

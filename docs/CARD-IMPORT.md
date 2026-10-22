@@ -172,7 +172,8 @@ recommended setup; use the rule only if you do not want a resident process.
 
 ## What the Library shows afterwards
 
-Raws are editable. JPEG and HEIC files copied by `watch-cards` appear as
-view-only cells (thumbnail, rating, flag, label; no Develop), and videos as
-placeholder cells. A JPEG that has a same-named raw beside it is hidden so the
-pair shares one entry. HEIC thumbnails need `pillow-heif`.
+Raws and image files are editable. JPEG, TIFF and PNG files (and HEIC when
+`pillow-heif` is installed) open in Develop like a raw, minus raw-only controls
+(see COLOUR-PIPELINE.md). HEIC without `pillow-heif` is a view-only cell, and
+videos are placeholder cells. A JPEG that has a same-named raw beside it is
+hidden so the pair shares one entry.

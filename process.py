@@ -14,6 +14,7 @@ import os
 import colour
 import editversion
 import fsutil
+import imgload
 import subprocess
 import sys
 import threading
@@ -172,6 +173,8 @@ def baseline_temp_from_wb(camera_whitebalance, raw=None) -> tuple[int, np.ndarra
 
 def camera_baseline_temp(cr2_path: Path) -> int:
     """The camera white balance as a temperature, from the header only."""
+    if imgload.is_image(cr2_path):
+        return imgload.BASELINE_TEMP
     with rawpy.imread(str(cr2_path)) as raw:
         return baseline_temp_from_wb(raw.camera_whitebalance, raw)[0]
 
@@ -230,6 +233,8 @@ def decode_preview_linear(cr2_path: Path) -> tuple[np.ndarray, int, np.ndarray]:
     cropped to the camera's default area. The develop preview and the 8-bit
     analysis image both come from this one demosaic.
     """
+    if imgload.is_image(cr2_path):
+        return imgload.decode_preview(cr2_path)
     with rawpy.imread(str(cr2_path)) as raw:
         baseline_temp, cam_mul = baseline_temp_from_wb(raw.camera_whitebalance, raw)
         lin = decode_linear(raw, half_size=True)
