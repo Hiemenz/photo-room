@@ -5,6 +5,7 @@
     photo-room ingest ...             same as ingest.py (cards / run / watch)
     photo-room import-lightroom CATALOG --library DIR   import a Lightroom .lrcat (see lrimport.py)
     photo-room backup <library> -o <dest> | restore <backup> <library> [--force]   snapshot / restore library state
+    photo-room merge hdr|pano FILES -o out.tif   merge brackets to HDR / stitch a panorama
     photo-room watch-cards [library]  import + verify + safely eject cards as they are inserted
     photo-room cull-serve LIB --lan   phone culling over the LAN (token protected, opt-in)
 
@@ -316,6 +317,11 @@ def main(argv=None) -> None:
             sys.exit(launch_editor([]))
         import lancull
         sys.exit(lancull.main(argv[1:]))
+    if argv and argv[0] == "merge":
+        if preflight():
+            sys.exit(launch_editor([]))
+        import merge
+        sys.exit(merge.main(argv[1:]))
     if argv and argv[0] == "watch-cards":
         if preflight():
             sys.exit(launch_editor([]))

@@ -242,7 +242,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | AI Denoise | Won't do (for now) | ROADMAP "Not planned"; classical NR is the gap to close first | L | H |
 | Super Resolution | Won't do | not planned | L | L |
 | Generative Remove, Lens Blur | Won't do | cloud / depth AI | L | L |
-| HDR merge, Panorama merge | Missing (queued) | no code | M | M |
+| HDR merge, Panorama merge | Partial | `merge.py`, `merge_api.py`, `photo-room merge`; synthetic tests only, see [HDR-PANORAMA.md](HDR-PANORAMA.md) | M | M |
 | Semantic / natural-language search | Partial (optional extra, fake-embedder tests only) | `semantic.py`, `semantic_api.py`, docs/SEMANTIC-SEARCH.md; real model unverified | L | M |
 
 ## Prioritised gap list (top 25, not yet queued)
@@ -291,5 +291,5 @@ contact-sheet PDF (S), post-export actions (S), Map module (M).
 | Timelapse | none (Lightroom builds time-lapse in Slideshow) | Needs stacks/sequence grouping (package 20) and an ffmpeg export; `doctor` already finds ffmpeg |
 | Lightroom `.xmp` / `.lrcat` migration | "Read Lightroom sidecar edits", ".lrcat import", "Import Lightroom presets" | Sidecar reading and `.xmp` preset import already exist, `.lrcat` import is now built (`lrimport.py`, synthetic-catalog tests); what remains is running it on real catalogs and the unverified-in-Lightroom checks. Package 13 is a prerequisite for sidecars |
 | Semantic search | "Find / filter" | Nothing exists; thumbnails (`thumbs.py`) and the SQLite pattern in `cull_store.py` are the natural base; model choice must be CPU and Pi friendly |
-| HDR / panorama merge | "HDR merge", "Panorama merge" | No code. Needs 16-bit TIFF/DNG-ish intermediate output (package 7) and a way to list the result in the Library (package 8) |
+| HDR / panorama merge | "HDR merge", "Panorama merge" | Built (`merge.py`), writes 16-bit linear / float TIFF. Listing the TIFF in the Library depends on the non-raw image loader landing; see [HDR-PANORAMA.md](HDR-PANORAMA.md) |
 | LAN culling | "Smart cull" | Server binds 127.0.0.1 with a Host/Origin guard and a per-process token (`security.py`, README "Running as a local server"); any LAN mode needs a deliberate, authenticated opt-in. Do not weaken the default |

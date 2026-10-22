@@ -777,6 +777,7 @@ schema is read defensively, so a missing table or column means that item is not 
 ## Automatic card import
 
 ```bash
+uv run photo-room merge hdr a.CR2 b.CR2 c.CR2 -o hdr.tif      # bracketed exposures to a linear 16-bit TIFF (also: merge pano)
 uv run photo-room watch-cards ~/Pictures/library      # import, verify and safely eject cards as they are inserted
 ```
 
