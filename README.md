@@ -681,6 +681,32 @@ renamed and failed counts. Re-running an ingest copies nothing new.
 editor and upload from there. A shoot generally contains frames you
 would not want published.
 
+## Importing a Lightroom catalog
+
+```bash
+uv run photo-room import-lightroom ~/Lightroom --library ~/Pictures/library --dry-run
+uv run photo-room import-lightroom "Lightroom Catalog.lrcat" --library ~/Pictures/library \
+    --remap "C:/Users/me/Pictures=/home/me/Pictures" --yes
+```
+
+Also in the editor: Library > "Lightroom catalog..." (type the path; it shows the report and asks before writing).
+The `.lrcat` (or the newest one in a folder, skipping `Backups`) is copied to a temp file and the copy is
+opened read-only; Lightroom's files are never touched and no raw is written. The report is always shown first
+(counts, files not found, develop settings that cannot be converted); without `--yes` it asks, and a
+non-interactive run without `--yes` writes nothing.
+
+Imported: star rating, pick/reject (reject is rating -1, as elsewhere), colour label, keywords (leaf names in
+`dc:subject`, full paths in `lr:hierarchicalSubject`), manual collections (collection sets become `Set / Child`
+names), virtual copies (as photo-room virtual copies, with their own settings), and develop settings that map
+to photo-room sliders (white balance, exposure, tone, presence, sharpness, luminance NR, crop and angle, HSL,
+colour grading, B&W) written as Camera Raw `crs:` tags in the `.xmp` beside the raw. Smart collections, stacks
+(recorded in `.photo-room-lrimport.json`), tone curves, masks, grain, lens/transform and other settings are
+listed in the report and skipped. Photos are matched by their recorded path, `--remap OLD=NEW` prefixes
+(repeatable) or the catalog's folder path under the library, never by bare file name. An existing `.xmp` is kept
+unless `--force`, which updates it in place. Re-running does not duplicate virtual copies or collection members.
+Not yet checked against a real Lightroom catalog (only a synthetic one built in `tests/test_lrimport.py`); the
+schema is read defensively, so a missing table or column means that item is not imported rather than an error.
+
 ## Automatic card import
 
 ```bash

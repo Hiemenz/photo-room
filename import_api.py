@@ -186,6 +186,30 @@ def finish():
     return jsonify({"scan": counts, "new": new, "seq": idx.seq})
 
 
+@bp.route("/api/import/lightroom", methods=["POST"])
+def import_lightroom():
+    """Lightroom .lrcat import. ``apply`` false (default) only returns the dry-run report."""
+    import lrimport
+
+    ed = _ed()
+    body = request.get_json(silent=True) or {}
+    path = str(body.get("path") or "").strip()
+    if not path:
+        return _error("Give the path of a Lightroom catalog (.lrcat) or the folder that holds it.")
+    remaps = [str(r) for r in body.get("remap") or [] if str(r).strip()]
+    try:
+        cat = lrimport.find_catalog(Path(path))
+        plan = lrimport.build_plan(cat, ed.LIBRARY_ROOT, remaps, bool(body.get("force")))
+    except (OSError, ValueError) as exc:
+        return _error(str(exc))
+    out = {"catalog": str(cat), "report": plan["report"], "text": lrimport.format_report(plan["report"]),
+           "applied": None}
+    if body.get("apply"):
+        out["applied"] = lrimport.apply_plan(plan)
+        ed._idx(fresh=False).scan()
+    return jsonify(out)
+
+
 def _photo(raw):
     ed = _ed()
     return ed._safe_path(raw)

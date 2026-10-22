@@ -349,6 +349,18 @@ def create_virtual(root: Path, source_rel: str, adjustments: dict | None = None,
         return entry
 
 
+def tag_virtual(root: Path, photo_id: str, **extra) -> dict:
+    """Attach free-form provenance (e.g. ``lr_key``) to a copy; used by the Lightroom import."""
+    with _lock:
+        store = load(root)
+        entry = store["virtual"].get(photo_id)
+        if entry is None:
+            raise KeyError(f"No such virtual copy: {photo_id}")
+        entry.update(extra)
+        _save(root, store)
+        return entry
+
+
 def update_virtual(root: Path, photo_id: str, **fields) -> dict:
     allowed = {"adjustments", "rating", "label", "keywords", "flag"}
     with _lock:

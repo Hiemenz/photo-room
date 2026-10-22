@@ -128,7 +128,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Map / GPS | Missing | GPS is preserved on export, never shown | M | L |
 | Faces / People | Missing | Haar faces are used for cull scoring only | L | L |
 | Publish services | Won't do | `uploader.py` (Google/Amazon) is CLI-only with no UI, and the Amazon path is a stub | L | L |
-| Lightroom catalog (.lrcat) import | Missing (queued) | see queued items | L | H |
+| Lightroom catalog (.lrcat) import | Partial (unverified) | `lrimport.py`, `photo-room import-lightroom`, Import > Lightroom catalog (dry-run report first): rating, pick/reject, colour label, keywords (+ `lr:hierarchicalSubject`), manual collections (sets flattened), virtual copies, basic develop settings to `.xmp`; smart collections, stacks, curves, masks reported not converted. Synthetic-catalog tests only, never run on a real `.lrcat` | S to verify | H |
 
 ### 2. Develop: basic, tone, presence
 
@@ -244,7 +244,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Read Lightroom / Camera Raw sidecar edits | Partial | basics, curve, HSL, grading, crop, spots, masks from a CR2 sidecar (`editor._read_saved_values`); Lightroom AI/range masks ignored. `tests/test_foreign_edits.py`, `tests/test_real_exiftool_xmp.py` | M | H |
 | Write XMP that Lightroom renders the same | Partial (unverified) | tags exist and validate with real exiftool; Lightroom never opened them (finding in KNOWN-LIMITS) | M to verify | H |
 | Import Lightroom presets (.xmp) | Done | `presetlib.py`, `tests/test_presetlib.py` | - | - |
-| Import `.lrcat` | Missing (queued) | see queued items | L | H |
+| Import `.lrcat` | Partial (unverified) | `lrimport.py`, `photo-room import-lightroom`, Import > Lightroom catalog (dry-run report first): rating, pick/reject, colour label, keywords (+ `lr:hierarchicalSubject`), manual collections (sets flattened), virtual copies, basic develop settings to `.xmp`; smart collections, stacks, curves, masks reported not converted. Synthetic-catalog tests only, never run on a real `.lrcat` | S to verify | H |
 | Raw formats | Partial | CR2, CR3, NEF, ARW, RAF, ORF, RW2, DNG via LibRaw; only the 1000D CR2 is exercised with a real file | S | M |
 | Lightroom opens our exported JPEG with metadata | Unverified | exiftool-level checks only | S | H |
 
@@ -302,7 +302,7 @@ Auto Sync (S), contact-sheet PDF (S), post-export actions (S), Map module (M).
 | Queued item | Matrix rows it covers | Notes from this review |
 |---|---|---|
 | Timelapse | none (Lightroom builds time-lapse in Slideshow) | Needs stacks/sequence grouping (package 20) and an ffmpeg export; `doctor` already finds ffmpeg |
-| Lightroom `.xmp` / `.lrcat` migration | "Read Lightroom sidecar edits", ".lrcat import", "Import Lightroom presets" | Sidecar reading and `.xmp` preset import already exist, so the work is mostly `.lrcat` (SQLite) ratings, flags, keywords, collections plus the unverified-in-Lightroom checks. Package 13 is a prerequisite for sidecars |
+| Lightroom `.xmp` / `.lrcat` migration | "Read Lightroom sidecar edits", ".lrcat import", "Import Lightroom presets" | Sidecar reading and `.xmp` preset import already exist, `.lrcat` import is now built (`lrimport.py`, synthetic-catalog tests); what remains is running it on real catalogs and the unverified-in-Lightroom checks. Package 13 is a prerequisite for sidecars |
 | Semantic search | "Find / filter" | Nothing exists; thumbnails (`thumbs.py`) and the SQLite pattern in `cull_store.py` are the natural base; model choice must be CPU and Pi friendly |
 | HDR / panorama merge | "HDR merge", "Panorama merge" | No code. Needs 16-bit TIFF/DNG-ish intermediate output (package 7) and a way to list the result in the Library (package 8) |
 | LAN culling | "Smart cull" | Server binds 127.0.0.1 with a Host/Origin guard and a per-process token (`security.py`, README "Running as a local server"); any LAN mode needs a deliberate, authenticated opt-in. Do not weaken the default |
