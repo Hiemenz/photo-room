@@ -80,6 +80,48 @@ def origin_allowed(origin: str, bound_port: int | None) -> bool:
     return True
 
 
+def safe_join(root, rel: str):
+    """``root / rel`` resolved, or None unless it is an existing regular file
+    that really lives under ``root`` (no ``..``, absolute paths, NULs or symlink
+    escapes). Used by the LAN cull server, which never accepts a path from a
+    client but still checks every one it builds."""
+    from pathlib import Path
+
+    if not isinstance(rel, str) or not rel or "\0" in rel or "\\" in rel:
+        return None
+    if rel.startswith("/") or ".." in Path(rel).parts:
+        return None
+    try:
+        base = Path(root).resolve()
+        cand = (base / rel).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if base not in cand.parents or not cand.is_file():
+        return None
+    return cand
+
+
+def lan_host_allowed(value: str | None, bound_port: int | None, names=()) -> bool:
+    """Host check for the LAN cull server: an IP literal, localhost or one of
+    ``names`` (this machine's own hostnames), on the bound port. An attacker's
+    domain re-resolved to this machine (DNS rebinding) is refused."""
+    import ipaddress
+
+    parsed = _split_host(value or "")
+    if parsed is None:
+        return False
+    host, port = parsed
+    if bound_port is not None and (port or 80) != bound_port:
+        return False
+    bare = host.strip("[]")
+    try:
+        ipaddress.ip_address(bare)
+        return True
+    except ValueError:
+        pass
+    return bare == "localhost" or bare in {n.lower() for n in names}
+
+
 def install(app) -> None:
     """Attach the guards to ``app``. Config: BOUND_PORT, PHOTOROOM_TOKEN."""
     app.config.setdefault("BOUND_PORT", None)

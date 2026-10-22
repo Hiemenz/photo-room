@@ -54,7 +54,13 @@ you can run on your Mac with a real card. Companion to
   tool. Copy the library folder to back them up.
 - **Orientation.** Portrait frames rely on LibRaw applying the camera flip
   (rawpy default). Covered by tests with fakes; check one portrait frame by eye.
-- **Security stance.** Local-only, single user. Do not expose the port.
+- **Security stance.** The editor is local-only, single user: it binds 127.0.0.1,
+  refuses every non-local Host/Origin, and its port must never be exposed or
+  forwarded. The one opt-in exception is a SEPARATE app, `photo-room cull-serve
+  <library> --lan` (see README "Culling from your phone"): one-time pairing token
+  then cookie, rate limit, four-route allowlist, previews and rating/flag writes
+  only, idle shutdown. It is plain HTTP, so use it on a Wi-Fi you trust, and
+  it has only been tested with Flask's test client, not on a real phone/LAN.
 
 ## Known defects (not unverified; confirmed in code)
 
