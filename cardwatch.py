@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Callable
 
 import fsutil
+import importkit
 import ingest
 
 try:  # POSIX only; Windows is not a supported platform for photo-room
@@ -61,8 +62,7 @@ PHOTO_SUFFIXES = frozenset(ingest.RAW_SUFFIXES) | {".jpg", ".jpeg", ".heic", ".h
 VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".mts", ".m2ts", ".avi", ".mxf"})
 RAW_ONLY = frozenset(ingest.RAW_SUFFIXES)
 
-LAYOUTS = {"date": "{yyyy}/{mm}/{dd}", "month": "{yyyy}/{mm}", "flat": ""}
-_PLACEHOLDERS = {"yyyy", "mm", "dd"}
+LAYOUTS = importkit.LAYOUTS
 
 LINUX_ROOTS = ("/run/media", "/media", "/mnt")
 MAC_ROOTS = ("/Volumes",)
@@ -198,16 +198,11 @@ def find_cards(
 # ---------------------------------------------------------------------------
 
 def resolve_layout(layout: str) -> str:
-    """A named layout or a template of {yyyy} {mm} {dd}; raises CardError if unsafe."""
-    tpl = LAYOUTS.get(layout, layout)
-    for name in re.findall(r"\{([^}]*)\}", tpl):
-        if name not in _PLACEHOLDERS:
-            raise CardError(f"unknown layout field {{{name}}}; use {{yyyy}}, {{mm}}, {{dd}} "
-                            f"or one of {', '.join(LAYOUTS)}")
-    rest = re.sub(r"\{[^}]*\}", "x", tpl)
-    if rest.startswith("/") or ".." in rest.split("/") or "\\" in rest or "{" in rest or "}" in rest:
-        raise CardError(f"layout {layout!r} must be a relative path made of {{yyyy}}/{{mm}}/{{dd}}")
-    return tpl
+    """A named layout or a template ({yyyy} {mm} {dd} {date} {camera}); raises CardError if unsafe."""
+    try:
+        return importkit.resolve_layout(layout)
+    except importkit.TemplateError as exc:
+        raise CardError(str(exc)) from None
 
 
 def _shoot_date(path: Path) -> tuple[str, str, str]:
@@ -222,13 +217,6 @@ def _shoot_date(path: Path) -> tuple[str, str, str]:
         pass
     t = datetime.fromtimestamp(path.stat().st_mtime)
     return f"{t.year:04d}", f"{t.month:02d}", f"{t.day:02d}"
-
-
-def dest_dir_for(src: Path, library: Path, template: str) -> Path:
-    if not template:
-        return library
-    y, m, d = _shoot_date(src)
-    return library / template.format(yyyy=y, mm=m, dd=d)
 
 
 def sha256(path: Path) -> str:
@@ -247,7 +235,8 @@ class CardFile:
     photo: bool
 
 
-def list_card_files(card: Path, suffixes: frozenset[str]) -> tuple[list[CardFile], list[str]]:
+def list_card_files(card: Path, suffixes: frozenset[str],
+                    skip_dirs=()) -> tuple[list[CardFile], list[str]]:
     """Importable files under DCIM (stable order) and any directory read errors."""
     errors: list[str] = []
     files: list[CardFile] = []
@@ -255,8 +244,11 @@ def list_card_files(card: Path, suffixes: frozenset[str]) -> tuple[list[CardFile
     def onerror(exc):
         errors.append(f"{getattr(exc, 'filename', card)}: {exc.strerror or exc}")
 
-    for dirpath, dirnames, filenames in os.walk(card / DCIM, onerror=onerror):
-        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+    base = card / DCIM if (card / DCIM).is_dir() else card      # a plain folder works too
+    skip = {p.resolve() for p in (skip_dirs or ())}
+    for dirpath, dirnames, filenames in os.walk(base, onerror=onerror):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith(".")
+                             and (Path(dirpath) / d).resolve() not in skip)
         for name in sorted(filenames):
             if name.startswith("."):           # macOS ._AppleDouble, .Trashes
                 continue
@@ -324,6 +316,10 @@ class ImportResult:
     destinations: dict[str, Path] = field(default_factory=dict)   # card file -> library file
     verified_set: set = field(default_factory=set)                # card files re-checksummed OK
     files: dict[str, CardFile] = field(default_factory=dict)
+    backups: dict[str, Path] = field(default_factory=dict)        # card file -> backup copy
+    sidecars: int = 0                                              # .xmp files carried over
+    warnings: list[str] = field(default_factory=list)              # copied fine, something extra did not apply
+    new_paths: list[Path] = field(default_factory=list)            # library files written by this run
     deleted: list[str] = field(default_factory=list)
     delete_failed: list[dict] = field(default_factory=list)
     would_delete: list[str] = field(default_factory=list)
@@ -345,6 +341,7 @@ class ImportResult:
             "verified": self.verified, "interrupted": self.interrupted,
             "deleted": len(self.deleted), "would_delete": len(self.would_delete),
             "problem": self.problem, "eject": self.eject,
+            "sidecars": self.sidecars, "backed_up": len(self.backups), "warnings": self.warnings[:20],
         }
 
 
@@ -356,14 +353,36 @@ def import_card(
     progress: Callable[[dict], None] | None = None,
     should_stop: Callable[[], bool] = lambda: False,
     disk_usage=shutil.disk_usage,
+    spec: importkit.ImportSpec | None = None,
+    only: set[str] | None = None,
 ) -> ImportResult:
-    """Copy everything importable off the card. Reads the card; writes only to ``library``."""
-    template = resolve_layout(layout)
+    """
+    Copy what is importable off the card (or only the files in ``only``, as
+    absolute path strings). Reads the card; writes only to ``library`` and, when
+    the spec asks for it, the backup folder.
+    """
+    if spec is None:
+        spec = importkit.ImportSpec(layout=layout)
+    spec.date_fn = spec.date_fn or (lambda p: _shoot_date(p))
+    try:
+        spec.validate()
+    except importkit.TemplateError as exc:
+        raise CardError(str(exc)) from None
     res = ImportResult(str(card), str(library))
     emit = progress or (lambda _s: None)
     library.mkdir(parents=True, exist_ok=True)
+    backup_need = 0
+    if spec.backup is not None:
+        try:
+            spec.backup = importkit.check_backup_dir(spec.backup, library, card)
+            spec.backup.mkdir(parents=True, exist_ok=True)
+        except (importkit.TemplateError, OSError) as exc:
+            raise CardError(f"backup folder: {exc}") from None
 
-    files, errors = list_card_files(card, suffixes)
+    skip = [library] if library.resolve() != Path(card).resolve() and Path(card).resolve() in library.resolve().parents else []
+    files, errors = list_card_files(card, suffixes, skip)
+    if only is not None:
+        files = [f for f in files if str(f.path) in only]
     res.scan_errors = errors
     res.found = len(files)
     res.files = {str(f.path): f for f in files}
@@ -396,29 +415,41 @@ def import_card(
                        f"(+{SPACE_MARGIN // 2**20} MB margin), {free // 2**20} MB free. "
                        "Nothing was copied.")
         return res
+    if spec.backup is not None:
+        backup_need = sum(f.size for f, _ in plan)
+        try:
+            bfree = disk_usage(spec.backup).free
+        except OSError:
+            bfree = None
+        if bfree is not None and backup_need + SPACE_MARGIN > bfree:
+            res.problem = (f"not enough free space in the backup folder {spec.backup}: need "
+                           f"{backup_need // 2**20} MB (+{SPACE_MARGIN // 2**20} MB margin), "
+                           f"{bfree // 2**20} MB free. Nothing was copied.")
+            return res
 
     done_bytes = 0
+    seq = max(1, int(spec.seq_start))
     for i, (f, dup) in enumerate(plan, 1):
         if should_stop():
             res.interrupted = True
             break
         key = str(f.path)
         try:
-            if dup is not None:
+            one = importkit.import_one(f.path, library, spec, seq, dup)
+            res.destinations[key] = one.dest
+            res.warnings += one.warnings
+            if one.backup is not None:
+                res.backups[key] = one.backup
+            if one.status == "identical":
                 res.duplicates += 1
-                res.destinations[key] = dup
             else:
-                dest, status = ingest.copy_from_card_ex(
-                    f.path, dest_dir_for(f.path, library, template),
-                    date_folders=False, verify=True)
-                res.destinations[key] = dest
-                if status == "identical":
-                    res.duplicates += 1
-                else:
-                    res.copied += 1
-                    res.renamed += status == "renamed"
-                    index.add(dest)
-                    done_bytes += f.size
+                seq += 1
+                res.copied += 1
+                res.renamed += one.status == "renamed"
+                res.sidecars += one.sidecar == "copied"
+                res.new_paths.append(one.dest)
+                index.add(one.dest)
+                done_bytes += f.size
         except Exception as exc:   # unreadable file, card pulled, disk full, checksum mismatch
             res.failed.append({"file": f.path.name, "error": str(exc)})
         emit({"state": "importing", "total": len(plan), "done": i, "name": f.path.name,
@@ -442,10 +473,13 @@ def verify_import(res: ImportResult, progress: Callable[[dict], None] | None = N
             res.interrupted = True
             return res
         try:
-            if sha256(Path(src)) == sha256(dest):
-                ok.add(src)
-            else:
+            want = sha256(Path(src))
+            if want != sha256(dest):
                 res.verify_failed.append({"file": Path(src).name, "error": "checksum differs from library copy"})
+            elif src in res.backups and want != sha256(res.backups[src]):
+                res.verify_failed.append({"file": Path(src).name, "error": "checksum differs from backup copy"})
+            else:
+                ok.add(src)
         except OSError as exc:
             res.verify_failed.append({"file": Path(src).name, "error": f"cannot re-read: {exc}"})
         emit({"state": "verifying", "total": len(items), "done": i, "name": Path(src).name})
@@ -648,7 +682,10 @@ def summary_text(res: ImportResult) -> str:
     bad = len(res.failed) + len(res.verify_failed) + len(res.scan_errors)
     return (f"{res.copied} imported, {res.duplicates} duplicates skipped, {bad} failed"
             + (f", {len(res.deleted)} deleted from card" if res.deleted else "")
-            + (f", {len(res.would_delete)} would be deleted (dry run)" if res.would_delete else ""))
+            + (f", {len(res.would_delete)} would be deleted (dry run)" if res.would_delete else "")
+            + (f", {res.sidecars} sidecar(s) carried" if res.sidecars else "")
+            + (f", {len(res.backups)} backed up" if res.backups else "")
+            + (f", {len(res.warnings)} warning(s): {res.warnings[0]}" if res.warnings else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +703,18 @@ class Options:
     notify: bool = True
     interval: float = 2.0
     debounce: int = 2
+    rename: str = ""
+    seq_start: int = 1
+    sidecars: bool = True
+    backup: Path | None = None
+    rating: int | None = None
+    keywords: tuple = ()
+    copyright: str = ""
+
+    def spec(self) -> importkit.ImportSpec:
+        return importkit.ImportSpec(
+            layout=self.layout, rename=self.rename, seq_start=self.seq_start, sidecars=self.sidecars,
+            backup=self.backup, rating=self.rating, keywords=list(self.keywords), copyright=self.copyright)
 
 
 def process_card(card: Card, opts: Options, *, notifier=notify, ejector=eject_card,
@@ -683,7 +732,7 @@ def process_card(card: Card, opts: Options, *, notifier=notify, ejector=eject_ca
     say("Photo Room", f"Card {status.data['label']} found, importing...")
     try:
         res = import_card(card.mount, opts.library, opts.layout, suffixes, prog, should_stop,
-                          disk_usage=disk_usage)
+                          disk_usage=disk_usage, spec=opts.spec())
         if not res.problem and not res.interrupted:
             verify_import(res, prog, should_stop)
         blocker = eject_blockers(res, True) if not res.clean else ""
@@ -825,6 +874,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("library", nargs="?", help=f"Library folder (default: config or {DEFAULT_LIBRARY})")
     p.add_argument("--layout", help="date (YYYY/MM/DD, default), month, flat, or a template "
                                     "such as '{yyyy}/{yyyy}-{mm}-{dd}'")
+    p.add_argument("--rename", help="Rename on import, e.g. '{date}_{camera}_{seq:4}' "
+                                    "(fields: {date} {yyyy} {mm} {dd} {time} {seq} {camera} {original}); default keeps the name")
+    p.add_argument("--seq-start", type=int, default=1, help="First {seq} number (default 1)")
+    p.add_argument("--no-sidecars", action="store_true", help="Do not carry the card's .xmp sidecars along with the raws")
+    p.add_argument("--backup", type=Path, help="Also copy every file (verified) to this second folder")
+    p.add_argument("--rating", type=int, help="Star rating (0-5, -1 rejected) written to each new photo's sidecar")
+    p.add_argument("--keywords", help="Comma separated keywords added to each new photo's sidecar")
+    p.add_argument("--copyright", help="Copyright notice written to each new photo's sidecar")
     p.add_argument("--no-eject", action="store_true", help="Import and verify but leave the card mounted")
     p.add_argument("--delete-after-import", action="store_true",
                    help="After a fully verified import, delete the verified PHOTO files from the card "
@@ -850,6 +907,13 @@ def options_from(args: argparse.Namespace, cfg: dict) -> Options:
         raw_only=args.raw_only or bool(cfg.get("raw_only", False)),
         notify=not args.no_notify and bool(cfg.get("notify", True)),
         interval=float(args.interval or cfg.get("interval", 2.0)),
+        rename=args.rename if args.rename is not None else cfg.get("rename", ""),
+        seq_start=args.seq_start,
+        sidecars=not args.no_sidecars and bool(cfg.get("sidecars", True)),
+        backup=(args.backup or (Path(cfg["backup"]) if cfg.get("backup") else None)),
+        rating=args.rating,
+        keywords=tuple(k.strip() for k in (args.keywords or "").split(",") if k.strip()),
+        copyright=args.copyright or "",
     )
 
 
@@ -858,6 +922,11 @@ def main(argv: list[str] | None = None) -> int:
     opts = options_from(args, load_config(args.config))
     if args.delete_dry_run and not args.delete_after_import:
         print("--delete-dry-run needs --delete-after-import", file=sys.stderr)
+        return 2
+    try:
+        opts.spec().validate()
+    except importkit.TemplateError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 2
     try:
         resolve_layout(opts.layout)
