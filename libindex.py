@@ -196,6 +196,18 @@ class Index:
                 self._db.execute("ROLLBACK")
                 raise
 
+    def carry_picks(self, mapping: dict[str, str]) -> None:
+        """Photos were moved on disk (old rel -> new rel): keep their pick flags.
+
+        Call ``flush()`` before the move and ``scan()`` after it; the scan drops
+        the old paths and indexes the new ones with the picks carried here.
+        """
+        with self._lock:
+            moved = [n for o, n in mapping.items() if o in self._picks]
+            self._picks.update(moved)
+        if moved:
+            self._db_tx([("UPDATE photos SET pick=1 WHERE rel=?", [(n,) for n in moved], True)])
+
     def _meta_of(self, rec: dict) -> dict:
         return {k: rec[k] for k in ("rating", "label", "keywords", "camera", "lens", "iso", "date")}
 

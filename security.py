@@ -103,3 +103,57 @@ def install(app) -> None:
                 return jsonify({"error": "Refused: missing or wrong session token. "
                                          "Reload the editor page."}), 403
         return None
+
+
+# ---------------------------------------------------------------------------
+# Library path checks (Folders panel: move / rename / create)
+# ---------------------------------------------------------------------------
+
+import os                      # noqa: E402
+from pathlib import Path       # noqa: E402
+
+MAX_NAME_LEN = 120
+
+
+def safe_name(name) -> str:
+    """One path component chosen by the user (new folder or photo name); ValueError if unsafe."""
+    if not isinstance(name, str):
+        raise ValueError("A name is required")
+    name = name.strip()
+    if not name or name in (".", ".."):
+        raise ValueError("A name is required")
+    if len(name) > MAX_NAME_LEN:
+        raise ValueError("That name is too long")
+    if name.startswith("."):
+        raise ValueError("Names cannot start with a dot")
+    if any(c in name for c in '/\\:*?"<>|\0') or any(ord(c) < 32 for c in name):
+        raise ValueError("Names cannot contain / \\ : * ? \" < > | or control characters")
+    return name
+
+
+def safe_relpath(root, raw, *, allow_root: bool = False, must_exist: bool = True) -> Path:
+    """
+    Resolve a client-supplied library-relative path to an absolute one.
+
+    Refuses absolute paths, ``..``, backslashes, NUL, hidden components (the
+    library's own ``.photo-room-*`` files and thumbnail cache), and anything
+    that reaches outside ``root`` through a symlink. ``allow_root`` accepts
+    the empty string as the root itself.
+    """
+    if not isinstance(raw, str) or "\0" in raw or "\\" in raw or raw.startswith("/"):
+        raise ValueError("Bad path")
+    raw = raw.strip("/")
+    root = Path(os.path.realpath(root))
+    if not raw:
+        if allow_root:
+            return root
+        raise ValueError("A path is required")
+    parts = raw.split("/")
+    if any(p in ("", ".", "..") or p.startswith(".") for p in parts):
+        raise ValueError("Bad path")
+    lexical = root.joinpath(*parts)
+    if os.path.realpath(lexical) != str(lexical):        # a symlink somewhere on the way
+        raise ValueError("Path goes through a symbolic link")
+    if must_exist and not lexical.exists():
+        raise ValueError(f"No such path: {raw}")
+    return lexical

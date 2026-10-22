@@ -37,6 +37,7 @@ import catalog
 import colour
 import colormix
 import editversion
+import folders
 import fsutil
 import security
 import geometry
@@ -145,6 +146,9 @@ app.register_blueprint(import_api.bp)
 import quick_api  # noqa: E402  (Auto Sync and Quick Develop)
 
 app.register_blueprint(quick_api.bp)
+import folders_api  # noqa: E402  (Folders panel: tree, create, safe move / rename, undo)
+
+app.register_blueprint(folders_api.bp)
 
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
@@ -1954,7 +1958,8 @@ def api_library():
         criteria = {k: args.get(k, "") for k in keys}
         idx = _idx()
         virtuals = catalog.virtual_items(LIBRARY_ROOT, idx.items()) if catalog.has_virtuals(LIBRARY_ROOT) else []
-        if not virtuals and not args.get("collection"):
+        folder = args.get("folder")
+        if not virtuals and not args.get("collection") and folder is None:
             total, page, library_total = idx.query(criteria, args.get("sort", "name"),
                                                    args.get("dir", "asc") == "desc", offset, limit)
             facets = idx.facets() if offset == 0 else None
@@ -1964,6 +1969,9 @@ def api_library():
             if args.get("collection"):
                 matched = catalog.collection_items(
                     catalog.get_collection(LIBRARY_ROOT, args["collection"]), matched)
+            if folder is not None:
+                matched = [it for it in matched if folders.in_folder(
+                    it["path"], folder.strip("/"), args.get("subfolders") == "1")]
             matched = library.sort_items(
                 matched, args.get("sort", "name"), args.get("dir", "asc") == "desc")
             total, page, library_total = len(matched), matched[offset:offset + limit], len(everything)

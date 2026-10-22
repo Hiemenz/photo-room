@@ -7,6 +7,8 @@ const LABEL_KEYS = { "6": "Red", "7": "Yellow", "8": "Green", "9": "Blue" };
 let module_ = "develop";
 let libState = { items: [], total: 0, libraryTotal: 0, loading: false, gen: 0 };
 let libCollection = "";      // active collection id, "" for the whole library
+let libFolder = null;        // active folder path ("" = root), null for no folder filter
+let libFolderSub = true;     // include subfolders of the active folder
 let libActive = null;        // path of the keyboard cursor
 let libMulti = new Set();    // extra selected paths
 let libThumbObs = null, libPageObs = null;
@@ -16,6 +18,7 @@ function libQuery(offset) {
   const q = new URLSearchParams({ offset, limit: LIB_PAGE,
     sort: $("lf-sort").value, dir: $("lf-dir").value });
   if (libCollection) q.set("collection", libCollection);
+  if (libFolder !== null) { q.set("folder", libFolder); if (libFolderSub) q.set("subfolders", "1"); }
   const [rmin, rop] = $("lf-rating").value.split("|");
   if (rmin) { q.set("rating_min", rmin); if (rop) q.set("rating_op", rop); }
   for (const [id, key] of [["lf-flag","flag"],["lf-label","label"],["lf-keyword","keyword"],

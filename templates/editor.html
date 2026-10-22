@@ -90,6 +90,10 @@
       <h3><span>Collections</span><span>
         <button id="col-new" title="New collection (from the selection, if any)">+</button><button id="col-smart" title="New smart collection">+ Smart</button></span></h3>
       <div id="col-list"></div>
+      <h3><span>Folders</span><span>
+        <label class="fo-sub" title="Show photos of subfolders too"><input type="checkbox" id="fo-sub" checked> sub</label>
+        <button id="fo-new" title="New folder inside the selected folder">+</button><button id="fo-undo" title="Undo the last move or rename" disabled>Undo</button></span></h3>
+      <div id="fo-list"></div>
     </aside>
     <div id="lib-grid"></div>
     <aside id="lib-meta" aria-label="Metadata"></aside>
@@ -584,6 +588,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/keyboard.js') }}"></script>
 <script src="{{ asset('js/library-module.js') }}"></script>
 <script src="{{ asset('js/collections.js') }}"></script>
+<script src="{{ asset('js/library-folders.js') }}"></script>
 <script src="{{ asset('js/compare-survey.js') }}"></script>
 <script src="{{ asset('js/cull.js') }}"></script>
 <script src="{{ asset('js/library-files.js') }}"></script>
