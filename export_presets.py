@@ -14,10 +14,13 @@ from __future__ import annotations
 import fsutil
 import json
 import os
+import re
 import threading
 import uuid
 from pathlib import Path
 
+import exporter
+import postexport
 from exporter import ExportOptions
 
 MAX_NAME = 60
@@ -78,9 +81,34 @@ def options_from_payload(payload: dict) -> ExportOptions:
             full_sensor=bool(payload.get("full_sensor", False)),
             png_compression=int(payload.get("png_compression", 1)),
             optimize_jpeg=bool(payload.get("optimize_jpeg", False)),
+            custom_text=str(payload.get("custom_text") or ""),
         ).validate()
     except (TypeError, ValueError) as exc:
         raise ValueError(str(exc)) from None
+
+
+def clean_subfolder(value) -> str:
+    """A single sub-folder name: no separators, no "..", no hidden names."""
+    name = str(value or "").strip()
+    if not name:
+        return ""
+    if re.search(r"[/\\\x00-\x1f]", name) or name in (".", "..") or name.startswith("."):
+        raise ValueError("the sub-folder must be a plain folder name")
+    if len(name) > 100:
+        raise ValueError("the sub-folder name is too long")
+    return name
+
+
+def destination_settings(payload: dict) -> dict:
+    """Validated dest_mode / subfolder / post_action of a payload (raises ValueError)."""
+    mode = str(payload.get("dest_mode") or "folder")
+    if mode not in exporter.DEST_MODES:
+        raise ValueError(f"destination mode must be one of {', '.join(exporter.DEST_MODES)}")
+    sub = clean_subfolder(payload.get("subfolder"))
+    if mode == "subfolder" and not sub:
+        raise ValueError("Name the sub-folder to export into")
+    return {"dest_mode": mode, "subfolder": sub,
+            "post_action": postexport.normalize(payload.get("post_action"))}
 
 
 def clean_settings(payload: dict) -> dict:
@@ -92,6 +120,7 @@ def clean_settings(payload: dict) -> dict:
         "keep_metadata": opts.keep_metadata, "metadata": opts.metadata,
         "bit_depth": opts.bit_depth,
         "sharpen": opts.sharpen, "watermark": opts.watermark,
+        "custom_text": opts.custom_text, **destination_settings(payload),
     }
     dest = str(payload.get("dest") or "").strip()
     if dest:
@@ -156,3 +185,26 @@ def delete_preset(name: str) -> bool:
         del user[name]
         atomic_write_json(presets_file(), user)
     return True
+
+
+# -- Export with Previous ----------------------------------------------------
+
+def last_file() -> Path:
+    return config_dir() / "export_last.json"
+
+
+def save_last(settings: dict) -> None:
+    """Remember the settings of the latest export. Never lets a disk error break it."""
+    try:
+        atomic_write_json(last_file(), clean_settings(settings))
+    except (OSError, ValueError):
+        pass
+
+
+def load_last() -> dict | None:
+    """The settings of the latest export, or None when there is none (or it no longer validates)."""
+    try:
+        data = json.loads(last_file().read_text())
+        return clean_settings(data) if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None

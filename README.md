@@ -61,6 +61,7 @@ Start with `uv run photo-room doctor`; it checks everything below and prints the
 - Python 3.12+ with [uv](https://docs.astral.sh/uv/)
 - Optional, opt-in: Library > People groups faces into people you can name and filter by (`photo-room faces scan`; approximate by default, see docs/FACES-PEOPLE.md).
 - Optional: `uv sync --extra semantic` enables on-device semantic search and Find similar (see docs/SEMANTIC-SEARCH.md); the model is downloaded only by `python semantic.py download --yes`.
+- Optional: `uv sync --extra avif --extra jxl` adds AVIF and JPEG XL to the Export dialog and `export --format` (via `pillow-avif-plugin` / `pillow-jxl-plugin`).
 - Optional: `uv sync --extra lens` installs `lensfunpy` for lens profiles
   (see "Lens corrections"); everything else works without it.
 - Optional: [Adobe DNG Converter](https://helpx.adobe.com/camera-raw/using/adobe-dng-converter.html)

@@ -22,8 +22,10 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request
 
 import export_finish
+import contactsheet_pdf
 import export_presets
 import exporter
+import postexport
 from exporter import ExportOptions
 
 bp = Blueprint("export_api", __name__)
@@ -88,7 +90,19 @@ def _sources(payload: dict) -> list[tuple[Path, dict | None]]:
     return out
 
 
+SAME_AS_ORIGINAL = "(next to the originals)"
+
+
 def _destination(payload: dict) -> Path:
+    """The destination folder; with a sub-folder chosen, the sub-folder inside it."""
+    base = _base_destination(payload)
+    dest_cfg = export_presets.destination_settings(payload)
+    if dest_cfg["dest_mode"] == "subfolder":
+        return base / dest_cfg["subfolder"]
+    return base
+
+
+def _base_destination(payload: dict) -> Path:
     raw = str(payload.get("dest") or "").strip()
     if not raw:
         raise ValueError("Choose a destination folder")
@@ -121,6 +135,10 @@ def _require_exiftool() -> None:
         )
 
 
+def _out_dir(job: dict, source: Path) -> Path:
+    return source.parent if job.get("dest_mode") == "original" else Path(job["dest"])
+
+
 def _source_size(path: Path) -> tuple[int, int] | None:
     try:
         if path.suffix.lower() in exporter.RAW_SUFFIXES:
@@ -135,8 +153,10 @@ def _source_size(path: Path) -> tuple[int, int] | None:
         return None
 
 
-def preview_names(sources: list[tuple[Path, dict | None]], opts: ExportOptions, dest: Path | None) -> list[dict]:
-    """What each file would be called, including -1/-2 suffixes for existing files."""
+def preview_names(sources: list[tuple[Path, dict | None]], opts: ExportOptions, dest: Path | None,
+                  same_dir: bool = False) -> list[dict]:
+    """What each file would be called, including -1/-2 suffixes for existing files.
+    With ``same_dir`` each file lands beside its original instead of in ``dest``."""
     ext = exporter.FORMATS[opts.format]
     used: set[str] = set()
     out = []
@@ -146,12 +166,15 @@ def preview_names(sources: list[tuple[Path, dict | None]], opts: ExportOptions, 
             k = opts.long_edge / max(size)
             size = (max(1, round(size[0] * k)), max(1, round(size[1] * k)))
         name = exporter.output_name(src, opts.template, ext, seq, size,
-                                    stem=exporter.virtual_stem(src, virt) if virt else None)
+                                    stem=exporter.virtual_stem(src, virt) if virt else None,
+                                    text=opts.custom_text)
         stem, n, final = Path(name).stem, 0, name
-        while final in used or (dest is not None and (dest / final).exists()):
+        folder = src.parent if same_dir else dest
+        key = lambda f: f"{folder}/{f}" if same_dir else f
+        while key(final) in used or (folder is not None and (folder / final).exists()):
             n += 1
             final = f"{stem}-{n}{ext}"
-        used.add(final)
+        used.add(key(final))
         out.append({"source": src.name, "name": final})
     return out
 
@@ -163,13 +186,18 @@ def api_export_defaults():
         "exiftool": exporter.exiftool_available(),
         "colorspaces": list(exporter.COLOR_SPACES),
         "bit_depths": [8, 16],
-        "formats": ["jpeg", "png", "tiff", "webp"],
+        "formats": exporter.available_formats(),
+        "dest_modes": list(exporter.DEST_MODES),
+        "has_previous": export_presets.load_last() is not None,
+        "contact_sheet": {"pages": list(contactsheet_pdf.PAGES), "max_columns": contactsheet_pdf.MAX_COLUMNS,
+                          "max_photos": contactsheet_pdf.MAX_PHOTOS},
         "sixteen_bit_formats": list(exporter.SIXTEEN_BIT_FORMATS),
         "metadata_modes": list(exporter.METADATA_MODES),
         "sharpen": {"for": list(export_finish.MEDIA), "amount": list(export_finish.AMOUNTS)},
         "watermark_positions": list(export_finish.POSITIONS),
         "fonts": export_finish.list_fonts(),
-        "tokens": ["{name}", "{date}", "{seq}", "{seq:04d}", "{width}", "{height}"],
+        "tokens": ["{name}", "{date}", "{seq}", "{seq:04d}", "{width}", "{height}",
+                   "{rating}", "{camera}", "{keyword}", "{text}"],
     })
 
 
@@ -185,11 +213,12 @@ def api_export_preview():
         sources = _sources(payload)
         if not sources:
             raise ValueError("No photos to export")
+        same_dir = payload.get("dest_mode") == "original"
         try:
-            dest = _destination(payload)
+            dest = None if same_dir else _destination(payload)
         except ValueError:
             dest = None
-        names = preview_names(sources[:50], opts, dest)  # a preview needs only a few
+        names = preview_names(sources[:50], opts, dest, same_dir)  # a preview needs only a few
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({
@@ -246,6 +275,7 @@ def _ensure_loaded() -> None:
 def _public(job: dict) -> dict:
     out = {k: job[k] for k in ("id", "state", "total", "done", "current", "dest",
                                "written", "failed")}
+    out["post"] = job.get("post")
     out["items"] = [dict(i) for i in job.get("items", [])]
     out["queue_position"] = _queue_position(job)
     return out
@@ -260,7 +290,6 @@ def _queue_position(job: dict) -> int | None:
 
 def _run_job(job: dict) -> None:
     opts = export_presets.options_from_payload(job["options"])
-    dest = Path(job["dest"])
     overwrite = bool(job.get("overwrite"))
     try:
         import keywordlib
@@ -275,7 +304,7 @@ def _run_job(job: dict) -> None:
                 continue
             job["current"] = Path(item["source"]).name
         try:
-            written = exporter.export_photo(Path(item["source"]), dest, opts,
+            written = exporter.export_photo(Path(item["source"]), _out_dir(job, Path(item["source"])), opts,
                                             seq=item["seq"], virtual=item["virtual"],
                                             overwrite=overwrite, drop_keywords=drop)
             with _lock:
@@ -289,6 +318,12 @@ def _run_job(job: dict) -> None:
         with _lock:
             job["done"] += 1
             _persist()
+    action = job.get("post_action")
+    with _lock:
+        cancelled = bool(job.get("_cancel"))
+        written = list(job["written"])
+    if action and written and not cancelled:
+        job["post"] = postexport.run_action(action, written)    # outside the lock: it may take a while
     with _lock:
         if job.get("_cancel"):
             for item in job["items"]:
@@ -342,19 +377,24 @@ def ed_error(exc: Exception) -> str:
 
 @bp.route("/api/export", methods=["POST"])
 def api_export():
-    ed = _ed()
-    _ensure_loaded()
     try:
-        payload = ed._json_body()
+        payload = _ed()._json_body()
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 415
+    return _start_export(payload)
+
+
+def _start_export(payload: dict):
+    _ensure_loaded()
     try:
         opts = _options(payload)
+        cfg = export_presets.destination_settings(payload)
         sources = _sources(payload)
         if not sources:
             raise ValueError("No photos to export")
-        dest = _destination(payload)
-        preview_names(sources[:1], opts, None)  # reject a bad template before starting
+        same_dir = cfg["dest_mode"] == "original"
+        dest = None if same_dir else _destination(payload)
+        preview_names(sources[:1], opts, None, same_dir)  # reject a bad template before starting
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     try:
@@ -362,13 +402,17 @@ def api_export():
     except RuntimeError as exc:
         return jsonify({"error": str(exc), "code": "exiftool_missing"}), 424
 
-    try:
-        dest.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return jsonify({"error": f"Cannot create {dest}: {exc.strerror or exc}"}), 400
+    if dest is not None:
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return jsonify({"error": f"Cannot create {dest}: {exc.strerror or exc}"}), 400
 
     settings = export_presets.clean_settings(payload)
-    settings.pop("dest", None)
+    if same_dir:
+        settings.pop("dest", None)
+    else:
+        settings["dest"] = str(_base_destination(payload))   # the chosen folder, before any sub-folder
     items = [{"source": str(src), "name": src.name,
               "virtual": virt, "seq": seq, "status": "pending", "output": None, "error": None}
              for seq, (src, virt) in enumerate(sources, start=1)]
@@ -377,7 +421,9 @@ def api_export():
             return jsonify({"error": "The export queue is full; wait for a batch to finish"}), 409
         busy = any(j.get("state") == "running" for j in _jobs.values())
         job = {"id": uuid.uuid4().hex, "state": "queued", "total": len(items),
-               "done": 0, "current": None, "dest": str(dest), "written": [], "failed": [],
+               "done": 0, "current": None, "dest": str(dest) if dest else SAME_AS_ORIGINAL,
+               "dest_mode": cfg["dest_mode"], "post_action": cfg["post_action"], "post": None,
+               "written": [], "failed": [],
                "items": items, "options": settings, "queued_behind_running": busy,
                "overwrite": bool(payload.get("overwrite"))}
         _jobs[job["id"]] = job
@@ -388,8 +434,66 @@ def api_export():
             _jobs.pop(old)
         _persist()
         body = _public(job)
+    export_presets.save_last(settings)
     _ensure_worker()
     return jsonify(body), 202
+
+
+@bp.route("/api/export/last")
+def api_export_last():
+    """The settings of the previous export (what "Export with Previous" repeats)."""
+    return jsonify({"settings": export_presets.load_last()})
+
+
+@bp.route("/api/export/previous", methods=["POST"])
+def api_export_previous():
+    """Export the chosen photos again with the previous export's settings."""
+    try:
+        payload = _ed()._json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    last = export_presets.load_last()
+    if last is None:
+        return jsonify({"error": "There is no previous export yet"}), 404
+    merged = {**last, **{k: payload[k] for k in ("scope", "path", "paths") if k in payload}}
+    return _start_export(merged)
+
+
+@bp.route("/api/export/contact-sheet", methods=["POST"])
+def api_export_contact_sheet():
+    """A PDF contact sheet of the chosen photos, written to the destination folder."""
+    ed = _ed()
+    try:
+        payload = ed._json_body()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 415
+    try:
+        payload.setdefault("scope", "selected")
+        photos = [src for src, virt in _sources(payload) if virt is None]
+        if not photos:
+            raise ValueError("No photos for the contact sheet")
+        dest = _base_destination(payload)
+        columns = int(payload.get("columns") or 4)
+        page = str(payload.get("page") or "a4")
+        title = str(payload.get("title") or "")[:120]
+        name = Path(str(payload.get("name") or "contact-sheet")).stem or "contact-sheet"
+        if "\x00" in name:
+            raise ValueError("bad file name")
+        dest.mkdir(parents=True, exist_ok=True)
+        out = exporter.claim_output(dest, name + ".pdf")
+        try:
+            contactsheet_pdf.write_pdf(
+                out, photos, lambda p: ed._thumb_pool().get_now(p, size=320), columns=columns,
+                page=page, landscape=bool(payload.get("landscape")), title=title,
+                labels=payload.get("labels", True) is not False)
+        except BaseException:
+            out.unlink(missing_ok=True)
+            raise
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except OSError as exc:
+        return jsonify({"error": f"Cannot write the contact sheet: {exc.strerror or exc}"}), 500
+    return jsonify({"ok": True, "path": str(out), "count": len(photos)})
 
 
 @bp.route("/api/export/status/<job_id>")

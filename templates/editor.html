@@ -591,14 +591,25 @@
         <option value="folder">Whole folder</option>
       </select></label>
     <div class="hint" id="ex-count"></div>
-    <label class="row">Destination
+    <label class="row">Export to
+      <select id="ex-dest-mode">
+        <option value="folder">Chosen folder</option>
+        <option value="subfolder">Sub-folder of the chosen folder</option>
+        <option value="original">Same folder as the original</option>
+        <option value="ask">Ask each time</option>
+      </select></label>
+    <label class="row" id="ex-dest-row">Destination
       <input type="text" id="ex-dest" spellcheck="false"></label>
+    <label class="row" id="ex-sub-row">Sub-folder
+      <input type="text" id="ex-subfolder" placeholder="Edited" spellcheck="false"></label>
     <label class="row">File name
       <input type="text" id="ex-template" value="{name}" spellcheck="false"></label>
-    <div class="hint">Tokens: {name} {date} {seq} {seq:04d} {width} {height}.
+    <label class="row" id="ex-text-row">Custom text ({text})
+      <input type="text" id="ex-text" maxlength="60" placeholder="wedding" spellcheck="false"></label>
+    <div class="hint">Tokens: {name} {date} {seq} {seq:04d} {width} {height} {rating} {camera} {keyword} {text}.
       Result: <span id="ex-preview"></span></div>
     <label class="row">Format
-      <select id="ex-format"><option value="jpeg">JPEG</option><option value="png">PNG</option><option value="tiff">TIFF</option><option value="webp">WebP</option></select></label>
+      <select id="ex-format"><option value="jpeg">JPEG</option><option value="png">PNG</option><option value="tiff">TIFF</option><option value="webp">WebP</option><option value="avif" hidden>AVIF</option><option value="jxl" hidden>JPEG XL</option></select></label>
     <label class="row" id="ex-q-row">Quality
       <span style="display:flex;gap:8px;align-items:center"><input type="range" id="ex-quality" min="1" max="100" value="92" style="flex:1"><output id="ex-q-val">92</output></span></label>
     <label class="row" id="ex-depth-row">Bit depth (PNG, TIFF)
@@ -643,6 +654,21 @@
         <option value="no_develop">All except camera raw develop settings</option>
         <option value="none">None</option>
       </select></label>
+    <label class="row">After export
+      <select id="ex-post"><option value="">Do nothing</option><option value="open">Open in an application</option><option value="command">Run a command</option></select></label>
+    <label class="row" id="ex-post-app-row">Application
+      <input type="text" id="ex-post-app" placeholder="/usr/bin/gimp (blank: default application)" spellcheck="false"></label>
+    <label class="row" id="ex-post-cmd-row">Command
+      <input type="text" id="ex-post-cmd" placeholder="program --option {files}" spellcheck="false"></label>
+    <div class="hint" id="ex-post-hint" hidden>Run without a shell and stopped after 30 seconds. The exported files are added as the last arguments (or replace {files}).</div>
+    <details id="ex-sheet">
+      <summary style="font-size:12px;cursor:pointer">Contact sheet (PDF)</summary>
+      <label class="row">Columns <input type="number" id="ex-sheet-cols" min="1" max="10" value="4"></label>
+      <label class="row">Page
+        <select id="ex-sheet-page"><option value="a4">A4</option><option value="letter">Letter</option></select></label>
+      <label class="row">Heading <input type="text" id="ex-sheet-title" maxlength="120" spellcheck="false"></label>
+      <button id="ex-sheet-go" type="button">Make PDF of the chosen photos</button>
+    </details>
     <label style="font-size:12px"><input type="checkbox" id="ex-save" checked>
       Save the open photo's edits first</label>
     <div class="hint">Exports render the saved edits at full resolution, not the preview.</div>
@@ -652,6 +678,7 @@
   </div>
   <div class="foot">
     <button id="ex-cancel">Close</button>
+    <button id="ex-prev" type="button" title="Repeat the previous export on these photos (Ctrl/Cmd+Alt+Shift+E)" disabled>Export with Previous</button>
     <button id="ex-go" class="primary">Export</button>
   </div>
 </dialog>
