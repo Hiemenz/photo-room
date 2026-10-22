@@ -106,7 +106,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Loupe / Quick look | Partial | `Space` shows a 2048 px smart preview (`smartpreview.py`); Develop has Fit/Fill/100/200% zoom (`tile_server.py`). No info overlay, no navigator | S | M |
 | Compare and Survey | Done | `compare-survey.js`; `c`, `n`. `tests/test_collections.py` | - | - |
 | Star ratings, pick/reject, colour labels | Done | `XMP-xmp:Rating` (-1 reject), `XMP-xmp:Label`; pick is catalog-only (not a Lightroom field). `tests/test_ratings.py`, `tests/test_library.py` | - | - |
-| Stacks | Missing | no code (Smart cull already groups bursts, so the data exists) | M | M |
+| Stacks | Done | `catalog.py`, `stacks_api.py`, `static/js/stacks.js`; manual `Ctrl+G` / `Ctrl+Shift+G` / `S`, auto-stack from Smart cull burst groups, collapse with count badge. Catalog-only: Lightroom keeps stacks in its own catalog, not XMP, so they do not round-trip. `tests/test_stacks.py` | - | - |
 | Virtual copies | Done | `catalog.py`, `/api/virtual/*`; own edits/rating/keywords, exported as `<stem>-copyN`. Catalog-only: Lightroom cannot see them | - | - |
 | Collections | Done | `catalog.py`, `/api/collections/*` | - | - |
 | Smart collections | Partial | rating, flag, label, keyword, camera, date (`catalog.RULE_OPS`); no lens, ISO, focal length, edit state, file type | S | M |
@@ -285,7 +285,7 @@ Lightroom features is in the matrix above.
 | 17 | **Keyword list panel with counts, hierarchy (`lr:HierarchicalSubject`)** | Keyword workflow beyond a text box | M | `library.py`, `libapi.py`, new JS panel |
 | 18 | **DCP / camera-profile import** (Adobe-style colour and base curve) | The largest reason an edit will not look like Lightroom's | L | `colour.py`, `render_kernels.py`, new `dcp.py` |
 | 19 | **Folders panel with move/rename** that rewrites sidecars, `*.photoroom.json`, masks JSON and catalog paths together | Library management on disk | M | `libapi.py`, `catalog.py`, `library.py` |
-| 20 | **Stacks** (auto from Smart cull burst groups) | Reduces grid noise after a burst-heavy shoot | M | `catalog.py`, `cull.py`, `static/js/library-module.js` |
+| 20 | **Stacks** (auto from Smart cull burst groups) (done) | Reduces grid noise after a burst-heavy shoot | M | `catalog.py`, `cull.py`, `static/js/library-module.js` |
 | 21 | **Spot removal: brush shape, visualise spots, dust finder** | Sensor dust is the common retouch job | M | `spots.py`, `retouch.py`, `develop-transform-lens-spots.js` |
 | 22 | **Navigator mini-view and loupe info overlay** | Orientation while zoomed; ROADMAP "Not wired yet" | S | `zoom.js`, `library-live.js` |
 | 23 | **Backup / export of library state** (catalog, flags, history, cull DB) to a zip, with restore | The "catalogue" is files beside the photos with no backup | S | new `backup.py`, `photo_room_cli.py` |

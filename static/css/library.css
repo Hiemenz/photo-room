@@ -134,3 +134,10 @@ body { padding-top: 30px; }
 #smart-dlg select, #smart-dlg input { font: inherit; font-size: 11px; padding: 3px 5px; border-radius: 4px;
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
 #smart-dlg .rule input { flex: 1; min-width: 0; }
+/* Stacks: count badge (collapsed) or position (expanded), and a layered edge */
+.lcell .stk {
+  position: absolute; left: 4px; top: 4px; z-index: 2; min-width: 22px; padding: 1px 6px; font-size: 11px;
+  border: 1px solid var(--line); border-radius: 9px; background: rgba(0,0,0,.7); color: #fff; cursor: pointer;
+}
+.lcell.stacked:not(.stack-open) { box-shadow: 3px 3px 0 -1px var(--panel-2), 6px 6px 0 -2px var(--line); }
+.lcell.stack-open { outline: 1px dashed var(--muted); outline-offset: -3px; }

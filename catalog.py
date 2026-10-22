@@ -13,6 +13,11 @@ raw file.
   rules (rating, flag, colour label, keyword, camera, date) combined with
   "all" or "any" and are evaluated against the library each time they are
   shown, so they never go stale.
+* Stacks group photos (a burst, near-duplicates) so the grid can show one cell
+  per stack. A stack is a list of ids with a "top" (the cell shown when the
+  stack is collapsed) and a collapsed flag. They live under ``"stacks"`` in the
+  same store and never touch a raw or a sidecar (Lightroom keeps its stacks in
+  its own catalog, not in XMP, so there is no tag to write).
 * A virtual copy is a second, independent edit of one raw. It stores its own
   adjustments, rating, colour label, keywords and pick flag, and no pixels:
   rendering and export read the source raw and apply the copy's settings.
@@ -61,7 +66,7 @@ def _store_path(root: Path) -> Path:
 
 
 def _empty() -> dict:
-    return {"collections": [], "virtual": {}}
+    return {"collections": [], "virtual": {}, "stacks": {}}
 
 
 def load(root: Path) -> dict:
@@ -75,6 +80,9 @@ def load(root: Path) -> dict:
             out["collections"] = [c for c in data["collections"] if isinstance(c, dict) and c.get("id")]
         if isinstance(data.get("virtual"), dict):
             out["virtual"] = {k: v for k, v in data["virtual"].items() if isinstance(v, dict)}
+        if isinstance(data.get("stacks"), dict):
+            out["stacks"] = {k: v for k, v in data["stacks"].items()
+                             if isinstance(v, dict) and isinstance(v.get("photos"), list)}
     return out
 
 
@@ -424,4 +432,142 @@ def virtual_items(root: Path, source_items: list[dict]) -> list[dict]:
             "camera": src["camera"], "date": src["date"], "flag": flag,
             "virtual": True, "source": entry["source"],
         })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Stacks
+# ---------------------------------------------------------------------------
+
+def _drop_from_stacks(stacks: dict, ids) -> None:
+    """Remove ``ids`` from every stack; a stack left with fewer than two photos dissolves."""
+    gone = set(ids)
+    for sid in list(stacks):
+        st = stacks[sid]
+        st["photos"] = [p for p in st["photos"] if p not in gone]
+        if len(st["photos"]) < 2:
+            del stacks[sid]
+        elif st.get("top") not in st["photos"]:
+            st["top"] = st["photos"][0]
+
+
+def _make_stack(stacks: dict, ids: list[str], collapsed: bool = True) -> dict:
+    _drop_from_stacks(stacks, ids)
+    st = {"id": _new_id(), "photos": list(ids), "top": ids[0], "collapsed": bool(collapsed)}
+    stacks[st["id"]] = st
+    return st
+
+
+def has_stacks(root: Path) -> bool:
+    return bool(load(root)["stacks"])
+
+
+def list_stacks(root: Path) -> list[dict]:
+    return list(load(root)["stacks"].values())
+
+
+def stack_photos(root: Path, ids, collapsed: bool = True) -> dict:
+    """Stack ``ids`` (first one on top). Members leave any stack they were in."""
+    ids = _dedupe(ids)
+    if len(ids) < 2:
+        raise ValueError("Select at least two photos to stack")
+    with _lock:
+        store = load(root)
+        st = _make_stack(store["stacks"], ids, collapsed)
+        _save(root, store)
+        return st
+
+
+def unstack(root: Path, ids) -> int:
+    """Take ``ids`` out of their stacks; returns how many stacks changed or dissolved."""
+    ids = set(_dedupe(ids))
+    with _lock:
+        store = load(root)
+        before = json.dumps(store["stacks"], sort_keys=True)
+        hit = sum(1 for st in store["stacks"].values() if ids & set(st["photos"]))
+        _drop_from_stacks(store["stacks"], ids)
+        if json.dumps(store["stacks"], sort_keys=True) != before:
+            _save(root, store)
+        return hit
+
+
+def set_stack_state(root: Path, stack_ids=None, collapsed: bool = True, top: str | None = None) -> int:
+    """Collapse/expand the given stacks (all when ``stack_ids`` is None); optionally set the top photo."""
+    with _lock:
+        store = load(root)
+        wanted = store["stacks"].keys() if stack_ids is None else stack_ids
+        n = 0
+        for sid in wanted:
+            st = store["stacks"].get(sid)
+            if st is None:
+                if stack_ids is not None:
+                    raise KeyError(f"No stack {sid!r}")
+                continue
+            if top is not None:
+                if top not in st["photos"]:
+                    raise ValueError("That photo is not in the stack")
+                st["top"] = top
+            st["collapsed"] = bool(collapsed)
+            n += 1
+        _save(root, store)
+        return n
+
+
+def auto_stack(root: Path, groups: list[list[str]], collapsed: bool = True) -> list[dict]:
+    """
+    Stack each group of two or more ids (for example Smart cull burst groups).
+    Photos already in a stack are left alone, so manual stacks survive.
+    """
+    with _lock:
+        store = load(root)
+        taken = {p for st in store["stacks"].values() for p in st["photos"]}
+        made = []
+        for g in groups:
+            free = [p for p in _dedupe(g) if p not in taken]
+            if len(free) < 2:
+                continue
+            made.append(_make_stack(store["stacks"], free, collapsed))
+            taken.update(free)
+        if made:
+            _save(root, store)
+        return made
+
+
+def apply_stacks(root: Path, matched: list[dict], everything: list[dict], collapse: bool = True) -> list[dict]:
+    """
+    ``matched`` (already filtered and sorted) with stack info added and, when
+    ``collapse``, the hidden members of collapsed stacks removed. A collapsed
+    stack shows its top, or its first matching member when the top is filtered out.
+    Items are copied; the index's own dicts are never modified.
+    """
+    stacks = load(root)["stacks"]
+    if not stacks:
+        return matched
+    present = {it["path"] for it in everything}
+    of: dict[str, dict] = {}
+    for st in stacks.values():
+        live = [p for p in st["photos"] if p in present]
+        if len(live) >= 2:
+            for p in live:
+                of[p] = {"st": st, "live": live}
+    shown: dict[str, str] = {}      # stack id -> path shown while collapsed
+    for it in matched:
+        info = of.get(it["path"])
+        if info:
+            sid = info["st"]["id"]
+            if sid not in shown or it["path"] == info["st"].get("top"):
+                shown[sid] = it["path"]
+    out = []
+    for it in matched:
+        info = of.get(it["path"])
+        if not info:
+            out.append(it)
+            continue
+        st = info["st"]
+        hidden = collapse and st["collapsed"] and shown.get(st["id"]) != it["path"]
+        if hidden:
+            continue
+        out.append({**it, "stack": {
+            "id": st["id"], "count": len(info["live"]), "pos": info["live"].index(it["path"]) + 1,
+            "top": it["path"] == shown.get(st["id"]), "collapsed": bool(st["collapsed"])}})
     return out

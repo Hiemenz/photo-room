@@ -113,6 +113,10 @@
     <input type="file" id="import-folder" webkitdirectory multiple hidden>
     <button id="lib-vc" title="Virtual copy of the selected photo (V)">Virtual copy</button>
     <button id="lib-vc-del" title="Delete the selected virtual copies; the raw is never touched">Delete copy</button>
+    <button id="lib-stack" title="Stack the selected photos (Ctrl+G)">Stack</button>
+    <button id="lib-unstack" title="Remove the selected photos from their stacks (Ctrl+Shift+G)">Unstack</button>
+    <button id="lib-autostack" title="Stack bursts found by Smart cull grouping (run Smart cull analysis first)">Auto-stack</button>
+    <button id="lib-stack-toggle" title="Collapse or expand every stack (S toggles the selected one)">Collapse / expand stacks</button>
     <select id="lib-addto" title="Add the selection to a collection"><option value="">Add to collection…</option></select>
     <button id="lib-rmcol" title="Remove the selection from this collection" hidden>Remove from collection</button>
     <button id="lib-compare" title="Compare: a select beside a candidate (C)">Compare</button>
@@ -549,6 +553,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/keyboard.js') }}"></script>
 <script src="{{ asset('js/library-module.js') }}"></script>
 <script src="{{ asset('js/collections.js') }}"></script>
+<script src="{{ asset('js/stacks.js') }}"></script>
 <script src="{{ asset('js/compare-survey.js') }}"></script>
 <script src="{{ asset('js/cull.js') }}"></script>
 <script src="{{ asset('js/library-files.js') }}"></script>

@@ -146,6 +146,7 @@ function libPaintCell(path) {
   cell.querySelector(".dot").className = "dot" + (it.label ? " lbl-" + it.label : "");
   cell.querySelector(".dot").style.visibility = it.label ? "visible" : "hidden";
   cell.querySelector(".st").textContent = it.rating > 0 ? "★".repeat(it.rating) : "";
+  if (typeof libPaintStack === "function") libPaintStack(cell, it);
   cell.title = [it.name, it.camera, it.date, it.keywords.join(", ")].filter(Boolean).join("\n");
 }
 
@@ -298,6 +299,7 @@ function libraryKey(e) {
     if (k === "v") { e.preventDefault(); libVirtualCopy(); return true; }
     if (k === "e" || k === "d" || k === "enter") { e.preventDefault(); openInDevelop(libActive); return true; }
     if (k === "g") return true;
+    if (k === "s") { e.preventDefault(); libToggleStack(); return true; }
     if (k === "p") { libFlag("pick"); return true; }
     if (k === "u") { libFlag("none"); return true; }
     if (k === "x") { libFlag("reject"); return true; }
