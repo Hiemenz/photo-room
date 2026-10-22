@@ -32,6 +32,7 @@ function libQuery(offset) {
     if ($(id).value) q.set(key, $(id).value);
   }
   if (window.mapBox) q.set("gps_box", window.mapBox);       // map-view.js: photos of one place
+  if (window.personId) q.set("person", window.personId);   // people.js: only photos showing one person
   if (window.semanticParams) window.semanticParams(q);   // semantic-search.js: sem= / similar=
   return q;
 }

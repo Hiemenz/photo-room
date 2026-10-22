@@ -329,6 +329,11 @@ def main(argv=None) -> None:
             sys.exit(launch_editor([]))
         import timelapse
         sys.exit(timelapse.main(argv[1:]))
+    if argv and argv[0] == "faces":
+        if preflight():
+            sys.exit(launch_editor([]))
+        import faces
+        sys.exit(faces.main(argv[1:]))
     if argv and argv[0] == "watch-cards":
         if preflight():
             sys.exit(launch_editor([]))
