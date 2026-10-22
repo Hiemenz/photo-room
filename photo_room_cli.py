@@ -3,6 +3,7 @@
     photo-room [folder] [-p PORT]     open the editor on a folder
     photo-room doctor [folder]        check the install and say how to fix it
     photo-room ingest ...             same as ingest.py (cards / run / watch)
+    photo-room import-lightroom CATALOG --library DIR   import a Lightroom .lrcat (see lrimport.py)
     photo-room watch-cards [library]  import + verify + safely eject cards as they are inserted
 
 The doctor is plain standard library on purpose: it has to keep working when
@@ -302,6 +303,9 @@ def main(argv=None) -> None:
         sys.argv = ["photo-room ingest"] + argv[1:]
         ingest.main()
         return
+    if argv and argv[0] == "import-lightroom":
+        import lrimport
+        sys.exit(lrimport.main(argv[1:]))
     if argv and argv[0] == "watch-cards":
         if preflight():
             sys.exit(launch_editor([]))

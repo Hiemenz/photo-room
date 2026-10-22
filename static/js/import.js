@@ -110,6 +110,36 @@ for (const id of ["import-files", "import-folder"]) {
   $(id).addEventListener("change", (e) => { const fs = [...e.target.files]; e.target.value = ""; importAdd(fs); });
 }
 
+// ---- Lightroom catalog (.lrcat): report first, write only after the user agrees ----------
+// The browser cannot hand the server a path, so it is typed. The server copies the
+// catalog and reads the copy; nothing in Lightroom's files is touched.
+$("lib-import-lr").addEventListener("click", async () => {
+  if (imp.running) return;
+  const path = (prompt("Path of the Lightroom catalog (.lrcat) or the folder that holds it:") || "").trim();
+  if (!path) return;
+  const remapText = (prompt("If the photos moved since Lightroom indexed them, give OLD=NEW path prefixes separated by ; (leave empty otherwise):") || "").trim();
+  const remap = remapText ? remapText.split(";").map(s => s.trim()).filter(Boolean) : [];
+  $("import-panel").hidden = false; $("import-close").hidden = false; $("import-cancel").hidden = true;
+  $("import-title").textContent = "Lightroom catalog"; $("import-count").textContent = "reading…"; $("import-log").innerHTML = "";
+  try {
+    const d = await post("/api/import/lightroom", { path, remap, apply: false });
+    if (d.error) throw new Error(d.error);
+    for (const line of d.text.split("\n")) importLog(line);
+    $("import-count").textContent = `${d.report.matched} of ${d.report.photos_in_catalog} photos found`;
+    if (!d.report.matched) { toast("No photos from that catalog were found in the library", { kind: "error", why: "Check the paths, or give OLD=NEW to remap them." }); return; }
+    const force = d.report.sidecars_kept ? confirm(`${d.report.sidecars_kept} photo(s) already have an .xmp sidecar. OK = update those too, Cancel = keep them untouched.`) : false;
+    if (!confirm(`Import from this catalog into the library now? (${d.report.matched} photos, ${d.report.virtual_copies} virtual copies, ${d.report.collections} collections)`)) { importLog("Nothing was written."); return; }
+    const r = await post("/api/import/lightroom", { path, remap, apply: true, force });
+    if (r.error) throw new Error(r.error);
+    const a = r.applied || {};
+    importLog(`Done: ${a.sidecars_written || 0} sidecars written, ${a.sidecars_kept || 0} kept, ${a.virtual_copies || 0} virtual copies, ${a.collections || 0} collections${a.errors ? `, ${a.errors} failed` : ""}`, a.errors ? "bad" : "");
+    for (const e of a.errors_list || []) importLog(e, "bad");
+    toast("Lightroom catalog imported", { kind: a.errors ? "error" : "ok", ms: 6000 });
+    await libSoftReload();
+    loadFiles().then(() => { if (filterMode !== "all") applyFilter(); });
+  } catch (e) { toastError("Lightroom import", e); importLog(String(e.message || e), "bad"); }
+});
+
 // ---- drag and drop (files and whole folders) ------------------------------------------
 function hasFiles(e) { return e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files"); }
 
