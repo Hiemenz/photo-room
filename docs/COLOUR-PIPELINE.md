@@ -13,6 +13,7 @@ raw ──LibRaw──▶ linear light, 16-bit, camera white balance, camera→w
    float32 image ── crop to the camera's default area
       │
       ├─ geometry: spots/lens → transform (xf_*) → Straighten → Crop      (float32, cv2.warpAffine)
+      ├─ camera profile (optional): HueSatMap → LookTable → tone curve    (profiles.py; cached with the geometry stage)
       ▼
    tone stage ─ in LINEAR light:  white balance · exposure · shadows · highlights · whites · blacks
       │          then encode with the output space's curve
@@ -31,6 +32,46 @@ and a 16-bit export of a straightened photo keeps its 16-bit precision (the old 
 through `uint8`: 256 levels). Exceptions: the preview JPEG sent to the browser is 8-bit by nature;
 the detail stage (clarity/texture/dehaze/sharpen) blurs through Pillow's 8-bit Gaussian as before;
 the spot-healing patch (Poisson blend) is computed in 8-bit inside its small disc.
+
+## Camera profiles
+
+A profile is the base look that Lightroom's Profile browser chooses (Adobe Standard, Landscape,
+Portrait ...). Here it is `profiles.py`, applied once per photo and profile, right after the
+geometry stage and before white balance, exposure and every other edit. It is stored in the edit
+as `camera_profile` (a profile id) and in the XMP sidecar as `crs:CameraProfile` (the name) with
+`crs:CameraProfileDigest` (the MD5 of an imported file). A photo whose sidecar names a profile we
+cannot resolve (for example Lightroom's "Adobe Standard") keeps that name in `camera_profile_foreign`
+and writes it back unchanged until another profile is chosen; no profile means the camera-matrix
+conversion only, as before.
+
+* **Built-in profiles**: Standard, Neutral, Landscape, Portrait, Vivid, Flat, Monochrome. Each is
+  a saturation matrix, a synthesised hue/saturation table (Landscape lifts greens, blues and
+  oranges; Portrait calms reds and oranges) and an S-curve `y = x - k sin(2 pi x) / (2 pi)` (k < 0 flattens)
+  applied to the working space's coded values, the same domain the Saturation slider uses. These are
+  photo-room's own looks, not Adobe's: "Standard" is *not* "Adobe Standard".
+* **DCP import** (`.dcp`, the TIFF-like DNG Camera Profile container, magic `IIRC`): the
+  `ProfileHueSatMap` (the second table when two illuminants are present), `ProfileLookTable` and
+  `ProfileToneCurve` are applied in that order, hue/saturation tables in HSV (linear, or sRGB-coded
+  when `ProfileHueSatMapEncoding` says so) and the curve in linear light. `ColorMatrix1/2` and
+  `ForwardMatrix1/2` are parsed and shown but **not applied**: they map camera-native RGB, and by
+  this point LibRaw has already converted to the output space with the camera's own matrix. So a DCP
+  gives its look (colour tweaks and base curve) but not its camera-specific colorimetry, and the
+  two-illuminant tables are not blended by colour temperature.
+* **ICC input profiles**: matrix/TRC RGB profiles only. The photo's coded values are re-interpreted as
+  being in that profile's RGB space (its curves and primaries, Bradford-adapted through D50) and
+  converted to the working space. LUT-based (A2B) and non-RGB profiles are refused with a message.
+* **Storage**: `~/.photo-room/profiles` (`PHOTO_ROOM_PROFILE_DIR` redirects it), one file per
+  profile named by the first 12 hex digits of its MD5, plus `index.json`. API: `/api/profiles`,
+  `/api/profiles/import`, `/api/profiles/delete`, `/api/profiles/thumb`.
+* **Cost and caching**: the profile result is part of the cached *geometry* stage, whose key
+  (`stagecache.stage_keys`) contains `camera_profile` and `profiles.revision(id)` (changes if the
+  imported file is replaced or deleted), so dragging any slider reuses it; only choosing a
+  different profile redoes the geometry stage onward. Hue tables with one value division are
+  baked to a 720 x 128 (hue x saturation) map so a pixel costs one lookup. A missing profile is
+  skipped with a warning, never an error. Edit version 1 (legacy) renders ignore profiles.
+* **Interactions**: Edit strength blends toward the *profiled* image (the profile is part of the base,
+  not an edit). The Monochrome profile removes colour before the B&W mixer, so the mixer then has
+  nothing to work on; use the Black & White toggle for a mixer-driven conversion.
 
 ## Working space and transfer functions
 
@@ -76,8 +117,9 @@ All numbers are the constants in `render_kernels.py` / `colour.py` / `tonecurve.
 The shadows/highlights/whites/blacks masks are drawn on `sqrt(luminance)` (a gamma-2 lightness,
 identical for every output space) rather than on the output curve, because it costs one pass.
 
-What is **not** in this pipeline and so cannot match Lightroom pixel for pixel: Adobe's camera
-profile and base tone curve ("Adobe Standard" with its default contrast curve), its highlight
+What is **not** in this pipeline and so cannot match Lightroom pixel for pixel: Adobe's own camera
+profiles and base tone curve ("Adobe Standard" with its default contrast curve; a DCP imported from
+Adobe gives its look tables and curve but not its camera matrices, see above), its highlight
 reconstruction, its demosaic and noise reduction, its lens profiles, and PV2012's local-contrast
 tone mapping. The preview is, as `editor.apply_adjustments` has always said, a way to judge an edit,
 not a byte-exact rendering of Camera Raw.

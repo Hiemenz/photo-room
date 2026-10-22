@@ -48,6 +48,7 @@ import metadata_api
 import library
 import lookxmp
 import lut as lutmod
+import profiles
 import history
 import lens
 import quality
@@ -138,6 +139,10 @@ app.register_blueprint(cull_api.bp)
 import looks_api  # noqa: E402  (preset panel, LUT library, match reference look)
 
 app.register_blueprint(looks_api.bp)
+
+import profiles_api  # noqa: E402  (Profile browser: built-in profiles, .dcp / .icc import)
+
+app.register_blueprint(profiles_api.bp)
 
 import import_api  # noqa: E402  (drag-and-drop / button import, smart previews)
 
@@ -436,6 +441,30 @@ def _stage_geometry(base: np.ndarray, adj: dict) -> np.ndarray:
     return base
 
 
+def _stage_profile(img: np.ndarray, adj: dict, linear: bool) -> np.ndarray:
+    """Camera profile (profiles.py): the base look, right after the camera-matrix conversion and
+    before every edit. Part of the geometry stage's cache entry, so a slider drag never redoes it.
+    A profile this machine lacks is skipped (``_without_missing_profile`` tells the user)."""
+    pid = adj.get("camera_profile")
+    if not pid or _is_legacy(adj):
+        return img
+    try:
+        prof = profiles.get(pid)
+    except (profiles.ProfileNotFound, profiles.ProfileError, OSError):
+        return img
+    return profiles.apply(img, prof, adj.get("_space"), linear=linear)
+
+
+def _without_missing_profile(adj: dict) -> tuple[dict, list[str]]:
+    pid = adj.get("camera_profile")
+    if pid and not profiles.exists(pid):
+        trimmed = dict(adj)
+        trimmed["camera_profile"] = ""
+        return trimmed, [f"The camera profile used by this photo ({pid}) is not in the profile library on "
+                         "this computer, so it is not shown. Import the .dcp file again."]
+    return adj, []
+
+
 def _is_legacy(adj: dict) -> bool:
     """True for an edit made under the original gamma-space maths (edit_version 1)."""
     return int(adj.get("edit_version", EDIT_VERSION) or EDIT_VERSION) < EDIT_VERSION
@@ -546,7 +575,7 @@ def apply_adjustments(
     geo = lookup(S.GEOMETRY)
     if geo is None:
         checkpoint()
-        geo = keep(S.GEOMETRY, _stage_geometry(base, adj), base)
+        geo = keep(S.GEOMETRY, _stage_profile(_stage_geometry(base, adj), adj, linear_in), base)
 
     if resume >= S.TONE:
         img = cached[resume]
@@ -702,6 +731,8 @@ def render_with_histogram(path: Path, adj: dict, quality: int = 82, should_abort
     """Render the preview and its histogram from a single composite pass."""
     base, baseline_temp = _load_base_render(path)
     adj, warnings = _without_missing_lut(adj)
+    adj, w2 = _without_missing_profile(adj)
+    warnings = warnings + w2
     cache_id = str(path.resolve())
     if fast and fast_ok(adj) and max(base.shape[:2]) > FAST_EDGE * 1.25:
         base = _fast_base(path, base)
@@ -870,7 +901,7 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
         f"-XMP-crs:ConvertToGrayscale={'True' if adj.get('monochrome') else 'False'}",
     ] + (colormix.xmp_arguments(adj) + tonecurve.xmp_arguments(adj.get("tone_curve"))
          + retouch.xmp_arguments(adj, adj.get("_frame")) + _mask_arguments(adj)
-         + lookxmp.xmp_arguments(adj))
+         + lookxmp.xmp_arguments(adj) + profiles.xmp_arguments(adj))
 
 
 def _mask_arguments(adj: dict) -> list[str]:
@@ -1097,11 +1128,15 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
         "CropAngle", "HasCrop", "CropLeft", "CropTop", "CropRight", "CropBottom",
     ]
     args = [f"-XMP-crs:{t}" for t in tags] + ["-XMP-xmp:CreatorTool", "-XMP-crs:Version",
-                                               "-XMP-crs:LookUUID", "-XMP-crs:ColorNoiseReduction", "-s3", "-f", str(path)]
+                                               "-XMP-crs:LookUUID", "-XMP-crs:ColorNoiseReduction",
+                                               "-XMP-crs:CameraProfile", "-XMP-crs:CameraProfileDigest",
+                                               "-s3", "-f", str(path)]
     values = _exiftool_read(args).strip().split("\n")
     stamp = values[len(tags):len(tags) + 2]            # CreatorTool, crs:Version (absent = "-")
     look = lookxmp.parse(values[len(tags) + 2] if len(values) > len(tags) + 2 else None)
     color_nr = values[len(tags) + 3].strip() if len(values) > len(tags) + 3 else "-"   # after the stamp lines
+    prof_raw = values[len(tags) + 4:len(tags) + 6]
+    prof_raw += ["-"] * (2 - len(prof_raw))
     values = values[:len(tags)]
     if len(values) < len(tags) or all(v.strip() in ("-", "") for v in values):
         # No develop settings, but a curve alone is still an edit.
@@ -1156,6 +1191,7 @@ def _read_basic_adjustments_from(path: Path) -> dict | None:
     if out:
         out.update(_read_color_adjustments(path))
         out.update(look)
+        out.update(profiles.parse_xmp(prof_raw[0], prof_raw[1]))
         declared = _declared_edit_version(stamp)
         if declared:
             out["edit_version"] = declared
@@ -1481,6 +1517,9 @@ def complete_adjustments(adj: dict, baseline_temp: int) -> dict:
     merged.update({k: adj.get(k, d) for k, d in colormix.COLOR_DEFAULTS.items()})
     merged["monochrome"] = bool(adj.get("monochrome", False))
     merged.update(lookxmp.complete(adj))
+    merged["camera_profile"] = adj.get("camera_profile") or ""
+    if adj.get("camera_profile_foreign"):
+        merged["camera_profile_foreign"] = adj["camera_profile_foreign"]
     merged["edit_version"] = resolve_edit_version(adj, baseline_temp).get("edit_version", EDIT_VERSION)
     merged["crop"] = adj.get("crop")
     merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
