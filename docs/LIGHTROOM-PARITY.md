@@ -243,7 +243,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Super Resolution | Won't do | not planned | L | L |
 | Generative Remove, Lens Blur | Won't do | cloud / depth AI | L | L |
 | HDR merge, Panorama merge | Missing (queued) | no code | M | M |
-| Semantic / natural-language search | Missing (queued) | no code | L | M |
+| Semantic / natural-language search | Partial (optional extra, fake-embedder tests only) | `semantic.py`, `semantic_api.py`, docs/SEMANTIC-SEARCH.md; real model unverified | L | M |
 
 ## Prioritised gap list (top 25, not yet queued)
 

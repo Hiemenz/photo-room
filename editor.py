@@ -162,6 +162,9 @@ app.register_blueprint(quick_api.bp)
 import folders_api  # noqa: E402  (Folders panel: tree, create, safe move / rename, undo)
 
 app.register_blueprint(folders_api.bp)
+import semantic_api  # noqa: E402  (optional on-device semantic search)
+
+app.register_blueprint(semantic_api.bp)
 
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
@@ -1998,6 +2001,7 @@ def api_library():
     are fetched separately, lazily, by the browser.
     """
     args = request.args
+    sem_info = None
     try:
         offset = max(0, int(args.get("offset", 0)))
         limit = max(1, min(LIBRARY_MAX_PAGE, int(args.get("limit", LIBRARY_PAGE_SIZE))))
@@ -2006,7 +2010,9 @@ def api_library():
         virtuals = catalog.virtual_items(LIBRARY_ROOT, idx.items()) if catalog.has_virtuals(LIBRARY_ROOT) else []
         stacked = catalog.has_stacks(LIBRARY_ROOT)
         folder = args.get("folder")
-        if not virtuals and not args.get("collection") and folder is None and not stacked:
+        semantic_rank = semantic_api.wants_ranking(args)     # `sem` / `similar`: rank the filtered set
+        if not virtuals and not args.get("collection") and folder is None and not stacked \
+                and not semantic_rank:
             total, page, library_total = idx.query(criteria, args.get("sort", "name"),
                                                    args.get("dir", "asc") == "desc", offset, limit)
             facets = idx.facets() if offset == 0 else None
@@ -2021,9 +2027,11 @@ def api_library():
                     it["path"], folder.strip("/"), args.get("subfolders") == "1")]
             matched = library.sort_items(
                 matched, args.get("sort", "name"), args.get("dir", "asc") == "desc")
-            if stacked:
+            if stacked and not semantic_rank:        # a similarity ranking shows every match, not stack tops
                 matched = catalog.apply_stacks(LIBRARY_ROOT, matched, everything,
                                                args.get("stacks", "1") != "0")
+            if semantic_rank:
+                matched, sem_info = semantic_api.rank_library(matched, args)
             total, page, library_total = len(matched), matched[offset:offset + limit], len(everything)
             facets = library.facets(everything) if offset == 0 else None
     except KeyError as exc:
@@ -2042,6 +2050,8 @@ def api_library():
     }
     if facets is not None:
         body["facets"] = facets
+    if sem_info is not None:
+        body["semantic"] = sem_info
     return jsonify(body)
 
 

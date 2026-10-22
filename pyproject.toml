@@ -27,6 +27,10 @@ dependencies = [
 lens = ["lensfunpy>=1.15"]
 # Edit HEIC/HEIF files (Pillow reads them through pillow-heif).
 heic = ["pillow-heif>=0.16"]
+# On-device semantic search ("sunset over water") and find-similar with a CLIP-style
+# ONNX model. Never required: without it search falls back to names/keywords/EXIF.
+# The model itself is downloaded only by `python semantic.py download --yes`.
+semantic = ["onnxruntime>=1.18", "tokenizers>=0.19"]
 
 
 [project.scripts]

@@ -31,6 +31,7 @@ function libQuery(offset) {
   for (const [id, key] of LIB_FILTERS) {
     if ($(id).value) q.set(key, $(id).value);
   }
+  if (window.semanticParams) window.semanticParams(q);   // semantic-search.js: sem= / similar=
   return q;
 }
 
