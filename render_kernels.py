@@ -444,6 +444,32 @@ def denoise_stage(img: np.ndarray, adj: dict) -> np.ndarray:
     return np.clip(cv2.cvtColor(ycc, cv2.COLOR_YCrCb2RGB), 0.0, 1.0)
 
 
+SHARPEN_DETAIL_DEFAULT = 25.0        # Lightroom's default Detail; at this value the maths is the plain unsharp mask
+EDGE_MASK_FULL = 0.12                # luminance step per pixel that counts as a full edge at Masking = 100
+
+
+def _num(adj: dict, key: str, default: float) -> float:
+    try:
+        raw = adj.get(key)
+        return default if raw is None else float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def sharpen_edge_mask(lum: np.ndarray, masking: float, blur_fn=None) -> np.ndarray:
+    """
+    0..1 weight that limits sharpening to edges (Masking 1..100): the local luminance gradient,
+    measured on a lightly blurred copy so noise does not read as an edge, against a threshold that
+    grows with the slider. Flat areas get 0, strong edges 1.
+    """
+    blur_fn = blur_fn or blur
+    soft = blur_fn(lum, 1.0)
+    gy, gx = np.gradient(soft)
+    grad = np.hypot(gx, gy).astype(F32)
+    t = np.clip(grad / F32(max(masking / 100.0 * EDGE_MASK_FULL, 1e-4)), 0.0, 1.0)
+    return t * t * (F32(3.0) - F32(2.0) * t)
+
+
 def detail_stage(img: np.ndarray, adj: dict, blur_fn=None) -> np.ndarray:
     """Clarity, texture, dehaze, sharpness (same maths as the original)."""
     clarity = float(adj.get("clarity", 0))
@@ -536,8 +562,23 @@ def detail_stage(img: np.ndarray, adj: dict, blur_fn=None) -> np.ndarray:
         for_rows(vrows, h, w)
 
     if sharpness:
-        detail = difference(blur_fn(lum, 1.2))
-        add_detail((sharpness / 100.0) * 0.5, detail, need_lum=False)
+        radius = min(max(_num(adj, "sharpen_radius", 1.0), 0.5), 3.0)
+        fine_amt = min(max(_num(adj, "sharpen_detail", 25.0), 0.0), 100.0)
+        masking = min(max(_num(adj, "sharpen_masking", 0.0), 0.0), 100.0)
+        sigma = 1.2 * radius                     # radius 1.0 is the original 1.2 px sigma
+        detail = difference(blur_fn(lum, sigma))
+        if fine_amt < SHARPEN_DETAIL_DEFAULT:
+            # Low Detail: compress the big differences so edges get no halo.
+            s = (SHARPEN_DETAIL_DEFAULT - fine_amt) / SHARPEN_DETAIL_DEFAULT
+            detail = detail / (1.0 + F32(s * 6.0) * np.abs(detail))
+        elif fine_amt > SHARPEN_DETAIL_DEFAULT:
+            # High Detail: add the finest scale back in, which brings out texture over edges.
+            u = (fine_amt - SHARPEN_DETAIL_DEFAULT) / (100.0 - SHARPEN_DETAIL_DEFAULT)
+            detail = detail + F32(u * 1.5) * difference(blur_fn(lum, max(0.6, sigma * 0.5)))
+        weight = None
+        if masking:
+            weight = sharpen_edge_mask(lum, masking, blur_fn)
+        add_detail((sharpness / 100.0) * 0.5, detail, weight, need_lum=False)
 
     out = cur
     if out is img:

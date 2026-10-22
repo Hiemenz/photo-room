@@ -21,6 +21,7 @@ import json
 import threading
 from collections import OrderedDict
 
+import effects
 import profiles
 
 # Stage order. Index = position in the pipeline.
@@ -30,13 +31,17 @@ STAGE_NAMES = ["geometry", "tone", "saturation", "mix", "grade", "detail", "fina
 _BANDS = ["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"]
 _RANGES = ["shadow", "mid", "highlight", "global"]
 
+_CALIBRATION = frozenset(k for k in effects.DEFAULTS if k.startswith("cal_"))
+_SHARPEN = frozenset(k for k in effects.DEFAULTS if k.startswith("sharpen_"))
+_FINISHING = frozenset(k for k in effects.DEFAULTS if k.startswith(("grain_", "vignette_")))
+
 # Settings owned by each stage after geometry. Geometry owns everything else
 # (spots, lens, transform, straighten, crop, ...).
 STAGE_FIELDS: dict[int, frozenset] = {
     TONE: frozenset({"color_temp", "tint", "exposure", "shadows", "highlights",
-                     "blacks", "whites", "contrast", "tone_curve"}),
+                     "blacks", "whites", "contrast", "tone_curve"} | _CALIBRATION),
     SATURATION: frozenset({"saturation", "vibrance"}),
-    MIX: frozenset({"monochrome"}
+    MIX: frozenset({"monochrome", "point_colors"}
                    | {f"{p}_{b}" for p in ("hue", "sat", "lum", "gray") for b in _BANDS}),
     GRADE: frozenset({"monochrome", "grade_blending", "grade_balance"}
                      | {f"grade_{r}_{c}" for r in _RANGES for c in ("hue", "sat", "lum")}),
@@ -44,8 +49,11 @@ STAGE_FIELDS: dict[int, frozenset] = {
     # settings belong to DETAIL and to everything after it. Its own sub-result is cached
     # under the GRADE key, so the intensity slider only re-blends.
     DETAIL: frozenset({"clarity", "texture", "dehaze", "sharpness", "lut", "lut_amount",
-                       "luminance_nr", "color_nr"}),
+                       "luminance_nr", "color_nr"} | _SHARPEN),
+    # Vignette and grain run after the local masks and are not stored per stage; their keys are here so
+    # every setting that reaches a pixel is owned by a stage (and never lands in the geometry key).
     FINAL: frozenset({"masks", "strength", "monochrome", "grade_blending", "grade_balance", "lut", "lut_amount"}
+                     | _FINISHING
                      | {f"grade_{r}_{c}" for r in _RANGES for c in ("hue", "sat", "lum")}),
 }
 # Settings that never reach a preview pixel (none today: noise reduction is part of DETAIL).
