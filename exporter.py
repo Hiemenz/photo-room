@@ -273,7 +273,7 @@ def _render_array(path: Path, opts: ExportOptions,
     adj = editor.effective_adjustments(adj)
     adj["_space"] = space
     adj["_linear_input"] = linear_input
-    adj = editor.lens.attach_meta(path, adj)    # lens profile needs the EXIF
+    adj = editor.lens.attach_meta(path, editor.profiles.for_source(path, adj))    # lens profile needs the EXIF
     out = editor.apply_adjustments(base, baseline, adj)
     return np.clip(out, 0.0, 1.0), icc
 

@@ -349,7 +349,7 @@ def _frame(path: Path, adj: dict, scale: float) -> np.ndarray:
         src = _scaled_frame(path, lin, scale)
     a = dict(adj)
     a.setdefault("color_temp", baseline)
-    a = ed.lens.attach_meta(path, a)
+    a = ed.lens.attach_meta(path, ed.profiles.for_source(path, a))
     out = _to_u8(ed.apply_adjustments(np.ascontiguousarray(src, dtype=np.float32), baseline, a))
     with _lock:
         _frames[key] = out

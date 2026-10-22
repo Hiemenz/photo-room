@@ -81,6 +81,8 @@ def api_profile_thumb():
     path, _ = looks_api._photo(body.get("path"))
     pid = str(body.get("id", ""))
     profiles.get(pid)
+    if looks_api._ed().imgload.is_image(path):
+        raise BadRequest("Camera profiles apply to raw files only")
     baseline = looks_api._baseline(body)
     adj = presetlib.neutral_adjustments(baseline)
     adj["camera_profile"] = pid

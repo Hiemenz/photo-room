@@ -57,10 +57,11 @@ macOS and nothing was opened in Lightroom; see [KNOWN-LIMITS.md](KNOWN-LIMITS.md
 7. **ROADMAP "Not wired yet":** navigator mini-view and smart previews feeding
    the Develop render (they are 8-bit 2048 px decodes; Develop decodes linear
    16-bit). Sidecars, the Import dialog and importing a card from the editor
-   are now done. None of the five already-queued items (timelapse,
-   Lightroom .xmp/.lrcat migration, semantic search, HDR/panorama, LAN
-   culling) has any code or doc mention yet (`grep -i timelapse|semantic|
-   panorama|lrcat` finds nothing).
+   are now done, and so is the Navigator. All five formerly queued items
+   (timelapse, Lightroom .xmp/.lrcat migration, semantic search,
+   HDR/panorama, LAN culling) now have code, tests and docs; see
+   [Already queued](#formerly-queued-all-built-open-points-only) for what is still
+   unverified.
 
 Verified and fine (checked because it looked risky): the white-balance slider
 is written by exiftool as `crs:Temperature` (the tag `ColorTemperature` maps
@@ -129,7 +130,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Histogram, clipping overlay (J), RGB readout | Done | `/api/develop/histogram`, `/clipping`, `/wb_pick` | - | - |
 | Zoom/pan, Fit/Fill/100/200% | Done | `/api/tile`, `tests/test_tiles.py`, `tests/ui/test_zoom_ui.py` | - | - |
 | Navigator panel | Done | Top of the Develop side panel (`navigator.js`): whole-photo preview with the visible-region rectangle; click or drag pans; first click while at Fit zooms to 100%; hover shows Fit / Fill / 100% / 200% presets | S | M |
-| Profile browser (Adobe Color, Landscape, Portrait...) | Partial | Develop > Profile: 7 built-in photo-room profiles (Standard, Neutral, Landscape, Portrait, Vivid, Flat, Monochrome) as a curve + saturation + hue-band layer after the camera-matrix conversion; written to `crs:CameraProfile`. They are not Adobe's profiles (no Adobe Color/Vivid/Standard look). `profiles.py`, `tests/test_profiles.py` | M (Adobe look parity) | H |
+| Profile browser (Adobe Color, Landscape, Portrait...) | Partial | Develop > Profile: 7 built-in photo-room profiles (Standard, Neutral, Landscape, Portrait, Vivid, Flat, Monochrome) as a curve + saturation + hue-band layer after the camera-matrix conversion; written to `crs:CameraProfile`. Raw files only, as in Lightroom: the panel is hidden for JPEG/TIFF/PNG/HEIC, the thumbnail route answers 400 and renders ignore a stored profile (`profiles.for_source`). They are not Adobe's profiles (no Adobe Color/Vivid/Standard look). `profiles.py`, `tests/test_profiles.py` | M (Adobe look parity) | H |
 | DCP / ICC camera profile import | Partial | `.dcp` HueSatMap, LookTable and ProfileToneCurve applied; ColorMatrix/ForwardMatrix parsed but not applied (image is already camera-matrix converted); matrix/TRC ICC input profiles re-interpret the colours; A2B ICC refused. Tested on synthetic profiles only, not verified against real Adobe DCPs. `profiles.py` | M | M |
 | Creative profiles / LUT looks | Done | `.cube` import + 30 built-in presets (`lut.py`, `presetlib.py`, `looks_api.py`). `tests/test_lut.py`, `tests/test_looks_*.py` | - | - |
 | Match reference look | Done (beyond Lightroom) | `matchlook.py` | - | - |
@@ -246,7 +247,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | HDR merge, Panorama merge | Partial | `merge.py`, `merge_api.py`, `photo-room merge`; synthetic tests only, see [HDR-PANORAMA.md](HDR-PANORAMA.md) | M | M |
 | Semantic / natural-language search | Partial (optional extra, fake-embedder tests only) | `semantic.py`, `semantic_api.py`, docs/SEMANTIC-SEARCH.md; real model unverified | L | M |
 
-## Prioritised gap list (top 25, not yet queued)
+## Prioritised gap list (top 25; several since done)
 
 Ordered by value over effort. Each package is sized for one agent in one PR
 with tests; "Touches" names the files to start from. The status of the
@@ -285,12 +286,12 @@ tool (S), Point Color (M), soft proofing (M), Guided Upright (M), red eye (S),
 reference view (S), grid density options (S), Painter (S), collection sets (S),
 contact-sheet PDF (S), post-export actions (S), Map module (M).
 
-## Already queued (not repeated above)
+## Formerly queued (all built; open points only)
 
-| Queued item | Matrix rows it covers | Notes from this review |
+| Item | Matrix rows it covers | Status and what is still open |
 |---|---|---|
-| Timelapse | none (Lightroom builds time-lapse in Slideshow) | Done: `photo-room timelapse` and the Timelapse dialog. Not verified against a real raw sequence or in a browser; virtual copies in a collection render as their raw; no stack grouping yet (select the frames or use a collection) |
-| Lightroom `.xmp` / `.lrcat` migration | "Read Lightroom sidecar edits", ".lrcat import", "Import Lightroom presets" | Sidecar reading and `.xmp` preset import already exist, `.lrcat` import is now built (`lrimport.py`, synthetic-catalog tests); what remains is running it on real catalogs and the unverified-in-Lightroom checks. Package 13 is a prerequisite for sidecars |
-| Semantic search | "Find / filter" | Nothing exists; thumbnails (`thumbs.py`) and the SQLite pattern in `cull_store.py` are the natural base; model choice must be CPU and Pi friendly |
-| HDR / panorama merge | "HDR merge", "Panorama merge" | Built (`merge.py`), writes 16-bit linear / float TIFF. Listing the TIFF in the Library depends on the non-raw image loader landing; see [HDR-PANORAMA.md](HDR-PANORAMA.md) |
-| LAN culling | "Smart cull" | Server binds 127.0.0.1 with a Host/Origin guard and a per-process token (`security.py`, README "Running as a local server"); any LAN mode needs a deliberate, authenticated opt-in. Do not weaken the default |
+| Timelapse | none (Lightroom builds time-lapse in Slideshow) | Built: `timelapse.py`, `timelapse_api.py`, `photo-room timelapse` and the Timelapse dialog. Not verified against a real raw sequence or in a browser; virtual copies in a collection render as their raw; no stack grouping yet (select the frames or use a collection) |
+| Lightroom `.xmp` / `.lrcat` migration | "Read Lightroom sidecar edits", ".lrcat import", "Import Lightroom presets" | Built: sidecar reading, `.xmp` preset import and `.lrcat` import (`lrimport.py`). Open: running it on real catalogs (synthetic-catalog tests only) |
+| Semantic search | "Find / filter" | Built as an optional extra: `semantic.py`, `semantic_api.py`, [SEMANTIC-SEARCH.md](SEMANTIC-SEARCH.md). Open: tests use a fake embedder; the real model is unverified |
+| HDR / panorama merge | "HDR merge", "Panorama merge" | Built (`merge.py`, `merge_api.py`), writes 16-bit linear / float TIFF, which the Library now lists and Develop opens through `imgload.py`; synthetic tests only, see [HDR-PANORAMA.md](HDR-PANORAMA.md) |
+| LAN culling | "Smart cull" | Built: `lancull.py`, `photo-room cull-serve <library> --lan`, a separate minimal app with a one-time pairing token, session cookie and four-route allowlist. The editor still binds 127.0.0.1 and refuses non-local hosts. Tested with the Flask test client only, not on a real phone |

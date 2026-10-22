@@ -754,7 +754,7 @@ def render_with_histogram(path: Path, adj: dict, quality: int = 82, should_abort
     if fast and fast_ok(adj) and max(base.shape[:2]) > FAST_EDGE * 1.25:
         base = _fast_base(path, base)
         cache_id += ":fast"
-    out = apply_adjustments(base, baseline_temp, lens.attach_meta(path, adj),
+    out = apply_adjustments(base, baseline_temp, lens.attach_meta(path, profiles.for_source(path, adj)),
                             cache_id=cache_id, should_abort=should_abort)
     img = Image.fromarray((out * 255.0 + 0.5).astype(np.uint8))
 
@@ -1775,7 +1775,7 @@ def api_upright():
         # result is what the sliders should be set to from neutral.
         adj = {k: v for k, v in (payload.get("adjustments") or {}).items()
                if not k.startswith("xf_")}
-        framed = retouch.apply_corrections(base, lens.attach_meta(path, adj))
+        framed = retouch.apply_corrections(base, lens.attach_meta(path, profiles.for_source(path, adj)))
         found = retouch.transform.upright(framed, mode)
         info = found.pop("info", {})
         return jsonify({"ok": True, "mode": mode, "values": found, "detected": info,

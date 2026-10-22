@@ -18,7 +18,7 @@ def test_pick_frames_rename_and_import(page, card):
     page.locator("#mod-library").click()
     page.wait_for_selector("#lib-grid .lcell")
     page.locator("#lib-import-dialog").click()
-    assert page.locator("#import-dialog").is_visible()
+    page.wait_for_selector("#import-dialog[open]")      # opens after the sources request returns
     page.fill("#imd-path", str(card))
     page.click("#imd-scan")
     page.wait_for_selector("#imd-grid .imd-frame")

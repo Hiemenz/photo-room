@@ -642,6 +642,22 @@ def get(profile_id: str) -> Profile:
         return hit
 
 
+def for_source(path, adj: dict) -> dict:
+    """``adj`` without a camera profile when ``path`` is not a raw file.
+
+    Like Lightroom, profiles belong to raw files: a JPEG/TIFF/PNG/HEIC has already been through a
+    camera or editor's rendering, so the profile is ignored (and never applied) for it.
+    """
+    if not adj.get("camera_profile"):
+        return adj
+    import imgload
+    if not imgload.is_image(path):
+        return adj
+    out = dict(adj)
+    out["camera_profile"] = ""
+    return out
+
+
 def exists(profile_id: str) -> bool:
     try:
         get(profile_id)
