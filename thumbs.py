@@ -134,9 +134,50 @@ def _encode(img: Image.Image, size: int = THUMB_EDGE) -> bytes:
     return buf.getvalue()
 
 
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".heic", ".heif")
+VIDEO_SUFFIXES = (".mp4", ".mov", ".mts", ".m2ts", ".avi", ".mxf")
+_heif_tried = False
+
+
+def _register_heif() -> None:
+    """Teach Pillow to open HEIC if pillow-heif is installed (once)."""
+    global _heif_tried
+    if _heif_tried:
+        return
+    _heif_tried = True
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except Exception:
+        pass
+
+
+def _open_image(path: Path, want: int) -> Image.Image:
+    """A JPEG/HEIC file at about ``want`` px with its EXIF orientation applied."""
+    from PIL import ImageOps
+    if path.suffix.lower() in (".heic", ".heif"):
+        _register_heif()
+    try:
+        img = Image.open(path)
+    except Exception as exc:
+        raise RuntimeError(f"Cannot decode {path.name}"
+                           + (" (install pillow-heif for HEIC)" if path.suffix.lower() in (".heic", ".heif") else "")
+                           ) from exc
+    with img:
+        img.draft("RGB", (want * 2, want * 2))
+        img.load()
+        return ImageOps.exif_transpose(img).convert("RGB")
+
+
 def build_sizes(path: Path, sizes=SIZES, decode_fallback=None) -> dict[int, bytes]:
-    """Thumbnails of one raw at several sizes, extracting/decoding the source once."""
+    """Thumbnails of one photo at several sizes, extracting/decoding the source once."""
     sizes = sorted(set(sizes))
+    suffix = path.suffix.lower()
+    if suffix in VIDEO_SUFFIXES:
+        raise RuntimeError(f"{path.name} is a video: no thumbnail")
+    if suffix in IMAGE_SUFFIXES:
+        base = _open_image(path, max(sizes))
+        return {s: _encode(base.copy() if s != sizes[-1] else base, s) for s in reversed(sizes)}
     data, orientation = _embedded_preview(path)
     if data:
         try:

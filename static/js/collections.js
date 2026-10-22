@@ -107,6 +107,11 @@ const RULE_FIELDS = {
   label: { ops: [["is", "is"]], choices: ["Red", "Yellow", "Green", "Blue", "Purple", "none"] },
   keyword: { ops: [["has", "has"], ["not_has", "does not have"]], type: "text" },
   camera: { ops: [["is", "is"], ["contains", "contains"]], type: "text" },
+  lens: { ops: [["is", "is"], ["contains", "contains"]], type: "text" },
+  iso: { ops: [["ge", "at least"], ["le", "at most"], ["eq", "exactly"]], type: "int" },
+  focal: { ops: [["ge", "at least (mm)"], ["le", "at most (mm)"], ["eq", "exactly (mm)"]], type: "int" },
+  edited: { ops: [["is", "is"]], choices: ["edited", "unedited"] },
+  filetype: { ops: [["is", "is"]], type: "text" },
   date: { ops: [["after", "after"], ["before", "before"], ["on", "on"]], type: "date" },
 };
 let smartEditing = null;
@@ -132,7 +137,8 @@ function addRuleRow(rule) {
       input.innerHTML = d.choices.map(c => `<option>${c}</option>`).join("");
     } else {
       input = document.createElement("input");
-      input.type = d.type === "num" ? "number" : d.type === "date" ? "date" : "text";
+      input.type = d.type === "num" || d.type === "int" ? "number" : d.type === "date" ? "date" : "text";
+      if (d.type === "int") { input.min = 0; input.value = f.value === "iso" ? 1600 : 50; input.placeholder = f.value === "iso" ? "ISO" : "mm"; }
       if (d.type === "num") { input.min = -1; input.max = 5; input.value = 3; }
     }
     input.style.flex = "1";

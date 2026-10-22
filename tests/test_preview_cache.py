@@ -83,10 +83,12 @@ def test_baseline_temperature_is_part_of_every_key():
     assert all(x != y for x, y in zip(a, b))
 
 
-def test_noise_reduction_is_ignored_because_the_preview_never_shows_it():
+def test_noise_reduction_only_invalidates_the_detail_stage_onward():
     a = stage_keys(BASE_ADJ, 5500)
-    b = stage_keys({**BASE_ADJ, "luminance_nr": 40}, 5500)
-    assert a == b
+    for key in ("luminance_nr", "color_nr"):
+        b = stage_keys({**BASE_ADJ, key: 40}, 5500)
+        assert a[:5] == b[:5]            # geometry..grade stay cached
+        assert a[5] != b[5] and a[6] != b[6]
 
 
 # ---------------------------------------------------------------------------

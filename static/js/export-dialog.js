@@ -14,10 +14,11 @@
     template: el("ex-template").value,
     format: el("ex-format").value,
     quality: +el("ex-quality").value,
-    bit_depth: el("ex-format").value === "png" ? +el("ex-depth").value : 8,
+    bit_depth: ["png", "tiff"].includes(el("ex-format").value) ? +el("ex-depth").value : 8,
     colorspace: el("ex-cs").value || null,
     long_edge: el("ex-resize").value === "edge" ? +el("ex-edge").value : null,
-    keep_metadata: el("ex-meta").checked,
+    keep_metadata: el("ex-meta").value !== "none",
+    metadata: el("ex-meta").value,
     sharpen: el("ex-sharp").value ? { for: el("ex-sharp").value, amount: el("ex-sharp-amt").value } : null,
     watermark: watermark(),
   });
@@ -35,7 +36,7 @@
     el("ex-cs").value = st.colorspace || "";
     el("ex-resize").value = st.long_edge ? "edge" : "none";
     if (st.long_edge) el("ex-edge").value = st.long_edge;
-    el("ex-meta").checked = st.keep_metadata !== false;
+    el("ex-meta").value = st.keep_metadata === false ? "none" : (st.metadata || "all");
     if (st.template) el("ex-template").value = st.template;
     if (st.dest) el("ex-dest").value = st.dest;
     el("ex-sharp").value = st.sharpen ? st.sharpen.for : "";
@@ -65,9 +66,9 @@
   const msg = (t, err = false) => { el("ex-msg").textContent = t; el("ex-msg").classList.toggle("err", err); };
 
   function syncControls() {
-    const png = el("ex-format").value === "png";
-    el("ex-q-row").hidden = png;
-    el("ex-depth-row").hidden = !png;
+    const fmt = el("ex-format").value;
+    el("ex-q-row").hidden = !["jpeg", "webp"].includes(fmt);
+    el("ex-depth-row").hidden = !["png", "tiff"].includes(fmt);
     el("ex-q-val").textContent = el("ex-quality").value;
     el("ex-edge").disabled = el("ex-resize").value !== "edge";
     const wm = el("ex-wm").value;

@@ -83,8 +83,8 @@ def test_page_has_export_button_dialog_and_shortcut(client):
     for p in sorted((Path(__file__).resolve().parent.parent / "static").rglob("*")):
         if p.is_file():
             html += p.read_text()
-    for needle in ('id="export-open"', 'id="export-dialog"', "Keep all metadata (EXIF, GPS, IPTC, XMP)",
-                   'id="ex-meta" checked', "shiftKey"):
+    for needle in ('id="export-open"', 'id="export-dialog"', "All (EXIF, GPS, IPTC, XMP)",
+                   'id="ex-meta"', "Copyright only", "All except location", 'value="tiff"', "shiftKey"):
         assert needle in html, needle
 
 
@@ -135,7 +135,7 @@ def test_preview_rejects_bad_templates(client, template):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("body,fragment", [
-    ({"format": "gif"}, "png or jpeg"),
+    ({"format": "gif"}, "jpeg, png, tiff or webp"),
     ({"quality": 0}, "quality"),
     ({"colorspace": "cmyk"}, "colour space"),
     ({"long_edge": 4}, "long edge"),

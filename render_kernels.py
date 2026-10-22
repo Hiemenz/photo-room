@@ -394,6 +394,56 @@ def blur(plane: np.ndarray, radius: float) -> np.ndarray:
     return out
 
 
+# Noise reduction reference: radii below are for a frame whose long edge is this many pixels and
+# scale with the actual frame (or the whole frame, for a 100% tile), so the 1400 px preview, the
+# tiles and the export show the same amount of smoothing.
+NR_REFERENCE_EDGE = 3000.0
+
+
+def denoise_stage(img: np.ndarray, adj: dict) -> np.ndarray:
+    """
+    Luminance and colour noise reduction (``luminance_nr`` / ``color_nr``, 0..100).
+
+    Works in YCrCb on the display-coded image. Luminance gets an edge-preserving bilateral filter
+    whose range and spread grow with the slider; colour noise is removed by blurring the two
+    chroma planes, except next to strong luminance edges where the original chroma is kept so
+    colours do not bleed. Returns ``img`` itself when both sliders are 0.
+    """
+    lum_amt = min(max(float(adj.get("luminance_nr", 0) or 0), 0.0), 100.0) / 100.0
+    col_amt = min(max(float(adj.get("color_nr", 0) or 0), 0.0), 100.0) / 100.0
+    if cv2 is None or not (lum_amt or col_amt) or img.ndim != 3 or img.shape[2] != 3:
+        return img
+
+    h, w = img.shape[:2]
+    edge = float(adj.get("_detail_edge") or max(h, w))
+    scale = min(max(edge / NR_REFERENCE_EDGE, 0.3), 2.0)
+
+    src = np.ascontiguousarray(np.clip(img, 0.0, 1.0), dtype=F32)
+    ycc = cv2.cvtColor(src, cv2.COLOR_RGB2YCrCb)
+    y = np.ascontiguousarray(ycc[:, :, 0])
+    chroma = np.ascontiguousarray(ycc[:, :, 1:])
+
+    if col_amt:
+        sigma = (1.0 + 9.0 * col_amt) * scale
+        soft = cv2.GaussianBlur(chroma, (0, 0), sigma)
+        # Keep original chroma where luminance moves a lot within the neighbourhood (edges).
+        local = cv2.GaussianBlur(y, (0, 0), max(1.0, sigma * 0.5))
+        keep = np.exp(-np.square((y - local) / F32(0.06)))[:, :, None]
+        chroma = chroma + (soft - chroma) * keep
+
+    if lum_amt:
+        d = 5 if lum_amt < 0.6 else 7
+        sigma_space = max(0.8, (1.0 + 2.0 * lum_amt) * scale)
+        sigma_range = 0.02 + 0.16 * lum_amt
+        out = cv2.bilateralFilter(y, d, sigma_range, sigma_space)
+        if lum_amt > 0.5:
+            out = cv2.bilateralFilter(out, d, sigma_range, sigma_space)
+        y = out
+
+    ycc = np.dstack((y, chroma[:, :, 0], chroma[:, :, 1])).astype(F32)
+    return np.clip(cv2.cvtColor(ycc, cv2.COLOR_YCrCb2RGB), 0.0, 1.0)
+
+
 def detail_stage(img: np.ndarray, adj: dict, blur_fn=None) -> np.ndarray:
     """Clarity, texture, dehaze, sharpness (same maths as the original)."""
     clarity = float(adj.get("clarity", 0))

@@ -194,3 +194,41 @@ def test_zoom_gives_way_to_crop_and_before_after(opened):
 
 def test_zoom_bar_is_hidden_in_the_library_and_at_the_start(page):
     assert page.locator("#zoom-bar").is_hidden()
+
+
+def nav_visible(page):
+    return [float(v) for v in page.locator("#navigator").get_attribute("data-visible").split(",")]
+
+
+def test_navigator_shows_visible_region_and_pans_by_click_and_drag(page_at):
+    page = page_at(1280, 720)
+    page.wait_for_function("!document.getElementById('navigator').hidden")
+    assert nav_visible(page) == [0, 0, 1, 1]
+    page.locator("#nav-view").hover()
+    page.locator('#nav-presets [data-nav="2"]').click()
+    wait_tiles(page, "200")
+    assert readout(page) == "200%"
+    page.evaluate("zoomTo(4)")          # the synthetic frame is small: 400% overflows the view
+    page.wait_for_function("ZM.iw * ZM.s > document.getElementById('stage').clientWidth")
+    fx, fy, fw, fh = nav_visible(page)
+    assert 0 < fw < 1 and 0 < fh < 1
+    page.locator("#nav-view").hover()
+    page.locator('#nav-presets [data-nav="fill"]').click()
+    page.wait_for_function("ZM.mode === 'fill'")
+    page.evaluate("zoomTo(4)")
+    page.wait_for_function("ZM.iw * ZM.s > document.getElementById('stage').clientWidth")
+    box = page.evaluate("(() => { const r = document.getElementById('nav-img').getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; })()")
+    page.mouse.click(box[0] + box[2] * 0.02, box[1] + box[3] * 0.02)
+    page.wait_for_function("ZM.tx === 0 && ZM.ty === 0")
+    assert nav_visible(page)[:2] == [0, 0]
+    page.mouse.move(box[0] + box[2] * 0.5, box[1] + box[3] * 0.5)
+    page.mouse.down()
+    page.mouse.move(box[0] + box[2] * 0.98, box[1] + box[3] * 0.98, steps=5)
+    page.mouse.up()
+    fx, fy, fw, fh = nav_visible(page)
+    assert fx + fw == pytest.approx(1, abs=0.001) and fy + fh == pytest.approx(1, abs=0.001)
+    page.locator("#nav-view").hover()
+    page.locator('#nav-presets [data-nav="fit"]').click()
+    page.wait_for_function("ZM.mode === 'fit'")
+    assert nav_visible(page) == [0, 0, 1, 1]
+    assert page.errors == []

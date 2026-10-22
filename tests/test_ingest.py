@@ -378,3 +378,27 @@ def test_summary_line_lists_all_four_counts(tmp_path, fake_exiftool, no_convert,
     out = capsys.readouterr().out
     assert "copied" in out and "skipped as identical" in out
     assert "renamed" in out and "failed" in out
+
+
+def test_volume_roots_per_platform():
+    assert ingest.volume_roots("darwin") == [Path("/Volumes")]
+    assert ingest.volume_roots("linux", user="ann") == [
+        Path("/media/ann"), Path("/run/media/ann"), Path("/mnt")]
+
+
+def test_list_volumes_and_find_cards_scan_linux_roots(tmp_path):
+    media, run, mnt = tmp_path / "media/ann", tmp_path / "run/ann", tmp_path / "mnt"
+    for d in (media / "EOS" / "DCIM", run / "SONY" / "DCIM", mnt / "CARD" / "DCIM",
+              mnt / "plain", media / ".hidden" / "DCIM"):
+        d.mkdir(parents=True)
+    (mnt / "file.txt").write_text("x")
+    roots = [media, run, mnt, tmp_path / "missing"]
+    names = [v.name for v in ingest.list_volumes(roots)]
+    assert names == ["EOS", "SONY", "CARD", "plain"]
+    assert [c.name for c in ingest.find_cards(roots)] == ["EOS", "SONY", "CARD"]
+
+
+def test_list_volumes_default_uses_volume_roots(tmp_path, monkeypatch):
+    (tmp_path / "V" / "DCIM").mkdir(parents=True)
+    monkeypatch.setattr(ingest, "volume_roots", lambda *a, **k: [tmp_path])
+    assert [c.name for c in ingest.find_cards()] == ["V"]

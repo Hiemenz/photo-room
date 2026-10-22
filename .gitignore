@@ -7,3 +7,5 @@ __pycache__/
 # Test photos (large binaries)
 data/
 tests/ui/artifacts/
+.photo-room-thumbs/
+.claude/worktrees/

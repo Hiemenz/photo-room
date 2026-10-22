@@ -41,7 +41,7 @@ const ACC_GROUPS = [
   ["tone", "Tone", ["exposure", "contrast", "highlights", "shadows", "whites", "blacks"]],
   ["wb", "White balance", ["color_temp", "tint"]],
   ["presence", "Presence", ["vibrance", "saturation", "clarity", "texture", "dehaze"]],
-  ["detail", "Detail & geometry", ["sharpness", "straighten", "luminance_nr"]],
+  ["detail", "Detail & geometry", ["sharpness", "straighten", "luminance_nr", "color_nr"]],
 ];
 const accHosts = {};            // group id -> .acc-body
 

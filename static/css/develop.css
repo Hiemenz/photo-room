@@ -195,3 +195,14 @@ details.panel > summary { cursor: pointer; font-weight: 600; user-select: none; 
 #upgrade-banner b { text-transform: uppercase; letter-spacing: .06em; }
 #upgrade-banner button { justify-self: start; }
 #upgrade-banner[hidden] { display: none; }
+
+/* Auto Sync switch (Develop) and Quick Develop strip (Library): quick-develop.js */
+.autosync { padding: 4px 12px; border-bottom: 1px solid var(--line); }
+.autosync small { color: var(--accent); }
+#quick-develop {
+  display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; padding: 6px 12px;
+  background: var(--panel); border-top: 1px solid var(--line); font-size: 11px; color: var(--muted);
+}
+#quick-develop .qd-group { display: inline-flex; align-items: center; gap: 1px; }
+#quick-develop .qd-group > span { min-width: 58px; text-align: center; }
+#quick-develop button { padding: 1px 5px; font-size: 11px; }

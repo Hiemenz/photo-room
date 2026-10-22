@@ -2,7 +2,7 @@
 
 How photo-room compares with Adobe Lightroom Classic today, for one user: a
 photographer on Linux or macOS who pulls CR2 files off a card, culls and edits
-them, and exports JPEG or PNG with all the original metadata.
+them, and exports JPEG, PNG, TIFF or WebP with all the original metadata.
 
 Everything under "status" was checked against the code at commit `d0163ba`
 (main after PR #2). "Evidence" names the module, route or test that shows it.
@@ -32,30 +32,18 @@ macOS and nothing was opened in Lightroom; see [KNOWN-LIMITS.md](KNOWN-LIMITS.md
 
 ## Findings where the docs and the code disagree
 
-1. **The Noise reduction slider changes nothing on screen or in an export.**
-   `luminance_nr` is seeded from ISO, shown as a slider, written to
-   `crs:LuminanceSmoothing`, and read back; no function reads it to denoise
-   (`grep luminance_nr`: control definition, seeding, XMP read/write,
-   preset mapping, cache-ignore list). Probe: `editor.apply_adjustments` on a
-   noisy array returns byte-identical output for `luminance_nr` 0 and 100. The
-   README says the value is "not shown in the preview" because the preview is
-   half size, which implies the export applies it. It does not. Lightroom would
-   denoise when it opens the same sidecar, so the number is only a note to
-   Lightroom. `tests/test_noise_reduction.py` checks the control and the XMP
-   tag, not any pixel effect.
-2. **`photo-room ingest cards` and `ingest watch` only work on macOS.**
-   `ingest.list_volumes()` scans `/Volumes` and nothing else. On Linux
-   `ingest cards` prints "No volumes mounted" with a card in the reader.
-   `ingest run <path>` works (the README quick start uses it) and
-   `photo-room watch-cards` (`cardwatch.py`, reads `/proc/mounts`) is the
-   cross-platform route, but the README's Card ingest section documents only
-   `/Volumes/...` paths.
+1. ~~The Noise reduction slider changes nothing.~~ **Fixed.** Luminance and colour noise
+   reduction now run in the render pipeline (`render_kernels.denoise_stage`) for preview, tiles
+   and export; `tests/test_noise_reduction_pixels.py` checks pixel effect, cache keys and XMP.
+2. **`photo-room ingest cards` and `ingest watch` scanned only `/Volumes`.** Fixed: they now
+   scan `/Volumes` on macOS and `/media/$USER`, `/run/media/$USER` and `/mnt` on Linux
+   (`ingest.volume_roots()`), like `watch-cards`.
 3. **Card import brings in files the Library cannot show.** `cardwatch.py`
    imports raws, JPEG/HEIC and video by default (`PHOTO_SUFFIXES`,
    `VIDEO_SUFFIXES`); `libindex.RAW_SUFFIXES` lists raws and DNGs only. A
    RAW+JPEG card therefore leaves JPEGs and MP4s in the date folders that no
    grid, filter or export will ever list.
-4. **The Library filter backend is ahead of its UI.** `library.filter_items`
+4. **(Resolved) The Library filter backend was ahead of its UI.** `library.filter_items`
    and `SORT_KEYS` support lens and ISO filters and sorting; `#lib-bar` in
    `templates/editor.html` has no lens or ISO control. Smart-collection rules
    (`catalog.RULE_OPS`) cover rating, flag, label, keyword, camera and date only.
@@ -103,24 +91,24 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Watched-folder auto import | Partial | `process.py watch` converts as files arrive; `watch-cards` for cards | - | - |
 | Grid view with thumbnails | Done | `libindex.py` paged API (200/page), embedded-JPEG thumbs (`thumbs.py`), background builder, live updates over SSE. `tests/test_libindex.py`, `tests/ui/test_library_live_ui.py` | - | - |
 | Grid cell size / density / badge options | Missing | fixed cell size; badges for stars, flag, label, virtual copy | S | L |
-| Loupe / Quick look | Partial | `Space` shows a 2048 px smart preview (`smartpreview.py`); Develop has Fit/Fill/100/200% zoom (`tile_server.py`). No info overlay, no navigator | S | M |
+| Loupe / Quick look | Partial | `Space` shows a 2048 px smart preview (`smartpreview.py`); Develop has Fit/Fill/100/200% zoom (`tile_server.py`). No info overlay (the Navigator is in the Develop panel) | S | M |
 | Compare and Survey | Done | `compare-survey.js`; `c`, `n`. `tests/test_collections.py` | - | - |
 | Star ratings, pick/reject, colour labels | Done | `XMP-xmp:Rating` (-1 reject), `XMP-xmp:Label`; pick is catalog-only (not a Lightroom field). `tests/test_ratings.py`, `tests/test_library.py` | - | - |
 | Stacks | Missing | no code (Smart cull already groups bursts, so the data exists) | M | M |
 | Virtual copies | Done | `catalog.py`, `/api/virtual/*`; own edits/rating/keywords, exported as `<stem>-copyN`. Catalog-only: Lightroom cannot see them | - | - |
 | Collections | Done | `catalog.py`, `/api/collections/*` | - | - |
-| Smart collections | Partial | rating, flag, label, keyword, camera, date (`catalog.RULE_OPS`); no lens, ISO, focal length, edit state, file type | S | M |
+| Smart collections | Partial | rating, flag, label, keyword, camera, date, lens, ISO, focal length, edit state, file type (`catalog.RULE_OPS`; rule builder in the smart-collection dialog); no GPS or exposure-program rules | S | M |
 | Collection sets, Quick/Target collection | Missing | flat list of collections | S | L |
 | Keywording (add/remove, autocomplete) | Partial | comma list on the selection, `XMP-dc:Subject`, datalist (`/api/keywords`); no keyword list panel with counts | S | M |
 | Keyword hierarchy, synonyms, export flags | Missing | no `HierarchicalSubject` anywhere | M | M |
-| Metadata panel (read EXIF/IPTC) | Missing | no EXIF readout anywhere in `templates/editor.html` or `static/js` | S | H |
-| Metadata editing (title, caption, creator, copyright, location) | Missing | only rating, label, keywords are written; no `Copyright`/`Caption` write path | M | H |
-| Metadata presets | Missing | no code | S | H (for copyright) |
-| Library filter bar | Partial | rating, flag, label, keyword, camera, date range, free text, sort by 8 keys (`library.filter_items`); lens/ISO exist in the API only (finding 4); no focal length, file type, edit status, GPS | S | M |
-| Folders panel (tree, move, rename, delete) | Missing | `/api/files` is a flat list; nothing in the app moves or renames raws (safe by design) | M | M |
-| Quick Develop | Partial | Apply current or copied settings to a selection (`/api/batch_apply`, `/api/looks/preset/apply_batch`); no relative-step panel | S | L |
+| Metadata panel (read EXIF/IPTC) | Done | read-only readout of camera, lens, ISO, shutter, aperture, focal length, capture time, GPS (text, no map) and dimensions via `exiftool -j -n`; Develop side panel and right of the Library grid. `metadata.py`, `metadata_api.py`, `static/js/metadata.js`; `tests/test_metadata.py`, `tests/test_real_exiftool_metadata.py`, `tests/ui/test_metadata_ui.py`. IPTC location fields are not shown | - | - |
+| Metadata editing (title, caption, creator, copyright, location) | Partial | title, caption, creator, copyright, copyright status and usage terms for the selection, written to the `.xmp` sidecar (`XMP-dc:Title/Description/Creator/Rights`, `XMP-xmpRights:Marked/UsageTerms`), raw never opened, undo via the previous sidecar values, all-or-nothing batches; copyright-only export carries them. Not written: IPTC location, contact, rights URL, and nothing goes into IPTC/EXIF blocks. Same tests as above | M | M |
+| Metadata presets | Done | named sets of the fields above, saved, applied (only the filled fields are written) and deleted from the panel; `.photo-room-metadata-presets.json` in the library root. Not applied automatically on import or export | - | - |
+| Library filter bar | Partial | rating, flag, label, keyword, camera, lens, ISO range, focal length range, file type, edited/unedited, GPS present, date range, free text, sort by 8 keys (`library.filter_items`, `#lib-bar`); "edited" means the photo or its sidecar carries Camera Raw develop settings | S | M |
+| Folders panel (tree, move, rename, delete) | Partial | Library sidebar: tree with counts, click to filter (+ subfolders toggle), new folder, drag photos onto a folder to move, rename folders. A photo moves with its `.xmp`, same-stem raw/JPEG, `*.photoroom.json`, `*.masks.json` and virtual-copy files; catalog (copies, collections), picks and cull DB follow; never overwrites; one-step undo log `.photo-room-moves.json`. `folders.py`, `folders_api.py`, `tests/test_folders.py`. No delete (by design), no move-folder UI (API only), no reveal | S | M |
+| Quick Develop | Done | Library strip with relative step buttons (small and large steps for exposure, contrast, highlights, shadows, whites, blacks, temp, tint, vibrance, saturation, clarity, texture, dehaze) and Undo: `static/js/quick-develop.js`, `/api/sync_settings` and `/api/sync_undo` (`quick_api.py`). One History step per photo; framing, spots and masks untouched; absolute copy still via `/api/batch_apply`. `tests/test_quick_sync.py`. Not browser-verified | - | - |
 | Sync / copy-paste settings | Done | `Mod+C/V`, WB re-anchored per camera; spots and crop never copied. `tests/test_batch.py` | - | - |
-| Auto Sync (edit many at once) | Missing | no code | S | M |
+| Auto Sync (edit many at once) | Done | Develop switch: with other photos selected, each slider release is sent to them via `/api/sync_settings` (WB re-anchored per camera, crop/straighten/spots/masks excluded, one History step per photo, undoable via `/api/sync_undo`). Slider release only (not curve, masks, HSL wheels). `tests/test_quick_sync.py`; UI not browser-verified | - | - |
 | Painter tool | Missing | no code | S | L |
 | Catalog and backup | Partial | no catalogue: state is JSON/SQLite beside the photos (`.photo-room-library.json`, `.photo-room-catalog.json`, `*.photoroom.json`, `.photo-room-cull.sqlite`). Atomic writes, `.bad` quarantine; `photo-room backup`/`restore` (timestamped folder or zip, keep last N, optional hash-verified raw mirror, reminder/auto on editor start) | S | M |
 | Smart previews (offline) | Partial | 2048 px 8-bit decodes for Quick look only; Develop needs the raw | M | L |
@@ -141,7 +129,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Vibrance, Saturation | Done | `editor._stage_saturation` | - | - |
 | Histogram, clipping overlay (J), RGB readout | Done | `/api/develop/histogram`, `/clipping`, `/wb_pick` | - | - |
 | Zoom/pan, Fit/Fill/100/200% | Done | `/api/tile`, `tests/test_tiles.py`, `tests/ui/test_zoom_ui.py` | - | - |
-| Navigator panel | Missing | ROADMAP "Not wired yet" | S | M |
+| Navigator panel | Done | Top of the Develop side panel (`navigator.js`): whole-photo preview with the visible-region rectangle; click or drag pans; first click while at Fit zooms to 100%; hover shows Fit / Fill / 100% / 200% presets | S | M |
 | Profile browser (Adobe Color, Landscape, Portrait...) | Missing | output is LibRaw's camera matrix to sRGB/Adobe/ProPhoto; no camera profile layer | L | H |
 | DCP / ICC camera profile import | Missing | no code | L | M |
 | Creative profiles / LUT looks | Done | `.cube` import + 30 built-in presets (`lut.py`, `presetlib.py`, `looks_api.py`). `tests/test_lut.py`, `tests/test_looks_*.py` | - | - |
@@ -164,8 +152,8 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Lightroom feature | Status | Evidence | Effort | Value |
 |---|---|---|---|---|
 | Sharpening amount | Partial | one `sharpness` 0-150, luminance-only unsharp; no Radius, Detail, Masking | S | H |
-| Luminance noise reduction | Partial (no-op) | slider and XMP only (finding 1) | M | H |
-| Colour noise reduction (and Detail/Contrast) | Missing | no code | M | H |
+| Luminance noise reduction | Partial | `render_kernels.denoise_stage` (bilateral on luma), preview, tiles and export; no Detail/Contrast | S | M |
+| Colour noise reduction | Done | `color_nr` slider, edge-guarded chroma blur, `crs:ColorNoiseReduction` | - | - |
 | Output sharpening | Done | `export_finish.sharpen`, screen/matte/glossy x low/standard/high | - | - |
 
 ### 5. Develop: lens, geometry, crop
@@ -218,11 +206,11 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 
 | Lightroom feature | Status | Evidence | Effort | Value |
 |---|---|---|---|---|
-| Export JPEG / PNG, full-res render from the raw | Done | `exporter.py`, `export_api.py`; `tests/test_export*.py` | - | - |
+| Export JPEG / PNG / TIFF (8/16-bit) / WebP, full-res render from the raw | Done | `exporter.py`, `export_api.py`; `tests/test_export*.py` | - | - |
 | Keep all metadata (EXIF, GPS, IPTC, XMP, ICC, MakerNotes) | Done | exiftool `-TagsFromFile -all:all`; `tests/test_real_exiftool_export.py`, `tests/test_real_raw_e2e.py` (real CR2 incl. Canon MakerNotes). Real 1000D CR2 on the Pi: Make, Model, LensModel, ISO, ExposureTime survive | - | - |
-| Metadata options (copyright only, strip location/person) | Missing | single `Keep all metadata` checkbox (`#ex-meta`, `ExportOptions.keep_metadata`) | S | H |
-| Format: TIFF, PSD, DNG, WebP, AVIF, JPEG XL | Missing | `--format` is `png\|jpeg\|jpg` only (`process.py`) | S (TIFF/WebP) | H |
-| 16-bit output | Partial | 16-bit PNG only (`write_png16`) | S with TIFF | M |
+| Metadata options (copyright only, strip location, drop develop settings) | Done | `ExportOptions.metadata`, `exporter.metadata_args`, `#ex-meta`; `tests/test_export_formats_metadata.py`. Person/face tags are not stripped | - | - |
+| Format: TIFF, PSD, DNG, WebP, AVIF, JPEG XL | Partial | TIFF and WebP done (`--format`, `exporter.FORMATS`); PSD, DNG, AVIF, JPEG XL missing | S | L |
+| 16-bit output | Done | 16-bit PNG and TIFF (`write_png16`, `write_tiff16`) | - | - |
 | Colour space: sRGB, Adobe RGB, ProPhoto with embedded ICC | Done | `exporter.py`; custom ICC absent | - | - |
 | Resize | Partial | long edge only, never upscales | S | M |
 | Naming template | Partial | `{name} {date} {seq} {width} {height}`; no text, `{rating}`, `{camera}`, `{keyword}` | S | M |
@@ -266,17 +254,17 @@ Lightroom features is in the matrix above.
 
 | # | Work package | Why (value for this user) | Effort | Touches |
 |---|---|---|---|---|
-| 1 | **Real noise reduction.** Luma + chroma denoise from the Noise reduction slider (OpenCV, applied at full size on export and on the 100% tile; keep the half-size preview as is) and a colour-NR slider. Until then relabel the slider so it does not promise a pixel effect | A shipped slider that does nothing; high-ISO CR2s are the common case | M | `render_kernels.py`, `editor.py`, `tile_server.py`, `stagecache.py`, `tests/test_noise_reduction.py` |
+| 1 | ~~**Real noise reduction.** Luma + chroma denoise from the Noise reduction slider (OpenCV, applied at full size on export and on the 100% tile; keep the half-size preview as is) and a colour-NR slider. Until then relabel the slider so it does not promise a pixel effect~~ (done) | A shipped slider that does nothing; high-ISO CR2s are the common case | M | `render_kernels.py`, `editor.py`, `tile_server.py`, `stagecache.py`, `tests/test_noise_reduction.py` |
 | 2 | **Linux-aware `ingest cards` / `ingest watch`**: make `list_volumes` reuse `cardwatch.find_cards`, fix the README Card ingest section | The headline Linux flow fails at its first command | S | `ingest.py`, `cardwatch.py`, README |
 | 3 | **Export metadata options**: All / all except location / copyright and contact only / none | The user's stated goal is metadata; privacy-safe sharing needs the middle options | S | `exporter.py`, `export_api.py`, `export_presets.py`, `static/js/export-dialog.js` |
-| 4 | **Metadata panel (read-only)**: EXIF/IPTC/GPS in a Library/Develop side panel via cached `exiftool -j` | Nothing in the UI shows camera, lens, ISO or GPS today | S | `libapi.py`, new `static/js/metadata.js`, `templates/editor.html` |
+| 4 | ~~**Metadata panel (read-only)**: EXIF/IPTC/GPS in a Library/Develop side panel via cached `exiftool -j`~~ (done, with editing and presets) | Nothing in the UI shows camera, lens, ISO or GPS today | S | `libapi.py`, new `static/js/metadata.js`, `templates/editor.html` |
 | 5 | **Copyright / IPTC preset applied on export and import**: Creator, Copyright, Credit, caption; writes XMP/IPTC on the output (and optionally the sidecar) | Photographers stamp copyright on every file; no write path exists | M | `exporter.py`, `library.py`, export dialog |
 | 6 | **Sharpening Radius / Detail / Masking** | One slider is the main Detail-panel gap | S | `render_kernels.py`, `editor.py`, `CONTROLS`, XMP map |
 | 7 | **Export formats: 16-bit TIFF and WebP** (AVIF later), same metadata copy | 16-bit hand-off to other editors and print labs; JPEG/PNG only today | S | `exporter.py`, `process.py`, `test_real_exiftool_export.py` |
 | 8 | **Library shows JPEG/HEIC (and hides RAW+JPEG twins)**, no longer orphans what `watch-cards` imports; videos listed but not editable | Finding 3 | M | `libindex.py`, `process.py`, `thumbs.py`, `cardwatch.py` |
 | 9 | **Post-crop vignette and grain** | Standard look tools, tiny maths, seeded so preview equals export | S | `render_kernels.py`, `editor.py`, XMP map |
 | 10 | **Crop completeness**: flip orientation, 90-degree rotate, original/custom ratio, ratio lock, more overlays | Common daily operations; portrait crops are awkward now | S | `static/js/develop-crop.js`, `geometry.py` |
-| 11 | **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
+| 11 | (Done) **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
 | 12 | **Import dialog**: choose frames, destination, rename template, keywords/copyright/preset on import, Move vs Copy | The Lightroom Import experience; ROADMAP "Not wired yet" | M | `import_api.py`, `cardwatch.py`, `static/js/import.js` |
 | 13 | **Carry XMP sidecars with imported raws** (copy `IMG.xmp` beside the raw when present) | Prerequisite for any Lightroom round trip | S | `ingest.py`, `cardwatch.py`, `import_api.py` |
 | 14 | **Export sizing and destination**: short edge, megapixels, percent, subfolder, same-as-original, Export with Previous | Daily export ergonomics | S | `exporter.py`, `export_api.py`, export dialog |
@@ -295,7 +283,7 @@ Lightroom features is in the matrix above.
 Smaller items not in the top 25: Calibration panel (M), targeted adjustment
 tool (S), Point Color (M), soft proofing (M), Guided Upright (M), red eye (S),
 reference view (S), grid density options (S), Painter (S), collection sets (S),
-Auto Sync (S), contact-sheet PDF (S), post-export actions (S), Map module (M).
+contact-sheet PDF (S), post-export actions (S), Map module (M).
 
 ## Already queued (not repeated above)
 
