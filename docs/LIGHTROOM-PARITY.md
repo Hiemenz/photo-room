@@ -230,6 +230,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Output sharpening, watermark | Done | `export_finish.py` | - | - |
 | Export presets (4 built-in + user) | Done | `export_presets.py` | - | - |
 | Queue, progress, cancel, resume after restart | Done | `export_queue.json`, `/api/export/jobs\|cancel\|resume` | - | - |
+| Timelapse video (selection / collection / folder; deflicker, stabilise, ffmpeg) | Done | `timelapse.py`, `timelapse_api.py`, `static/js/timelapse.js`; `tests/test_timelapse.py` | - | - |
 | Export with Previous | Missing | presets cover it manually | S | L |
 | Post-processing (open in app, run action) | Missing | no code | S | L |
 | Print module | Won't do | ROADMAP "Not planned" | L | L |
@@ -301,7 +302,7 @@ Auto Sync (S), contact-sheet PDF (S), post-export actions (S), Map module (M).
 
 | Queued item | Matrix rows it covers | Notes from this review |
 |---|---|---|
-| Timelapse | none (Lightroom builds time-lapse in Slideshow) | Needs stacks/sequence grouping (package 20) and an ffmpeg export; `doctor` already finds ffmpeg |
+| Timelapse | none (Lightroom builds time-lapse in Slideshow) | Done: `photo-room timelapse` and the Timelapse dialog. Not verified against a real raw sequence or in a browser; virtual copies in a collection render as their raw; no stack grouping yet (select the frames or use a collection) |
 | Lightroom `.xmp` / `.lrcat` migration | "Read Lightroom sidecar edits", ".lrcat import", "Import Lightroom presets" | Sidecar reading and `.xmp` preset import already exist, so the work is mostly `.lrcat` (SQLite) ratings, flags, keywords, collections plus the unverified-in-Lightroom checks. Package 13 is a prerequisite for sidecars |
 | Semantic search | "Find / filter" | Nothing exists; thumbnails (`thumbs.py`) and the SQLite pattern in `cull_store.py` are the natural base; model choice must be CPU and Pi friendly |
 | HDR / panorama merge | "HDR merge", "Panorama merge" | No code. Needs 16-bit TIFF/DNG-ish intermediate output (package 7) and a way to list the result in the Library (package 8) |
