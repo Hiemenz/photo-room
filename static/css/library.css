@@ -221,3 +221,8 @@ body { padding-top: 30px; }
 .map-row .ct { min-width: 28px; text-align: right; opacity: .7; }
 .map-row .nm { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .map-row .co { opacity: .7; font-variant-numeric: tabular-nums; }
+
+/* People panel (static/js/people.js) */
+#pp-status { padding: 0 12px 4px; font-size: 10px; opacity: .7; }
+#pp-list { padding-bottom: 12px; }
+.col.pp img { border-radius: 50%; object-fit: cover; flex-shrink: 0; background: var(--panel-2); }

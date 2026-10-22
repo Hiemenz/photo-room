@@ -59,6 +59,7 @@ Start with `uv run photo-room doctor`; it checks everything below and prints the
 
 - `exiftool` — `brew install exiftool` (macOS) or `sudo apt install libimage-exiftool-perl` (Debian/Ubuntu/Raspberry Pi OS)
 - Python 3.12+ with [uv](https://docs.astral.sh/uv/)
+- Optional, opt-in: Library > People groups faces into people you can name and filter by (`photo-room faces scan`; approximate by default, see docs/FACES-PEOPLE.md).
 - Optional: `uv sync --extra semantic` enables on-device semantic search and Find similar (see docs/SEMANTIC-SEARCH.md); the model is downloaded only by `python semantic.py download --yes`.
 - Optional: `uv sync --extra lens` installs `lensfunpy` for lens profiles
   (see "Lens corrections"); everything else works without it.

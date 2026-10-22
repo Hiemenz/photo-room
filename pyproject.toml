@@ -31,6 +31,9 @@ heic = ["pillow-heif>=0.16"]
 # ONNX model. Never required: without it search falls back to names/keywords/EXIF.
 # The model itself is downloaded only by `python semantic.py download --yes`.
 semantic = ["onnxruntime>=1.18", "tokenizers>=0.19"]
+# Better face grouping in Library > People with a face-recognition ONNX model you
+# supply. Never required: without it faces are grouped by simple texture features.
+faces = ["onnxruntime>=1.18"]
 
 
 [project.scripts]

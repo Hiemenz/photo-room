@@ -168,6 +168,9 @@ app.register_blueprint(folders_api.bp)
 import semantic_api  # noqa: E402  (optional on-device semantic search)
 
 app.register_blueprint(semantic_api.bp)
+import faces_api  # noqa: E402  (optional, opt-in Faces / People)
+
+app.register_blueprint(faces_api.bp)
 import merge_api  # noqa: E402  (Merge to HDR / Panorama jobs)
 
 app.register_blueprint(merge_api.bp)
@@ -2051,8 +2054,9 @@ def api_library():
         stacked = catalog.has_stacks(LIBRARY_ROOT)
         folder = args.get("folder")
         semantic_rank = semantic_api.wants_ranking(args)     # `sem` / `similar`: rank the filtered set
+        person = faces_api.wants_person(args)                # `person`: only photos showing that person
         if not virtuals and not args.get("collection") and folder is None and not stacked \
-                and not semantic_rank:
+                and not semantic_rank and not person:
             total, page, library_total = idx.query(criteria, args.get("sort", "name"),
                                                    args.get("dir", "asc") == "desc", offset, limit)
             facets = idx.facets() if offset == 0 else None
@@ -2065,6 +2069,8 @@ def api_library():
             if folder is not None:
                 matched = [it for it in matched if folders.in_folder(
                     it["path"], folder.strip("/"), args.get("subfolders") == "1")]
+            if person:
+                matched = faces_api.filter_library(matched, args)
             matched = library.sort_items(
                 matched, args.get("sort", "name"), args.get("dir", "asc") == "desc")
             if stacked and not semantic_rank:        # a similarity ranking shows every match, not stack tops

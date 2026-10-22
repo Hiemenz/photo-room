@@ -105,6 +105,10 @@
         <label class="fo-sub" title="Show photos of subfolders too"><input type="checkbox" id="fo-sub" checked> sub</label>
         <button id="fo-new" title="New folder inside the selected folder">+</button><button id="fo-undo" title="Undo the last move or rename" disabled>Undo</button></span></h3>
       <div id="fo-list"></div>
+      <h3><span>People</span><span>
+        <button id="pp-scan" title="Find faces in the library (on this machine, nothing is uploaded)">Find faces</button></span></h3>
+      <div id="pp-status" role="status" aria-live="polite"></div>
+      <div id="pp-list" role="list" aria-label="People"></div>
     </aside>
     <div id="lib-grid"></div>
     <aside id="lib-meta" aria-label="Metadata"></aside>
@@ -351,6 +355,9 @@
       <div class="handle ne" data-corner="ne"></div>
       <div class="handle sw" data-corner="sw"></div>
       <div class="handle se" data-corner="se"></div>
+      <svg id="crop-guides" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <svg id="crop-guides" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <svg id="crop-guides" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"></svg>
     </div>
   </div>
 </main>
@@ -372,11 +379,31 @@
   <div id="controls-scroll">
   <div id="crop-bar">
     <button id="crop-toggle" disabled>Crop</button>
-    <button data-ratio="free" class="active">Free</button>
-    <button data-ratio="1">1:1</button>
-    <button data-ratio="1.3333">4:3</button>
-    <button data-ratio="1.5">3:2</button>
-    <button data-ratio="1.7778">16:9</button>
+    <button data-ratio="free" data-cr="" class="active">Free</button>
+    <button data-ratio="orig" data-cr="orig" title="Keep the photo's own proportions">Original</button>
+    <button data-ratio="1" data-cr="1:1">1:1</button>
+    <button data-ratio="1.3333" data-cr="4:3">4:3</button>
+    <button data-ratio="1.5" data-cr="3:2">3:2</button>
+    <button data-ratio="1.7778" data-cr="16:9">16:9</button>
+    <span id="crop-custom" title="Custom ratio, width : height">
+      <input type="number" id="crop-cw" min="0.1" max="1000" step="any" value="5" aria-label="Custom ratio width">:
+      <input type="number" id="crop-ch" min="0.1" max="1000" step="any" value="4" aria-label="Custom ratio height">
+      <button id="crop-custom-set">Custom</button>
+    </span>
+    <button id="crop-orient" title="Swap portrait and landscape (X)">Portrait/landscape</button>
+    <button id="crop-rot-l" title="Rotate 90&deg; left">Rotate left</button>
+    <button id="crop-rot-r" title="Rotate 90&deg; right">Rotate right</button>
+    <button id="crop-flip-h" title="Mirror left to right">Flip H</button>
+    <button id="crop-flip-v" title="Mirror top to bottom">Flip V</button>
+    <select id="crop-overlay" aria-label="Crop overlay (O cycles)">
+      <option value="thirds">Thirds</option>
+      <option value="grid">Grid</option>
+      <option value="diagonal">Diagonal</option>
+      <option value="triangle">Triangle</option>
+      <option value="golden">Golden ratio</option>
+      <option value="spiral">Golden spiral</option>
+      <option value="none">No overlay</option>
+    </select>
     <button id="crop-reset">Reset</button>
   </div>
   <details class="panel" id="profile-panel">
@@ -671,6 +698,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/library-view.js') }}"></script>
 <script src="{{ asset('js/map-view.js') }}"></script>
 <script src="{{ asset('js/semantic-search.js') }}"></script>
+<script src="{{ asset('js/people.js') }}"></script>
 <script src="{{ asset('js/import.js') }}"></script>
 <script src="{{ asset('js/import-dialog.js') }}"></script>
 <script src="{{ asset('js/card-watch.js') }}"></script>
