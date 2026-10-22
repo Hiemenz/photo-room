@@ -168,6 +168,9 @@ app.register_blueprint(semantic_api.bp)
 import merge_api  # noqa: E402  (Merge to HDR / Panorama jobs)
 
 app.register_blueprint(merge_api.bp)
+import timelapse_api  # noqa: E402  (Timelapse dialog)
+
+app.register_blueprint(timelapse_api.bp)
 
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
