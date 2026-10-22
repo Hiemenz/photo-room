@@ -85,7 +85,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Import: second backup copy | Done | `--backup` / dialog: verified at copy and in the verify pass, mirrors sub-folders, blocks eject on failure. Not tried on a real second disk | - | - |
 | Import: skip duplicates | Done | content hash across the whole library (`cardwatch.LibraryIndex`, `import_api`) | - | - |
 | Import: XMP sidecars come along with the raw | Done | `ingest.copy_sidecar`: renamed with the raw, never overwrites; to the backup as well | - | - |
-| Import: JPEG, TIFF, PNG, video in the Library | Missing | Card import copies JPEG/video, Library lists raws only (finding 3) | M | H |
+| Import: JPEG, TIFF, PNG, HEIC, video in the Library | Partial | Listed; JPEG/TIFF/PNG (HEIC with `pillow-heif`) are editable via `imgload.py`, sidecar + export work; video is a placeholder. 8-bit source, relative WB, no lens profile | S | M |
 | Tethered capture | Won't do | ROADMAP "Not planned" (gphoto2 would be the route) | L | L |
 | Watched-folder auto import | Partial | `process.py watch` converts as files arrive; `watch-cards` for cards | - | - |
 | Grid view with thumbnails | Done | `libindex.py` paged API (200/page), embedded-JPEG thumbs (`thumbs.py`), background builder, live updates over SSE. `tests/test_libindex.py`, `tests/ui/test_library_live_ui.py` | - | - |

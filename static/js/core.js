@@ -11,6 +11,7 @@ let lastIndex = -1;      // anchor for shift-click ranges
 let comparing = false;   // true while the compare key is held
 let editedSrc = null;    // cached edited preview, restored when compare ends
 let clipboard = null;    // settings copied from one photo, for pasting onto others
+let sourceKind = "raw"; // "raw" or "image" (JPEG/TIFF/PNG/HEIC: no lens/CA, nominal 5500K baseline)
 let baselineTemp = null; // this photo's own camera white balance
 let cropping = false;    // crop overlay visible
 let importValues = null; // as-imported (auto) settings: what 'Before' shows

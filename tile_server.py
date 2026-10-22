@@ -130,12 +130,10 @@ def load_full(path: Path) -> tuple[np.ndarray, int]:
                 top, left, h, w = crop
                 lin = lin[top:top + h, left:left + w]
     else:
-        import colour
+        import imgload
 
-        with Image.open(path) as src:
-            enc = np.asarray(ImageOps.exif_transpose(src).convert("RGB"), dtype=np.float32) / 255.0
-        lin = np.rint(np.clip(colour.to_linear(enc), 0, 1) * 65535.0).astype(np.uint16)
-        baseline = 5500
+        lin = imgload.decode_linear16(path)
+        baseline = imgload.BASELINE_TEMP
     lin = np.ascontiguousarray(lin)
     with _lock:
         _full[key] = (lin, baseline)

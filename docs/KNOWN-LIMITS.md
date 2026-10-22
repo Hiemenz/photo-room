@@ -62,14 +62,16 @@ you can run on your Mac with a real card. Companion to
 
 ## Known defects (not unverified; confirmed in code)
 
-- JPEG, HEIC and video files from `watch-cards` are now listed in the Library
-  (fixed), but only as browse-and-rate items: JPEG/HEIC cells have thumbnails
-  and a "view only" tag, video cells are placeholders, and double-click shows
-  a notice instead of opening Develop. Develop and export still start from a
-  raw decode, so editing a JPEG is not supported. HEIC thumbnails need the
-  optional `pillow-heif` package (otherwise the cell shows a "HEIC"
-  placeholder). In a RAW+JPEG pair only the raw is listed (both would share
-  one `.xmp`). Video thumbnails are not generated.
+- JPEG, TIFF, PNG and (with the optional `pillow-heif`, `uv sync --extra heic`)
+  HEIC files are listed in the Library and are **editable**: Develop decodes
+  them with Pillow (`imgload.py`), edits go to the `.xmp` sidecar (the image
+  is never rewritten) and export keeps the metadata modes. Limits: 8-bit
+  source precision, Temp/Tint are relative (nominal 5500 K baseline, no
+  as-shot white balance), no lens-profile correction, and two images with the
+  same stem in one folder (`a.jpg`, `a.png`) share `a.xmp`. HEIC without
+  `pillow-heif` stays a view-only cell. Video cells are placeholders. In a
+  RAW+JPEG pair only the raw is listed (both would share one `.xmp`). Not
+  verified in a browser or against Lightroom opening these sidecars.
 - Export formats are JPEG, PNG, TIFF (8/16-bit) and WebP (8-bit). WebP carries
   EXIF/XMP/ICC but no IPTC block. 16-bit is PNG and TIFF only. TIFF 16-bit is
   uncompressed (large); 8-bit TIFF uses LZW.

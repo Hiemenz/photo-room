@@ -41,11 +41,12 @@ STORE_NAME = ".photo-room-library.json"
 
 _lock = threading.RLock()
 
-# What the Library lists besides raws. Raws are editable; JPEG/HEIC are listed,
-# thumbnailed and rated but view-only (the Develop pipeline starts from a raw
-# decode); video is a placeholder cell with no thumbnail.
+# What the Library lists besides raws. Raws and ordinary images (JPEG, TIFF, PNG,
+# and HEIC when pillow-heif is installed) are editable: Develop starts them from
+# a Pillow decode (imgload.py). HEIC without pillow-heif is listed but view-only;
+# video is a placeholder cell with no thumbnail.
 RAW_SUFFIXES = (".cr2", ".cr3", ".nef", ".arw", ".raf", ".orf", ".rw2", ".dng")
-IMAGE_SUFFIXES = (".jpg", ".jpeg", ".heic", ".heif")
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".tif", ".tiff", ".png", ".heic", ".heif")
 VIDEO_SUFFIXES = (".mp4", ".mov", ".mts", ".m2ts", ".avi", ".mxf")
 
 
@@ -59,6 +60,17 @@ def kind_of(name: str) -> str:
     if ext in VIDEO_SUFFIXES:
         return "video"
     return ""
+
+
+def is_editable(name: str) -> bool:
+    """True when Develop can open the file: a raw, or an image Pillow can decode."""
+    kind = kind_of(name)
+    if kind == "raw":
+        return True
+    if kind == "image":
+        import imgload
+        return os.path.splitext(name)[1].lower() in imgload.editable_suffixes()
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -396,7 +408,7 @@ def build_items(root: Path, paths: list[Path]) -> list[dict]:
         flag = "reject" if m["rating"] == -1 else ("pick" if flags.get(rel) == "pick" else "none")
         kind = kind_of(p.name) or "raw"
         items.append({"path": rel, "name": p.name, **m, "flag": flag,
-                      "kind": kind, "editable": kind == "raw"})
+                      "kind": kind, "editable": is_editable(p.name)})
     return items
 
 

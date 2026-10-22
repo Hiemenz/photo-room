@@ -67,7 +67,7 @@ def _record(rel: str, meta: dict, pick: bool) -> dict:
             "keywords": meta["keywords"], "hier": meta.get("hier", []), "camera": meta["camera"], "lens": meta.get("lens", ""),
             "iso": meta.get("iso", 0), "focal": meta.get("focal", 0), "edited": bool(meta.get("edited")),
             "gps": bool(meta.get("gps")), "date": meta["date"], "flag": _flag(meta["rating"], pick),
-            "kind": (kind := library.kind_of(rel) or "raw"), "editable": kind == "raw"}
+            "kind": library.kind_of(rel) or "raw", "editable": library.is_editable(rel)}
 
 
 def parse_meta(entry: dict, side: dict | None = None, dng: bool = False) -> dict:

@@ -110,8 +110,8 @@ def test_real_export_bakes_the_lut_into_the_pixels_and_keeps_every_tag(tmp_path)
     a = np.asarray(Image.open(plain), dtype=np.float64) / 255.0
     b = np.asarray(Image.open(looked), dtype=np.float64) / 255.0
     assert a.shape == b.shape and np.abs(a - b).mean() > 0.01                  # the look is in the pixels
-    # exactly the LUT applied to the plain render (sRGB source, so no space conversion)
-    want = L.apply(a.astype(np.float32), L.get("builtin-teal-and-orange"))
+    # exactly the LUT applied to the plain render, in the source's own (Adobe RGB) space
+    want = L.apply(a.astype(np.float32), L.get("builtin-teal-and-orange"), "adobergb", 1.0)
     assert np.abs(want - b).max() < 0.02
     # every source tag survives; the develop block (Look included) is not copied, so nothing applies twice
     assert_every_tag_survived(src, looked)

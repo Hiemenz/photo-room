@@ -5,6 +5,7 @@ import io
 import pytest
 from PIL import Image
 
+import imgload
 import library
 import libindex
 import thumbs
@@ -50,8 +51,8 @@ def test_index_lists_all_kinds_with_editable_flag(idx):
     recs = {r["path"]: r for r in idx.items()}
     assert set(recs) == {"A.CR2", "B.jpg", "C.HEIC", "D.MP4"}
     assert recs["A.CR2"]["kind"] == "raw" and recs["A.CR2"]["editable"] is True
-    assert recs["B.jpg"]["kind"] == "image" and recs["B.jpg"]["editable"] is False
-    assert recs["C.HEIC"]["editable"] is False
+    assert recs["B.jpg"]["kind"] == "image" and recs["B.jpg"]["editable"] is True
+    assert recs["C.HEIC"]["editable"] is imgload.heif_available()
     assert recs["D.MP4"]["kind"] == "video" and recs["D.MP4"]["editable"] is False
 
 

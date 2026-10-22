@@ -134,7 +134,7 @@ def _encode(img: Image.Image, size: int = THUMB_EDGE) -> bytes:
     return buf.getvalue()
 
 
-IMAGE_SUFFIXES = (".jpg", ".jpeg", ".heic", ".heif")
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".tif", ".tiff", ".png", ".heic", ".heif")
 VIDEO_SUFFIXES = (".mp4", ".mov", ".mts", ".m2ts", ".avi", ".mxf")
 _heif_tried = False
 

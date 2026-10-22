@@ -31,6 +31,7 @@ from PIL import Image, ImageCms, ImageOps
 import colour
 import decode_cache
 import fastops
+import imgload
 import exifpool
 import export_finish
 import process
@@ -63,7 +64,7 @@ class ExportOptions:
     format: str = "jpeg"
     quality: int = 92
     long_edge: int | None = None
-    colorspace: str | None = None  # None: raw -> srgb, other images -> keep source
+    colorspace: str | None = None  # None: sRGB (raws and images alike)
     template: str = "{name}"
     keep_metadata: bool = True      # False is the same as metadata="none"
     metadata: str = "all"           # one of METADATA_MODES
@@ -246,24 +247,18 @@ def _render_array(path: Path, opts: ExportOptions,
         linear_input = True
         del lin16
     else:
-        with Image.open(path) as src:
-            src = ImageOps.exif_transpose(src)
-            source_icc = src.info.get("icc_profile")
-            img = src.convert("RGB")
-        src_size = img.size
-        baseline = 5500
-        if opts.colorspace and source_icc is None and opts.colorspace != "srgb":
-            raise ValueError("source has no colour profile to convert from")
-        if opts.colorspace:
-            icc = icc_profile_for(opts.colorspace)
-            if source_icc:
-                img = ImageCms.profileToProfile(
-                    img, ImageCms.ImageCmsProfile(io.BytesIO(source_icc)),
-                    ImageCms.ImageCmsProfile(io.BytesIO(icc)), outputMode="RGB")
-        else:
-            icc = source_icc or icc_profile_for("srgb")
-        base = render_kernels.u8_to_float(np.asarray(img))
-        linear_input = False
+        # JPEG/TIFF/PNG/HEIC: decoded to linear light in the output space
+        # (embedded profile converted, untagged = sRGB) and then edited by the
+        # same stages as a raw. See imgload.py.
+        if not opts.colorspace:
+            space = imgload.native_space(path)     # no choice made: keep an Adobe RGB / ProPhoto source as is
+        lin16 = imgload.decode_linear16(path, space)
+        src_size = (lin16.shape[1], lin16.shape[0])
+        baseline = imgload.BASELINE_TEMP
+        icc = icc_profile_for(space)
+        base = render_kernels.u16_to_float(lin16)
+        linear_input = True
+        del lin16
 
     # Resizing first keeps the heavy float passes proportional to the output.
     # Geometry (crop/straighten) is fractional, so it is unaffected. Everything

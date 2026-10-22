@@ -39,6 +39,7 @@ import colormix
 import editversion
 import folders
 import fsutil
+import imgload
 import security
 import geometry
 import masks
@@ -1610,6 +1611,7 @@ def api_open():
             "needs_upgrade": int(merged.get("edit_version") or EDIT_VERSION) < EDIT_VERSION,
             "has_sidecar": has_sidecar(path),
             "lens": lens.describe(path),
+            "source_kind": "image" if imgload.is_image(path) else "raw",
         })
     except Exception as exc:
         return jsonify({"error": describe_error(exc)}), 500
