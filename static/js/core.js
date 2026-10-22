@@ -1,4 +1,4 @@
-const ALL_CONTROLS = CONTROLS.concat(GLOBAL_CONTROLS, COLOR_CONTROLS, M8_CONTROLS);
+const ALL_CONTROLS = CONTROLS.concat(GLOBAL_CONTROLS, COLOR_CONTROLS, M8_CONTROLS, EFFECT_CONTROLS);
 const $ = (id) => document.getElementById(id);
 
 let current = null;      // relative path of the open file

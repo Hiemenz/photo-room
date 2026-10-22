@@ -276,6 +276,9 @@ def resolve_zoom(z: str, out_w: int, out_h: int, fit_edge: int) -> float:
 def halo_px(adj: dict, edge: int) -> int:
     """How far the pipeline's local filters reach, in pixels at this zoom."""
     reach = 2.0                                              # sharpen blur (1.2 px sigma)
+    if float(adj.get("sharpness", 0) or 0):
+        radius = min(max(float(adj.get("sharpen_radius", 1.0) or 1.0), 0.5), 3.0)
+        reach = 3.0 * 1.2 * radius + (4.0 if float(adj.get("sharpen_masking", 0) or 0) else 0.0)
     if float(adj.get("clarity", 0) or 0):
         reach = max(reach, max(4.0, edge * 0.02) * 3)
     if float(adj.get("texture", 0) or 0):
@@ -324,6 +327,9 @@ def render_region(path: Path, adj: dict, scale: float, tx: int, ty: int,
     a = {k: v for k, v in adj.items() if k != "crop"}
     a.setdefault("color_temp", baseline)
     a["_detail_edge"] = edge
+    # Vignette and grain are laid out on the whole cropped frame, not on this tile.
+    a["_frame_origin"] = (rx0, ry0)
+    a["_frame_size"] = (ow, oh)
     out = ed.apply_adjustments(base, baseline, a)
     return _to_u8(out[y0 - ry0:y1 - ry0, x0 - rx0:x1 - rx0])
 

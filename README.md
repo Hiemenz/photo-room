@@ -158,6 +158,13 @@ applied in the preview, the 100% tiles and the export, before sharpening and cla
 scale with the frame size so the small preview and the full-size export show the same amount of
 smoothing. Both values are written to `crs:LuminanceSmoothing` and `crs:ColorNoiseReduction`.
 
+Also in the Develop panel (all in `effects.py`, all written to `crs:` tags and the same in the preview,
+the 100% tiles and the export): **Sharpen radius / detail / masking** beside Sharpness, **Effects: grain**
+(amount, size, roughness), **Effects: post-crop vignette** (amount, midpoint, roundness, feather; laid out
+on the cropped frame), **Calibration** (red, green and blue primary hue and saturation, shadows tint) and
+**Point color** (up to 8 points; Pick takes the colour from the photo, Range widens the match, and the three
+shifts move its hue, saturation and luminance). These are approximations of Lightroom's, not Adobe's maths.
+
 ### Colour mixer and colour grading
 
 Both panels sit under the main sliders in the editor.

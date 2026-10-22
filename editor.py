@@ -37,6 +37,7 @@ import catalog
 import colour
 import colormix
 import editversion
+import effects
 import folders
 import fsutil
 import imgload
@@ -272,6 +273,9 @@ HISTOGRAM_BINS = 256     # one bin per 8-bit level, like the /api/develop/histog
 # HSL / B&W mixer and colour grading sliders (see colormix.py). Kept apart from
 # CONTROLS so the main slider list stays short; the UI builds its own panel.
 COLOR_CONTROLS = colormix.COLOR_CONTROLS
+# Grain, post-crop vignette, Calibration and sharpening radius / detail / masking (effects.py);
+# the UI builds its own panels from these, and Point Color is the list ``point_colors``.
+EFFECT_CONTROLS = effects.CONTROLS
 
 # Reloaded after each save so a new edit influences the next photo you open.
 _style_model = None
@@ -488,7 +492,13 @@ def _is_legacy(adj: dict) -> bool:
 
 
 def _stage_tone(base: np.ndarray, baseline_temp: int, adj: dict, linear=None) -> np.ndarray:
-    # White balance, exposure, tonal range, contrast and curve (render_kernels).
+    # Calibration (effects.py) turns the camera primaries first, on linear light; then white balance,
+    # exposure, tonal range, contrast and curve (render_kernels).
+    if effects.calibration_active(adj) and not _is_legacy(adj):
+        space = adj.get("_space")
+        lin = linear if linear is not None else colour.to_linear(base, space)
+        base = colour.to_encoded(effects.calibrate(lin, adj), space)
+        linear = None
     return render_kernels.tone_stage(base, baseline_temp, adj, linear=linear)
 
 
@@ -598,7 +608,8 @@ def apply_adjustments(
         img = cached[resume]
     elif linear_in:
         checkpoint()
-        img = render_kernels.tone_stage_from_linear(geo, baseline_temp, adj)
+        lin_geo = effects.calibrate(geo, adj) if not _is_legacy(adj) else geo
+        img = render_kernels.tone_stage_from_linear(lin_geo, baseline_temp, adj)
     else:
         checkpoint()
         linear = None
@@ -630,7 +641,7 @@ def apply_adjustments(
                 analysis = colormix.Analysis(img)
                 if cache:
                     cache.put(cache_id, "hsv", keys[S.SATURATION], analysis)
-            mixed = colormix.apply_hsl(img, adj, analysis)
+            mixed = effects.apply_point_colors(colormix.apply_hsl(img, adj, analysis), adj)
         img = keep(S.MIX, mixed, img)
     if resume < S.GRADE:
         checkpoint()
@@ -651,6 +662,9 @@ def apply_adjustments(
     # --- Local adjustments (masks.py): graduated, radial and brush masks ---
     img = masks.apply_masks(img, adj.get("masks"), blur=_blur, space=adj.get("_space"),
                             legacy=_is_legacy(adj))
+
+    # --- Post-crop vignette and grain (effects.py): on the finished, cropped picture ---
+    img = effects.apply_finishing(img, adj)
 
     # --- Edit strength ---
     # Blend the finished edit back toward the original. Above 100% it
@@ -809,6 +823,12 @@ def effective_adjustments(adj: dict) -> dict:
     for key, default in colormix.COLOR_DEFAULTS.items():
         if key in adj and key not in colormix.UNSCALED_KEYS:
             out[key] = default + (float(adj[key]) - default) * strength
+    for key in effects.STRENGTH_KEYS:
+        if key in adj:
+            out[key] = effects.DEFAULTS[key] + (float(adj[key]) - effects.DEFAULTS[key]) * strength
+    if adj.get("point_colors"):
+        out["point_colors"] = [{**p, **{k: p[k] * strength for k in ("hue_shift", "sat_shift", "lum_shift")}}
+                               for p in effects.normalise_points(adj["point_colors"])]
     if adj.get("masks"):
         out["masks"] = masks.scale_for_strength(adj["masks"], strength)
     if adj.get("lut"):
@@ -917,7 +937,7 @@ def _xmp_arguments(adj: dict, process_version: str | None = None) -> list[str]:
         f"-XMP-crs:ColorNoiseReduction={int(adj.get('color_nr', 0))}",
         f"-XMP-crs:ConvertToGrayscale={'True' if adj.get('monochrome') else 'False'}",
     ] + (colormix.xmp_arguments(adj) + tonecurve.xmp_arguments(adj.get("tone_curve"))
-         + retouch.xmp_arguments(adj, adj.get("_frame")) + _mask_arguments(adj)
+         + retouch.xmp_arguments(adj, adj.get("_frame")) + effects.xmp_arguments(adj) + _mask_arguments(adj)
          + lookxmp.xmp_arguments(adj) + profiles.xmp_arguments(adj))
 
 
@@ -1129,6 +1149,8 @@ def _read_adjustments_from(path: Path) -> dict | None:
     """Return slider values already stored in the file, or None if it has none."""
     out = _read_basic_adjustments_from(path)
     extra = retouch.read_from_file(path, EXIFTOOL_TIMEOUT)   # raises on a failed read
+    # Grain, vignette, calibration, Point Color and sharpening detail have their own read (their own offsets).
+    extra = {**extra, **effects.read_from_file(path, EXIFTOOL_TIMEOUT)}
     if extra:
         out = dict(out or {})
         out.update(extra)
@@ -1472,6 +1494,7 @@ def index():
         color_controls=COLOR_CONTROLS,
         mask_controls=masks.LOCAL_CONTROLS,
         m8_controls=retouch.CONTROLS,
+        effect_controls=EFFECT_CONTROLS,
         m8_toggles=retouch.TOGGLES,
         curve_presets=tonecurve.PRESETS,
         curve_parametric=[{"key": k, "label": k.capitalize()} for k in ("highlights", "lights", "darks", "shadows")],
@@ -1542,6 +1565,7 @@ def complete_adjustments(adj: dict, baseline_temp: int) -> dict:
     merged["tone_curve"] = tonecurve.normalise(adj.get("tone_curve"))
     merged["masks"] = masks.normalise_masks(adj.get("masks"))
     merged.update(retouch.complete(adj))
+    merged.update(effects.complete(adj))
     return merged
 
 
@@ -2699,6 +2723,7 @@ def api_reset():
         if not vc:
             masks.delete_sidecar(path)    # a virtual copy keeps its masks in the catalog
         neutral.update(copy.deepcopy(retouch.DEFAULTS))
+        neutral.update(effects.complete({}))
         if vc:
             catalog.update_virtual(LIBRARY_ROOT, vc[1]["id"], adjustments=neutral)
         rendered = render_with_histogram(path, neutral)

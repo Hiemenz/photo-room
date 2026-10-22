@@ -43,6 +43,7 @@ JS (`static/js/`, in load order)
 | `toast.js` | toasts and plain-language error wording (`toast`, `toastError`, `setWarning`) |
 | `develop-basic.js` | slider building (basic/presence/detail panels) |
 | `develop-hsl-grading.js` | colour mixer and grading |
+| `develop-effects.js` | grain, post-crop vignette, calibration, Point color, sharpen radius/detail/masking |
 | `develop-transform-lens-spots.js` | transform, lens corrections, spot removal |
 | `preview.js` | histogram, preview render, opening a file |
 | `develop-upgrade.js` | "Upgrade edit" banner for edits made with the old colour maths |

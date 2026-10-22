@@ -206,3 +206,8 @@ details.panel > summary { cursor: pointer; font-weight: 600; user-select: none; 
 #quick-develop .qd-group { display: inline-flex; align-items: center; gap: 1px; }
 #quick-develop .qd-group > span { min-width: 58px; text-align: center; }
 #quick-develop button { padding: 1px 5px; font-size: 11px; }
+
+/* Point color rows */
+.pt-row { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--line); }
+.pt-row .pt-del { cursor: pointer; text-decoration: underline; }
+#pt-list .ctrl { margin-top: 6px; }

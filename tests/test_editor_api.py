@@ -124,7 +124,7 @@ def test_open_returns_preview_and_full_slider_set(client, fake_rawpy, fake_exift
 
     assert res.status_code == 200
     assert data["preview"].startswith("data:image/jpeg;base64,")
-    expected = {c["key"] for c in CONTROLS + GLOBAL_CONTROLS} | set(editor.colormix.COLOR_DEFAULTS) | {"monochrome", "crop", "tone_curve", "masks", "edit_version"} | set(editor.retouch.DEFAULTS) | set(editor.lookxmp.DEFAULTS) | {"camera_profile"}
+    expected = {c["key"] for c in CONTROLS + GLOBAL_CONTROLS} | set(editor.colormix.COLOR_DEFAULTS) | {"monochrome", "crop", "tone_curve", "masks", "edit_version"} | set(editor.retouch.DEFAULTS) | set(editor.effects.complete({})) | set(editor.lookxmp.DEFAULTS) | {"camera_profile"}
     assert set(data["adjustments"]) == expected
 
 

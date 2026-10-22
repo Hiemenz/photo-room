@@ -60,6 +60,7 @@ function paintValue(c) {
   const el = $(`v-${c.key}`);
   if (c.key === "color_temp") el.textContent = `${Math.round(v)}K`;
   else if (c.key === "strength") el.textContent = `${Math.round(v)}%`;
+  else if (c.key === "sharpen_radius") el.textContent = v.toFixed(1);
   else if (c.key === "exposure") el.textContent = (v > 0 ? "+" : "") + v.toFixed(2);
   else el.textContent = (v > 0 ? "+" : "") + Math.round(v);
   $(`ctrl-${c.key}`).classList.toggle("changed", Math.abs(v - neutral[c.key]) > 1e-6);

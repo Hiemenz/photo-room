@@ -35,6 +35,7 @@ from pathlib import Path
 import numpy as np
 
 import colormix
+import effects
 import tonecurve
 
 FORMAT = "photo-room-preset"
@@ -47,11 +48,15 @@ NAME_MAX = 60
 # ---------------------------------------------------------------------------
 
 TONE = ("exposure", "contrast", "highlights", "shadows", "whites", "blacks")
-EFFECTS = ("clarity", "texture", "dehaze", "sharpness", "luminance_nr", "color_nr")
+_CAL = tuple(k for k in effects.DEFAULTS if k.startswith("cal_"))
+# Grain, vignette and the sharpening radius / detail / masking (effects.py). Point Color's list of
+# points is not a preset key.
+EFFECTS = ("clarity", "texture", "dehaze", "sharpness", "luminance_nr", "color_nr") + tuple(
+    k for k in effects.DEFAULTS if not k.startswith("cal_"))
 _COLOUR_MIX = tuple(k for k in colormix.COLOR_DEFAULTS if not k.startswith("grade_"))
 GROUPS: dict[str, tuple[str, ...]] = {
     "tone": TONE,
-    "colour": ("vibrance", "saturation", "monochrome") + _COLOUR_MIX,
+    "colour": ("vibrance", "saturation", "monochrome") + _COLOUR_MIX + _CAL,
     "curves": ("tone_curve",),
     "grading": tuple(k for k in colormix.COLOR_DEFAULTS if k.startswith("grade_")),
     "effects": EFFECTS,
@@ -67,7 +72,7 @@ KEY_GROUP = {k: g for g, keys in GROUPS.items() for k in keys}
 DEFAULTS: dict[str, object] = {
     **{k: 0 for k in TONE}, "vibrance": 0, "saturation": 0, "monochrome": False,
     **colormix.COLOR_DEFAULTS, "clarity": 0, "texture": 0, "dehaze": 0, "sharpness": 0,
-    "luminance_nr": 0, "color_nr": 0, "tint": 0, "lut": "", "lut_amount": 100, "straighten": 0.0, "crop": None,
+    "luminance_nr": 0, "color_nr": 0, **effects.DEFAULTS, "tint": 0, "lut": "", "lut_amount": 100, "straighten": 0.0, "crop": None,
 }
 _RANGES = {"exposure": (-5.0, 5.0), "tint": (-150, 150), "sharpness": (0, 150), "luminance_nr": (0, 100),
            "color_nr": (0, 100),
@@ -75,6 +80,7 @@ _RANGES = {"exposure": (-5.0, 5.0), "tint": (-150, 150), "sharpness": (0, 150), 
            "straighten": (-15.0, 15.0)}
 for _c in colormix.COLOR_CONTROLS:
     _RANGES[_c["key"]] = (_c["min"], _c["max"])
+_RANGES.update(effects.RANGES)
 _NUMERIC = set(_RANGES) | set(TONE) | {"vibrance", "saturation", "clarity", "texture", "dehaze"}
 HUE_KEYS = {k for k in colormix.COLOR_DEFAULTS if k.startswith("grade_") and k.endswith("_hue")}
 LUT_ID = re.compile(r"^(builtin-[a-z0-9-]{1,60}|[0-9a-f]{12})$")
@@ -532,6 +538,7 @@ _XMP_SIMPLE = {
     "Saturation": "saturation", "Clarity2012": "clarity", "Texture": "texture", "Dehaze": "dehaze",
     "Sharpness": "sharpness", "LuminanceSmoothing": "luminance_nr", "ColorNoiseReduction": "color_nr", "Tint": "tint",
 }
+_XMP_SIMPLE.update({tag: key for key, tag in effects.XMP_TAGS.items()})
 _XMP_COLOUR = {tag: key for key, tag in colormix.XMP_TAGS.items()}
 _XMP_PARAMETRIC = {tag: key for key, (tag, _) in tonecurve.PARAMETRIC_TAGS.items()}
 _XMP_CURVES = {tag: ch for ch, tag in tonecurve.POINT_TAGS.items()}

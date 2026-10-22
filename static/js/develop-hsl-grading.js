@@ -94,6 +94,7 @@ function paintAll() {
     paintValue(c);
   }
   paintWheels();
+  if (typeof paintPoints === "function") paintPoints();
   syncMixerView();
   $("s-monochrome").checked = !!values.monochrome;
   if (typeof paintMasks === "function") paintMasks();

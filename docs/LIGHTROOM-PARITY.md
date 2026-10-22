@@ -143,14 +143,14 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Point curve RGB + per channel | Done | monotone cubic, `crs:ToneCurvePV2012*`; checked with real exiftool in `tests/test_real_exiftool_xmp.py` | - | - |
 | Targeted adjustment tool (on-image drag) | Missing | no on-image tool for curve or HSL | S | L |
 | HSL: 8 bands (hue, sat, luminance) | Done | `colormix.py` | - | - |
-| Point Color | Missing | no code | M | L |
+| Point Color | Done (approximate) | up to 8 points (`effects.apply_point_colors`): a source colour, one Range, and hue / saturation / luminance shifts; `crs:PointColors` holds 7 of Lightroom's 14 per-point numbers, so points picked in Lightroom keep their source and shifts but not their separate range sliders; Lightroom's own points are not verified against this maths | - | - |
 | Colour grading (3 wheels + global, blending, balance) | Done | `colormix.py`, `crs:ColorGrade*` | - | - |
 
 ### 4. Develop: detail
 
 | Lightroom feature | Status | Evidence | Effort | Value |
 |---|---|---|---|---|
-| Sharpening amount | Partial | one `sharpness` 0-150, luminance-only unsharp; no Radius, Detail, Masking | S | H |
+| Sharpening amount, Radius, Detail, Masking | Done (approximate) | `sharpness` 0-150 plus `sharpen_radius` 0.5-3, `sharpen_detail` 0-100 (default 25 = the plain unsharp mask), `sharpen_masking` 0-100 (gradient edge mask); `crs:SharpenRadius/Detail/EdgeMasking`; `render_kernels.detail_stage`; not Adobe's algorithm | - | - |
 | Luminance noise reduction | Partial | `render_kernels.denoise_stage` (bilateral on luma), preview, tiles and export; no Detail/Contrast | S | M |
 | Colour noise reduction | Done | `color_nr` slider, edge-guarded chroma blur, `crs:ColorNoiseReduction` | - | - |
 | Output sharpening | Done | `export_finish.sharpen`, screen/matte/glossy x low/standard/high | - | - |
@@ -184,9 +184,9 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 
 | Lightroom feature | Status | Evidence | Effort | Value |
 |---|---|---|---|---|
-| Post-crop vignette | Missing | only the lens-profile vignette correction exists | S | M |
-| Grain | Missing | no code | S | M |
-| Calibration (primaries, shadow tint) | Missing | no code | M | L |
+| Post-crop vignette | Done (approximate) | amount, midpoint, roundness, feather (`crs:PostCropVignette*`), laid out on the cropped frame by absolute coordinates so tiles equal the frame; Highlight Priority / Colour Priority styles and Highlights are not implemented | - | - |
+| Grain | Done (approximate) | amount, size, roughness (`crs:GrainAmount/GrainSize/GrainFrequency`); seeded value noise keyed to absolute position, size scales with the frame so preview, tiles and export look alike | - | - |
+| Calibration (primaries, shadow tint) | Done (approximate) | red / green / blue primary hue and saturation as a white-preserving matrix on linear light, and a shadows tint (`crs:RedHue` ... `crs:ShadowTint`); edit version 2 only; Adobe's camera-profile calibration maths is not reproduced | - | - |
 | Soft proofing | Missing | no code (`PIL.ImageCms` could do it) | M | L |
 
 ### 8. Develop: history, snapshots, undo
@@ -259,10 +259,10 @@ Lightroom features is in the matrix above.
 | 3 | **Export metadata options**: All / all except location / copyright and contact only / none | The user's stated goal is metadata; privacy-safe sharing needs the middle options | S | `exporter.py`, `export_api.py`, `export_presets.py`, `static/js/export-dialog.js` |
 | 4 | ~~**Metadata panel (read-only)**: EXIF/IPTC/GPS in a Library/Develop side panel via cached `exiftool -j`~~ (done, with editing and presets) | Nothing in the UI shows camera, lens, ISO or GPS today | S | `libapi.py`, new `static/js/metadata.js`, `templates/editor.html` |
 | 5 | **Copyright / IPTC preset applied on export and import**: Creator, Copyright, Credit, caption; writes XMP/IPTC on the output (and optionally the sidecar) | Photographers stamp copyright on every file; no write path exists | M | `exporter.py`, `library.py`, export dialog |
-| 6 | **Sharpening Radius / Detail / Masking** | One slider is the main Detail-panel gap | S | `render_kernels.py`, `editor.py`, `CONTROLS`, XMP map |
+| 6 | ~~**Sharpening Radius / Detail / Masking**~~ (done) | One slider is the main Detail-panel gap | S | `render_kernels.py`, `editor.py`, `CONTROLS`, XMP map |
 | 7 | **Export formats: 16-bit TIFF and WebP** (AVIF later), same metadata copy | 16-bit hand-off to other editors and print labs; JPEG/PNG only today | S | `exporter.py`, `process.py`, `test_real_exiftool_export.py` |
 | 8 | **Library shows JPEG/HEIC (and hides RAW+JPEG twins)**, no longer orphans what `watch-cards` imports; videos listed but not editable | Finding 3 | M | `libindex.py`, `process.py`, `thumbs.py`, `cardwatch.py` |
-| 9 | **Post-crop vignette and grain** | Standard look tools, tiny maths, seeded so preview equals export | S | `render_kernels.py`, `editor.py`, XMP map |
+| 9 | ~~**Post-crop vignette and grain**~~ (done) | Standard look tools, tiny maths, seeded so preview equals export | S | `render_kernels.py`, `editor.py`, XMP map |
 | 10 | **Crop completeness**: flip orientation, 90-degree rotate, original/custom ratio, ratio lock, more overlays | Common daily operations; portrait crops are awkward now | S | `static/js/develop-crop.js`, `geometry.py` |
 | 11 | (Done) **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
 | 12 | **Import dialog**: choose frames, destination, rename template, keywords/copyright/preset on import, Move vs Copy | The Lightroom Import experience; ROADMAP "Not wired yet" | M | `import_api.py`, `cardwatch.py`, `static/js/import.js` |
@@ -280,8 +280,8 @@ Lightroom features is in the matrix above.
 | 24 | **AI denoise (optional extra, onnxruntime)** after package 1 lands | Best-in-class NR for ISO 6400+ | L | new `denoise_ai.py`, `pyproject.toml` extra |
 | 25 | **AI subject / sky masks (optional extra)** | Fastest local-edit workflow in Lightroom today | L | new `aimask.py`, `masks.py` |
 
-Smaller items not in the top 25: Calibration panel (M), targeted adjustment
-tool (S), Point Color (M), soft proofing (M), Guided Upright (M), red eye (S),
+Smaller items not in the top 25: targeted adjustment
+tool (S), soft proofing (M), Guided Upright (M), red eye (S),
 reference view (S), grid density options (S), Painter (S), collection sets (S),
 contact-sheet PDF (S), post-export actions (S), Map module (M).
 
