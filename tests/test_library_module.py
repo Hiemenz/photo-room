@@ -45,7 +45,7 @@ def test_xmp_field_mapping_is_camera_raw_standard():
     assert xmp_args(label="blue") == ["-XMP-xmp:Label=Blue"]
     assert xmp_args(label="") == ["-XMP-xmp:Label="]
     assert xmp_args(keywords=["a", "b"]) == [
-        "-XMP-dc:Subject=", "-XMP-dc:Subject+=a", "-XMP-dc:Subject+=b"]
+        "-XMP-dc:Subject=a", "-XMP-dc:Subject=b"]
     assert xmp_args(keywords=[]) == ["-XMP-dc:Subject="]
     assert xmp_args() == []
 
@@ -183,15 +183,18 @@ class FakeExiftool:
         targets = [Path(a) for a in args if not a.startswith("-")]
         for target in targets:
             m = self.meta.setdefault(target.name, {})
+            subject_set = False
             for a in args:
                 if a.startswith("-XMP-xmp:Rating="):
                     m["Rating"] = int(a.split("=", 1)[1])
                 elif a.startswith("-XMP-xmp:Label="):
                     m["Label"] = a.split("=", 1)[1]
-                elif a == "-XMP-dc:Subject=":
-                    m["Subject"] = []
-                elif a.startswith("-XMP-dc:Subject+="):
-                    m.setdefault("Subject", []).append(a.split("=", 1)[1])
+                elif a.startswith("-XMP-dc:Subject="):       # repeated assignments replace the list
+                    val = a.split("=", 1)[1]
+                    if not subject_set:
+                        m["Subject"], subject_set = [], True
+                    if val:
+                        m["Subject"].append(val)
             self.clock += 10
             os.utime(target, (self.clock, self.clock))
         return subprocess.CompletedProcess(cmd, 0, stdout="1 image files updated", stderr="")

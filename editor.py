@@ -44,6 +44,7 @@ import geometry
 import masks
 import libindex
 import libapi
+import kwapi
 import metadata_api
 import library
 import lookxmp
@@ -130,6 +131,7 @@ import develop_api  # noqa: E402  (auto tone / white balance / clipping / tiles)
 
 app.register_blueprint(develop_api.bp)
 app.register_blueprint(libapi.bp)
+app.register_blueprint(kwapi.bp)
 app.register_blueprint(metadata_api.bp)
 
 import cull_api  # noqa: E402  (smart culling and Auto edit)

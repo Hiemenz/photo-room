@@ -98,6 +98,9 @@
       <h3><span>Collections</span><span>
         <button id="col-new" title="New collection (from the selection, if any)">+</button><button id="col-smart" title="New smart collection">+ Smart</button></span></h3>
       <div id="col-list"></div>
+      <h3><span>Keywords</span><span><button id="kw-new" title="New keyword">+</button></span></h3>
+      <input id="kw-search" type="search" placeholder="Find keyword" aria-label="Find keyword">
+      <div id="kw-tree" role="tree" aria-label="Keyword list"></div>
       <h3><span>Folders</span><span>
         <label class="fo-sub" title="Show photos of subfolders too"><input type="checkbox" id="fo-sub" checked> sub</label>
         <button id="fo-new" title="New folder inside the selected folder">+</button><button id="fo-undo" title="Undo the last move or rename" disabled>Undo</button></span></h3>
@@ -616,6 +619,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/keyboard.js') }}"></script>
 <script src="{{ asset('js/library-module.js') }}"></script>
 <script src="{{ asset('js/collections.js') }}"></script>
+<script src="{{ asset('js/keyword-panel.js') }}"></script>
 <script src="{{ asset('js/library-folders.js') }}"></script>
 <script src="{{ asset('js/compare-survey.js') }}"></script>
 <script src="{{ asset('js/cull.js') }}"></script>

@@ -93,20 +93,31 @@ def normalize_keywords(keywords) -> list[str]:
     return out
 
 
-def xmp_args(label=None, keywords=None) -> list[str]:
+def _list_args(tag: str, values: list[str]) -> list[str]:
+    """
+    Replace a list tag. Repeated ``-TAG=value`` assignments replace the list;
+    ``-TAG=`` followed by ``-TAG+=value`` does NOT clear what was there on
+    current exiftool, so removed keywords used to linger.
+    """
+    return [f"-{tag}={v}" for v in values] or [f"-{tag}="]
+
+
+def xmp_args(label=None, keywords=None, hier=None) -> list[str]:
     """
     exiftool arguments writing the Camera Raw / Dublin Core fields.
 
     ``label=None`` / ``keywords=None`` leave that field alone; an empty label
-    or list clears it. The list is cleared before being refilled so removed
-    keywords really disappear.
+    or list clears it. The list is replaced as a whole so removed keywords
+    really disappear. ``hier`` (paths like "France|Paris") is written
+    to ``XMP-lr:HierarchicalSubject`` the same way; None leaves it alone.
     """
     args: list[str] = []
     if label is not None:
         args.append(f"-XMP-xmp:Label={normalize_label(label)}")
     if keywords is not None:
-        args.append("-XMP-dc:Subject=")
-        args.extend(f"-XMP-dc:Subject+={kw}" for kw in normalize_keywords(keywords))
+        args.extend(_list_args("XMP-dc:Subject", normalize_keywords(keywords)))
+    if hier is not None:
+        args.extend(_list_args("XMP-lr:HierarchicalSubject", normalize_keywords(list(hier))))
     return args
 
 
