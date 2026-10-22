@@ -118,9 +118,9 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Metadata presets | Missing | no code | S | H (for copyright) |
 | Library filter bar | Partial | rating, flag, label, keyword, camera, date range, free text, sort by 8 keys (`library.filter_items`); lens/ISO exist in the API only (finding 4); no focal length, file type, edit status, GPS | S | M |
 | Folders panel (tree, move, rename, delete) | Missing | `/api/files` is a flat list; nothing in the app moves or renames raws (safe by design) | M | M |
-| Quick Develop | Partial | Apply current or copied settings to a selection (`/api/batch_apply`, `/api/looks/preset/apply_batch`); no relative-step panel | S | L |
+| Quick Develop | Done | Library strip with relative step buttons (small and large steps for exposure, contrast, highlights, shadows, whites, blacks, temp, tint, vibrance, saturation, clarity, texture, dehaze) and Undo: `static/js/quick-develop.js`, `/api/sync_settings` and `/api/sync_undo` (`quick_api.py`). One History step per photo; framing, spots and masks untouched; absolute copy still via `/api/batch_apply`. `tests/test_quick_sync.py`. Not browser-verified | - | - |
 | Sync / copy-paste settings | Done | `Mod+C/V`, WB re-anchored per camera; spots and crop never copied. `tests/test_batch.py` | - | - |
-| Auto Sync (edit many at once) | Missing | no code | S | M |
+| Auto Sync (edit many at once) | Done | Develop switch: with other photos selected, each slider release is sent to them via `/api/sync_settings` (WB re-anchored per camera, crop/straighten/spots/masks excluded, one History step per photo, undoable via `/api/sync_undo`). Slider release only (not curve, masks, HSL wheels). `tests/test_quick_sync.py`; UI not browser-verified | - | - |
 | Painter tool | Missing | no code | S | L |
 | Catalog and backup | Partial | no catalogue: state is JSON/SQLite beside the photos (`.photo-room-library.json`, `.photo-room-catalog.json`, `*.photoroom.json`, `.photo-room-cull.sqlite`). Atomic writes, `.bad` quarantine; no scheduled backup | S | M |
 | Smart previews (offline) | Partial | 2048 px 8-bit decodes for Quick look only; Develop needs the raw | M | L |
@@ -295,7 +295,7 @@ Lightroom features is in the matrix above.
 Smaller items not in the top 25: Calibration panel (M), targeted adjustment
 tool (S), Point Color (M), soft proofing (M), Guided Upright (M), red eye (S),
 reference view (S), grid density options (S), Painter (S), collection sets (S),
-Auto Sync (S), contact-sheet PDF (S), post-export actions (S), Map module (M).
+contact-sheet PDF (S), post-export actions (S), Map module (M).
 
 ## Already queued (not repeated above)
 

@@ -140,6 +140,10 @@ import import_api  # noqa: E402  (drag-and-drop / button import, smart previews)
 
 app.register_blueprint(import_api.bp)
 
+import quick_api  # noqa: E402  (Auto Sync and Quick Develop)
+
+app.register_blueprint(quick_api.bp)
+
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 security.install(app)
