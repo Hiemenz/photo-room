@@ -788,6 +788,22 @@ default, with `--delete-dry-run`) removes only individually verified photos from
 panel appears in the editor. Systemd, launchd and udev examples and the caveats are in
 [docs/CARD-IMPORT.md](docs/CARD-IMPORT.md).
 
+## Culling from your phone (opt-in)
+
+```bash
+uv run photo-room cull-serve ~/Pictures/library --lan [--folder 2024/05-01] [--idle-minutes 20] [--devices 1]
+```
+
+Starts a separate, minimal server (not the editor) on your LAN address and prints a one-time pairing
+link (and a QR code if the optional `qrcode` package is installed). Open it on a phone on the same
+Wi-Fi: swipe right to pick, left to reject, up for 5 stars, tap to zoom, Undo to step back. It shows
+smart-preview JPEGs only, never originals, and writes only ratings and flags through the editor's
+normal index/sidecar path. The token works once per paired phone (cookie afterwards), failed
+attempts are rate limited, every route except the page, item list, preview and mark is a 404, and
+it shuts down on Ctrl+C or after the idle timeout. Without `--lan` it listens on this machine
+only. The connection is plain HTTP: use a network you trust. The editor itself is unchanged and
+still refuses non-local hosts.
+
 ## Culling a shoot
 
 ```bash

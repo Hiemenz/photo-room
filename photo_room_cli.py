@@ -6,6 +6,7 @@
     photo-room import-lightroom CATALOG --library DIR   import a Lightroom .lrcat (see lrimport.py)
     photo-room backup <library> -o <dest> | restore <backup> <library> [--force]   snapshot / restore library state
     photo-room watch-cards [library]  import + verify + safely eject cards as they are inserted
+    photo-room cull-serve LIB --lan   phone culling over the LAN (token protected, opt-in)
 
 The doctor is plain standard library on purpose: it has to keep working when
 the thing it is diagnosing (numpy, rawpy, ...) is the part that is broken.
@@ -310,6 +311,11 @@ def main(argv=None) -> None:
     if argv and argv[0] == "import-lightroom":
         import lrimport
         sys.exit(lrimport.main(argv[1:]))
+    if argv and argv[0] == "cull-serve":
+        if preflight():
+            sys.exit(launch_editor([]))
+        import lancull
+        sys.exit(lancull.main(argv[1:]))
     if argv and argv[0] == "watch-cards":
         if preflight():
             sys.exit(launch_editor([]))
