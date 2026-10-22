@@ -47,7 +47,7 @@ NAME_MAX = 60
 # ---------------------------------------------------------------------------
 
 TONE = ("exposure", "contrast", "highlights", "shadows", "whites", "blacks")
-EFFECTS = ("clarity", "texture", "dehaze", "sharpness", "luminance_nr")
+EFFECTS = ("clarity", "texture", "dehaze", "sharpness", "luminance_nr", "color_nr")
 _COLOUR_MIX = tuple(k for k in colormix.COLOR_DEFAULTS if not k.startswith("grade_"))
 GROUPS: dict[str, tuple[str, ...]] = {
     "tone": TONE,
@@ -67,9 +67,10 @@ KEY_GROUP = {k: g for g, keys in GROUPS.items() for k in keys}
 DEFAULTS: dict[str, object] = {
     **{k: 0 for k in TONE}, "vibrance": 0, "saturation": 0, "monochrome": False,
     **colormix.COLOR_DEFAULTS, "clarity": 0, "texture": 0, "dehaze": 0, "sharpness": 0,
-    "luminance_nr": 0, "tint": 0, "lut": "", "lut_amount": 100, "straighten": 0.0, "crop": None,
+    "luminance_nr": 0, "color_nr": 0, "tint": 0, "lut": "", "lut_amount": 100, "straighten": 0.0, "crop": None,
 }
 _RANGES = {"exposure": (-5.0, 5.0), "tint": (-150, 150), "sharpness": (0, 150), "luminance_nr": (0, 100),
+           "color_nr": (0, 100),
            "lut_amount": (0, 100), "temp_ratio": (0.4, 2.5), "temp_shift": (0.4, 2.5),
            "straighten": (-15.0, 15.0)}
 for _c in colormix.COLOR_CONTROLS:
@@ -529,7 +530,7 @@ _XMP_SIMPLE = {
     "Exposure2012": "exposure", "Contrast2012": "contrast", "Highlights2012": "highlights",
     "Shadows2012": "shadows", "Whites2012": "whites", "Blacks2012": "blacks", "Vibrance": "vibrance",
     "Saturation": "saturation", "Clarity2012": "clarity", "Texture": "texture", "Dehaze": "dehaze",
-    "Sharpness": "sharpness", "LuminanceSmoothing": "luminance_nr", "Tint": "tint",
+    "Sharpness": "sharpness", "LuminanceSmoothing": "luminance_nr", "ColorNoiseReduction": "color_nr", "Tint": "tint",
 }
 _XMP_COLOUR = {tag: key for key, tag in colormix.XMP_TAGS.items()}
 _XMP_PARAMETRIC = {tag: key for key, (tag, _) in tonecurve.PARAMETRIC_TAGS.items()}

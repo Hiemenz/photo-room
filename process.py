@@ -991,7 +991,7 @@ def cmd_export(args: argparse.Namespace) -> None:
         opts = exporter.ExportOptions(
             format=args.format, quality=args.quality, long_edge=args.long_edge,
             colorspace=args.colorspace, template=args.template,
-            keep_metadata=not args.no_metadata, bit_depth=args.bit_depth,
+            keep_metadata=not args.no_metadata, metadata=args.metadata, bit_depth=args.bit_depth,
         ).validate()
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1298,7 +1298,7 @@ def main():
     ex = subs.add_parser("export", help="Render edited photos to PNG/JPEG, keeping all metadata")
     ex.add_argument("inputs", nargs="+", help="Raw/DNG file(s) or folder(s)")
     ex.add_argument("-o", "--output", help="Output folder (default: ./export)")
-    ex.add_argument("--format", choices=["png", "jpeg", "jpg"], default="jpeg")
+    ex.add_argument("--format", choices=["png", "jpeg", "jpg", "tiff", "tif", "webp"], default="jpeg")
     ex.add_argument("--quality", type=int, default=92, help="JPEG quality 1-100 (default: 92)")
     ex.add_argument("--long-edge", type=int, help="Resize so the longer side is this many pixels (never upscales)")
     ex.add_argument("--colorspace", choices=["srgb", "adobergb", "prophoto"],
@@ -1307,6 +1307,8 @@ def main():
                     help="Filename template: {name} {date} {seq} {width} {height} (default: {name})")
     ex.add_argument("--bit-depth", type=int, choices=[8, 16], default=8,
                     help="PNG bit depth per channel (16 is PNG only; default: 8)")
+    ex.add_argument("--metadata", choices=["all", "copyright", "no_location", "no_develop", "none"],
+                    default="all", help="Which metadata to copy (default all)")
     ex.add_argument("--no-metadata", action="store_true", help="Do not copy EXIF/GPS/IPTC/XMP from the source")
     ex.add_argument("-v", "--verbose", action="store_true")
 

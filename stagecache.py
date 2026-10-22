@@ -41,12 +41,13 @@ STAGE_FIELDS: dict[int, frozenset] = {
     # The LUT runs at the start of the detail stage (on the finished colour edit), so its
     # settings belong to DETAIL and to everything after it. Its own sub-result is cached
     # under the GRADE key, so the intensity slider only re-blends.
-    DETAIL: frozenset({"clarity", "texture", "dehaze", "sharpness", "lut", "lut_amount"}),
+    DETAIL: frozenset({"clarity", "texture", "dehaze", "sharpness", "lut", "lut_amount",
+                       "luminance_nr", "color_nr"}),
     FINAL: frozenset({"masks", "strength", "monochrome", "grade_blending", "grade_balance", "lut", "lut_amount"}
                      | {f"grade_{r}_{c}" for r in _RANGES for c in ("hue", "sat", "lum")}),
 }
-# Settings that never reach a preview pixel (noise reduction is not previewed).
-IGNORED = frozenset({"luminance_nr"})
+# Settings that never reach a preview pixel (none today: noise reduction is part of DETAIL).
+IGNORED: frozenset = frozenset()
 
 
 def _dumps(obj) -> str:

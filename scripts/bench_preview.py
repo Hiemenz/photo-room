@@ -43,6 +43,8 @@ DRAGS = [
     ("grade_shadow_sat", "grade_shadow_sat", [2 * i for i in range(1, 40)]),
     ("clarity", "clarity", [2 * i for i in range(1, 40)]),
     ("sharpness", "sharpness", [3 * i for i in range(1, 40)]),
+    ("noise reduction", "luminance_nr", [2 * i for i in range(1, 40)]),
+    ("colour noise red.", "color_nr", [2 * i for i in range(1, 40)]),
 ]
 
 

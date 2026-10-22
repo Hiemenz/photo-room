@@ -50,6 +50,11 @@ RULE_OPS = {
     "keyword": ("has", "not_has"),
     "camera": ("is", "contains"),
     "date": ("on", "after", "before"),
+    "lens": ("is", "contains"),
+    "iso": ("ge", "le", "eq"),
+    "focal": ("ge", "le", "eq"),
+    "edited": ("is",),
+    "filetype": ("is",),
 }
 MATCH_MODES = ("all", "any")
 
@@ -123,7 +128,21 @@ def normalize_rule(rule) -> dict:
         value = "none" if value == "unflagged" else value
     elif field == "label":
         value = "none" if str(value or "").lower() in ("", "none") else library.normalize_label(value)
-    elif field in ("keyword", "camera"):
+    elif field in ("iso", "focal"):
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{field} rules need a number") from None
+        if not 0 <= value <= 1_000_000:
+            raise ValueError(f"{field} is out of range")
+        value = int(value) if value == int(value) else value
+    elif field == "edited":
+        value = str(value or "").lower()
+        if value not in ("edited", "unedited"):
+            raise ValueError("Edit state must be edited or unedited")
+    elif field == "filetype":
+        value = library.normalize_filetype(value)
+    elif field in ("keyword", "camera", "lens"):
         value = " ".join(str(value or "").split())
         if not value:
             raise ValueError(f"A {field} rule needs a value")
@@ -155,9 +174,18 @@ def rule_matches(item: dict, rule: dict) -> bool:
     if field == "keyword":
         has = value.lower() in (k.lower() for k in item["keywords"])
         return has if op == "has" else not has
-    if field == "camera":
-        cam = item["camera"].lower()
+    if field in ("camera", "lens"):
+        cam = (item.get(field) or "").lower()
         return cam == value.lower() if op == "is" else value.lower() in cam
+    if field in ("iso", "focal"):
+        n = item.get(field) or 0
+        if not n:
+            return False
+        return n >= value if op == "ge" else n <= value if op == "le" else n == value
+    if field == "edited":
+        return bool(item.get("edited")) == (value == "edited")
+    if field == "filetype":
+        return library.item_filetype(item) == value
     day = (item.get("date") or "")[:10]
     if not day:
         return False
@@ -430,7 +458,8 @@ def virtual_items(root: Path, source_items: list[dict]) -> list[dict]:
             "rating": rating, "label": entry.get("label", ""),
             "keywords": list(entry.get("keywords", [])),
             "camera": src["camera"], "date": src["date"], "flag": flag,
-            "virtual": True, "source": entry["source"],
+            **{k: src[k] for k in ("lens", "iso", "focal", "edited", "gps") if k in src},
+            "virtual": True, "src_path": src["path"], "source": entry["source"],
         })
     return out
 

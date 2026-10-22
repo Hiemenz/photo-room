@@ -8,7 +8,7 @@ let liveSource = null, liveBadge = null, liveReloadTimer = 0, liveFilesTimer = 0
 const liveStats = { events: 0, patched: 0, reloads: 0 };       // read by the tests
 
 function liveFiltering() {
-  return !!libCollection || ["lf-rating", "lf-flag", "lf-label", "lf-keyword", "lf-camera", "lf-from", "lf-to", "lf-q"]
+  return !!libCollection || LIB_FILTER_IDS
     .some(id => $(id).value) || $("lf-sort").value !== "name";
 }
 

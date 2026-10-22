@@ -9,6 +9,9 @@ Insert a card and Photo Room copies everything new into the library, checks ever
 second time, ejects the card, and only then tells you it is safe to pull out. The editor shows
 a progress panel while this happens and the new photos appear in the Library grid by themselves.
 
+`photo-room ingest cards` and `ingest watch` use the same locations (macOS `/Volumes`; Linux
+`/media/$USER`, `/run/media/$USER`, `/mnt`).
+
 This is separate from `photo-room ingest`, which also converts and auto-edits. `watch-cards`
 only brings files in, verifies them and ejects; open the editor afterwards.
 
@@ -166,3 +169,10 @@ recommended setup; use the rule only if you do not want a resident process.
   of `photo-room ingest` are not run.
 - Writing to the library goes through the editor's change feed only via the rescan when an
   import finishes; photos do not appear one by one during the import.
+
+## What the Library shows afterwards
+
+Raws are editable. JPEG and HEIC files copied by `watch-cards` appear as
+view-only cells (thumbnail, rating, flag, label; no Develop), and videos as
+placeholder cells. A JPEG that has a same-named raw beside it is hidden so the
+pair shares one entry. HEIC thumbnails need `pillow-heif`.

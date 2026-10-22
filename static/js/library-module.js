@@ -7,19 +7,28 @@ const LABEL_KEYS = { "6": "Red", "7": "Yellow", "8": "Green", "9": "Blue" };
 let module_ = "develop";
 let libState = { items: [], total: 0, libraryTotal: 0, loading: false, gen: 0 };
 let libCollection = "";      // active collection id, "" for the whole library
+let libFolder = null;        // active folder path ("" = root), null for no folder filter
+let libFolderSub = true;     // include subfolders of the active folder
 let libActive = null;        // path of the keyboard cursor
 let libMulti = new Set();    // extra selected paths
 let libThumbObs = null, libPageObs = null;
 const LIB_PAGE = 200;
 
+// [element id, query key] of every filter control in #lib-bar (also used to decide "is a filter active").
+const LIB_FILTERS = [["lf-flag","flag"],["lf-label","label"],["lf-keyword","keyword"],["lf-camera","camera"],
+  ["lf-lens","lens"],["lf-iso-min","iso_min"],["lf-iso-max","iso_max"],["lf-focal-min","focal_min"],
+  ["lf-focal-max","focal_max"],["lf-filetype","filetype"],["lf-edit","edit"],["lf-gps","gps"],
+  ["lf-from","date_from"],["lf-to","date_to"],["lf-q","q"]];
+const LIB_FILTER_IDS = ["lf-rating", ...LIB_FILTERS.map(f => f[0])];
+
 function libQuery(offset) {
   const q = new URLSearchParams({ offset, limit: LIB_PAGE,
     sort: $("lf-sort").value, dir: $("lf-dir").value });
   if (libCollection) q.set("collection", libCollection);
+  if (libFolder !== null) { q.set("folder", libFolder); if (libFolderSub) q.set("subfolders", "1"); }
   const [rmin, rop] = $("lf-rating").value.split("|");
   if (rmin) { q.set("rating_min", rmin); if (rop) q.set("rating_op", rop); }
-  for (const [id, key] of [["lf-flag","flag"],["lf-label","label"],["lf-keyword","keyword"],
-       ["lf-camera","camera"],["lf-from","date_from"],["lf-to","date_to"],["lf-q","q"]]) {
+  for (const [id, key] of LIB_FILTERS) {
     if ($(id).value) q.set(key, $(id).value);
   }
   return q;
@@ -54,6 +63,8 @@ async function libLoad(reset) {
   if (data.facets) {
     fillSelect("lf-keyword", data.facets.keywords.map(k => k.keyword), "Any keyword");
     fillSelect("lf-camera", data.facets.cameras, "Any camera");
+    fillSelect("lf-lens", data.facets.lenses || [], "Any lens");
+    fillSelect("lf-filetype", data.facets.filetypes || [], "Any file type");
     $("kw-list").innerHTML = data.facets.keywords.map(k => `<option value="${k.keyword.replace(/"/g, "&quot;")}">`).join("");
   }
   libAppend(data.items);
@@ -92,7 +103,9 @@ function paintThumbProgress(st) {
 
 function libCell(it) {
   const cell = document.createElement("div");
-  cell.className = "lcell" + (it.virtual ? " virtual" : "");
+  const kind = it.kind || "raw";
+  cell.className = "lcell" + (it.virtual ? " virtual" : "") + (kind === "video" ? " video" : "") +
+    (it.editable === false ? " viewonly" : "");
   cell.dataset.path = it.path;
   cell.draggable = true;
   cell.addEventListener("dragstart", (e) => {
@@ -102,16 +115,30 @@ function libCell(it) {
   });
   const img = document.createElement("img");
   img.alt = it.name;
-  img.dataset.src = `/api/thumb?path=${encodeURIComponent(it.path)}`;
-  img.addEventListener("error", () => { img.style.visibility = "hidden"; });
+  const ext = (it.name.split(".").pop() || "").toUpperCase();
+  const ph = document.createElement("div"); ph.className = "ph";
+  ph.textContent = kind === "video" ? "\u25B6 " + ext : "";
+  const noThumb = () => { img.style.visibility = "hidden"; cell.classList.add("nothumb"); ph.textContent ||= ext; };
+  if (kind === "video") { img.removeAttribute("src"); noThumb(); }
+  else img.dataset.src = `/api/thumb?path=${encodeURIComponent(it.path)}`;
+  img.addEventListener("error", noThumb);
+  const tag = document.createElement("div"); tag.className = "kindtag";
+  tag.textContent = kind === "raw" ? "" : (kind === "video" ? "VIDEO" : ext + " \u00B7 view only");
   const badge = document.createElement("div"); badge.className = "badge";
   const meta = document.createElement("div"); meta.className = "meta";
   meta.innerHTML = `<span class="dot"></span><span class="nm"></span><span class="st"></span>`;
   meta.querySelector(".nm").textContent = it.name;
-  cell.append(img, badge, meta);
+  cell.append(img, ph, tag, badge, meta);
   cell.addEventListener("click", (e) => libClick(e, it.path));
-  cell.addEventListener("dblclick", () => openInDevelop(it.path));
-  libThumbObs.observe(img);
+  cell.addEventListener("dblclick", () => {
+    if (it.editable === false) {
+      toast(kind === "video" ? "Videos can't be edited" : "JPEG/HEIC files are view-only",
+        { kind: "info", why: "photo-room edits raw files. This file is listed so you can see, rate and flag it." });
+      return;
+    }
+    openInDevelop(it.path);
+  });
+  if (kind !== "video") libThumbObs.observe(img);
   return cell;
 }
 
@@ -233,7 +260,7 @@ async function libKeywords(remove) {
 // the current filter, re-query (debounced so rapid culling does not thrash).
 let libRefilterTimer = null;
 function libRefilterSoon() {
-  const filtering = libCollection || ["lf-rating","lf-flag","lf-label","lf-keyword","lf-camera","lf-q"].some(id => $(id).value)
+  const filtering = libCollection || LIB_FILTER_IDS.some(id => $(id).value)
     || $("lf-sort").value !== "name";
   if (!filtering) return;
   clearTimeout(libRefilterTimer);
@@ -274,12 +301,12 @@ libPageObs = new IntersectionObserver((entries) => {
   if (entries.some(e => e.isIntersecting)) libLoad(false);
 }, { root: $("lib-grid"), rootMargin: "600px" });
 
-["lf-rating","lf-flag","lf-label","lf-keyword","lf-camera","lf-from","lf-to","lf-sort","lf-dir"].forEach(id =>
+[...LIB_FILTER_IDS.filter(id => id !== "lf-q"), "lf-sort", "lf-dir"].forEach(id =>
   $(id).addEventListener("change", (e) => { e.target.blur(); libLoad(true); }));
 let libSearchTimer = null;
 $("lf-q").addEventListener("input", () => { clearTimeout(libSearchTimer); libSearchTimer = setTimeout(() => libLoad(true), 250); });
 $("lf-clear").addEventListener("click", () => {
-  ["lf-rating","lf-flag","lf-label","lf-keyword","lf-camera","lf-from","lf-to","lf-q"].forEach(id => $(id).value = "");
+  LIB_FILTER_IDS.forEach(id => $(id).value = "");
   libLoad(true);
 });
 document.querySelectorAll("#lib-foot .swatch").forEach(b =>
