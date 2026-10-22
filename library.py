@@ -154,6 +154,11 @@ def write_xmp(path: Path, label=None, keywords=None) -> None:
     args = xmp_args(label, keywords)
     if not args:
         return
+    write_target_args(path, args)
+
+
+def write_target_args(path: Path, args: list[str]) -> None:
+    """Apply exiftool tag assignments to a photo's metadata target (sidecar, created if missing)."""
     target = meta_target(path)
     with fsutil.lock_for(target):
         if target != path and not target.exists():

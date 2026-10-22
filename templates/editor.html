@@ -33,6 +33,7 @@
 <link rel="stylesheet" href="{{ asset('css/cull.css') }}">
 <link rel="stylesheet" href="{{ asset('css/looks.css') }}">
 <link rel="stylesheet" href="{{ asset('css/ui.css') }}">
+<link rel="stylesheet" href="{{ asset('css/metadata.css') }}">
 </head>
 <body>
 
@@ -91,6 +92,7 @@
       <div id="col-list"></div>
     </aside>
     <div id="lib-grid"></div>
+    <aside id="lib-meta" aria-label="Metadata"></aside>
     <div id="lib-drop" hidden><div>Drop photos or a folder to import them<small>Copied with a checksum check; nothing is overwritten and duplicates are skipped</small></div></div>
   </div>
   <div id="import-panel" hidden role="status" aria-live="polite">
@@ -391,6 +393,33 @@
       <ul id="match-report" class="hint"></ul>
     </section>
   </details>
+  <details class="panel" id="meta-panel" open>
+    <summary>Metadata</summary>
+    <div id="meta-target" class="meta-note">No photo</div>
+    <dl id="meta-info"></dl>
+    <div id="meta-edit">
+      <label>Title<input id="meta-title" data-field="title" maxlength="2000" autocomplete="off"></label>
+      <label>Caption<textarea id="meta-caption" data-field="caption" rows="3" maxlength="2000"></textarea></label>
+      <label>Creator<input id="meta-creator" data-field="creator" maxlength="2000" autocomplete="off"></label>
+      <label>Copyright<input id="meta-copyright" data-field="copyright" maxlength="2000" autocomplete="off" placeholder="(c) 2026 Your Name"></label>
+      <label>Copyright status
+        <select id="meta-status" data-field="copyright_status">
+          <option value="unknown">Unknown</option><option value="copyrighted">Copyrighted</option>
+          <option value="public_domain">Public domain</option>
+        </select></label>
+      <label>Usage terms<textarea id="meta-usage_terms" data-field="usage_terms" rows="2" maxlength="2000"></textarea></label>
+      <div class="meta-row">
+        <span class="meta-note">Saved to the .xmp sidecar when you leave a field. The raw is never touched.</span>
+        <button id="meta-undo" type="button" disabled title="Undo the last metadata change">Undo</button>
+      </div>
+    </div>
+    <div id="meta-presets" class="meta-row">
+      <select id="meta-preset" aria-label="Metadata preset"><option value="">Metadata preset&hellip;</option></select>
+      <button id="meta-preset-apply" type="button" disabled title="Write the preset's filled fields to the selection">Apply</button>
+      <button id="meta-preset-save" type="button" title="Save the filled fields as a preset">Save&hellip;</button>
+      <button id="meta-preset-del" type="button" disabled title="Delete the chosen preset">Delete</button>
+    </div>
+  </details>
   <div id="globals"></div>
   <div id="meta">
     <strong>No photo</strong><span id="source"></span>
@@ -564,6 +593,7 @@ const RAW_SUFFIXES = {{ raw_suffixes | tojson }};
 <script src="{{ asset('js/library-live.js') }}"></script>
 <script src="{{ asset('js/import.js') }}"></script>
 <script src="{{ asset('js/card-watch.js') }}"></script>
+<script src="{{ asset('js/metadata.js') }}"></script>
 <script src="{{ asset('js/init.js') }}"></script>
 <script src="{{ asset('js/export-dialog.js') }}"></script>
 </body>

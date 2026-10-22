@@ -424,7 +424,10 @@ def copy_metadata(source: Path, dest: Path, size: tuple[int, int] | None = None,
     """
     cmd = ["-TagsFromFile", str(source), *metadata_args(mode)]
     sidecar = source.with_suffix(".xmp")
-    if mode != "copyright" and source.suffix.lower() != ".xmp" and sidecar.exists():
+    if mode == "copyright" and source.suffix.lower() != ".xmp" and sidecar.exists():
+        # Rights typed in the metadata panel live in the sidecar; they win over the file's own.
+        cmd += ["-TagsFromFile", str(sidecar), *_COPYRIGHT_TAGS]
+    elif source.suffix.lower() != ".xmp" and sidecar.exists():
         # Rating, keywords and anything else kept in the sidecar. Develop
         # settings are excluded above.
         cmd += ["-TagsFromFile", str(sidecar), "-XMP:all", "--XMP-crs:all"]
