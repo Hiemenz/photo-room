@@ -140,6 +140,10 @@ import import_api  # noqa: E402  (drag-and-drop / button import, smart previews)
 
 app.register_blueprint(import_api.bp)
 
+import semantic_api  # noqa: E402  (optional on-device semantic search)
+
+app.register_blueprint(semantic_api.bp)
+
 
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 security.install(app)
@@ -1932,6 +1936,7 @@ def api_library():
     are fetched separately, lazily, by the browser.
     """
     args = request.args
+    sem_info = None
     try:
         offset = max(0, int(args.get("offset", 0)))
         limit = max(1, min(LIBRARY_MAX_PAGE, int(args.get("limit", LIBRARY_PAGE_SIZE))))
@@ -1940,7 +1945,8 @@ def api_library():
         criteria = {k: args.get(k, "") for k in keys}
         idx = _idx()
         virtuals = catalog.virtual_items(LIBRARY_ROOT, idx.items()) if catalog.has_virtuals(LIBRARY_ROOT) else []
-        if not virtuals and not args.get("collection"):
+        semantic_rank = semantic_api.wants_ranking(args)     # `sem` / `similar`: rank the filtered set
+        if not virtuals and not args.get("collection") and not semantic_rank:
             total, page, library_total = idx.query(criteria, args.get("sort", "name"),
                                                    args.get("dir", "asc") == "desc", offset, limit)
             facets = idx.facets() if offset == 0 else None
@@ -1952,6 +1958,8 @@ def api_library():
                     catalog.get_collection(LIBRARY_ROOT, args["collection"]), matched)
             matched = library.sort_items(
                 matched, args.get("sort", "name"), args.get("dir", "asc") == "desc")
+            if semantic_rank:
+                matched, sem_info = semantic_api.rank_library(matched, args)
             total, page, library_total = len(matched), matched[offset:offset + limit], len(everything)
             facets = library.facets(everything) if offset == 0 else None
     except KeyError as exc:
@@ -1970,6 +1978,8 @@ def api_library():
     }
     if facets is not None:
         body["facets"] = facets
+    if sem_info is not None:
+        body["semantic"] = sem_info
     return jsonify(body)
 
 

@@ -22,6 +22,7 @@ function libQuery(offset) {
        ["lf-camera","camera"],["lf-from","date_from"],["lf-to","date_to"],["lf-q","q"]]) {
     if ($(id).value) q.set(key, $(id).value);
   }
+  if (window.semanticParams) window.semanticParams(q);   // semantic-search.js: sem= / similar=
   return q;
 }
 
