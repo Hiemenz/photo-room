@@ -222,9 +222,15 @@ def copy_from_card_ex(
     library: Path,
     date_folders: bool = True,
     verify: bool = True,
+    dest_name: str | None = None,
+    dest_dir: Path | None = None,
 ) -> tuple[Path, str]:
     """
     Copy one raw into the library without ever losing or overwriting a file.
+
+    ``dest_name`` gives the copy another file name (a rename template's
+    result); ``dest_dir`` the exact folder, in place of ``library`` plus the
+    shoot date. Both go through the same no-overwrite claim.
 
     Returns (destination, status): "copied", "identical" (same bytes already
     there, nothing written) or "renamed" (a different file already used the
@@ -233,16 +239,18 @@ def copy_from_card_ex(
     The copy goes to a unique temporary name, is flushed and verified, and
     is only then given its final name by a no-overwrite link/rename.
     """
-    dest_dir = library
-    if date_folders:
-        shot = get_shoot_date(source)
-        if shot:
-            dest_dir = library / shot
+    name = dest_name or source.name
+    if dest_dir is None:
+        dest_dir = library
+        if date_folders:
+            shot = get_shoot_date(source)
+            if shot:
+                dest_dir = library / shot
     dest_dir.mkdir(parents=True, exist_ok=True)
     src_hash: list = [None]
 
     # Already imported (under this name or a numbered one)? Then do nothing.
-    for cand in _candidate_names(source.name):
+    for cand in _candidate_names(name):
         target = dest_dir / cand
         if not (target.exists() or target.is_symlink()):
             break
@@ -250,7 +258,7 @@ def copy_from_card_ex(
             return target, "identical"
 
     fd, tmp_name = tempfile.mkstemp(
-        prefix="." + source.stem + ".", suffix=".partial", dir=dest_dir)
+        prefix="." + Path(name).stem + ".", suffix=".partial", dir=dest_dir)
     os.close(fd)
     tmp = Path(tmp_name)
     try:
@@ -262,10 +270,63 @@ def copy_from_card_ex(
                 src_hash[0] = _sha256(source)
             if _sha256(tmp) != src_hash[0]:
                 raise RuntimeError(f"Checksum mismatch copying {source.name}")
-        return _claim(tmp, dest_dir, source.name, source, src_hash)
+        return _claim(tmp, dest_dir, name, source, src_hash)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def find_sidecar(raw: Path) -> Path | None:
+    """The .xmp that travels with a raw on the card: IMG_0001.xmp, or IMG_0001.CR2.xmp."""
+    for cand in (raw.with_suffix(".xmp"), raw.with_suffix(".XMP"),
+                 raw.with_name(raw.name + ".xmp"), raw.with_name(raw.name + ".XMP")):
+        try:
+            if cand.is_file() and not cand.is_symlink():
+                return cand
+        except OSError:
+            continue
+    return None
+
+
+def copy_companion(src: Path, dest: Path, verify: bool = True) -> str:
+    """
+    Copy a small companion file (a sidecar) to exactly ``dest``, never replacing
+    anything. Returns "copied", "exists" (a file is already there and is left
+    alone) or "identical". Raises RuntimeError on a checksum mismatch.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() or dest.is_symlink():
+        return "identical" if same_content(src, dest) else "exists"
+    fd, tmp_name = tempfile.mkstemp(prefix="." + dest.stem + ".", suffix=".partial", dir=dest.parent)
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        shutil.copyfile(src, tmp)
+        with open(tmp, "rb+") as f:
+            os.fsync(f.fileno())
+        if verify and _sha256(tmp) != _sha256(src):
+            raise RuntimeError(f"Checksum mismatch copying {src.name}")
+        with _claim_lock:
+            if dest.exists() or dest.is_symlink():
+                return "exists"
+            try:
+                os.link(tmp, dest)
+            except FileExistsError:
+                return "exists"
+            except OSError:
+                os.replace(tmp, dest)
+        return "copied"
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def copy_sidecar(raw_src: Path, raw_dest: Path, verify: bool = True) -> tuple[Path | None, str]:
+    """Carry the source raw's .xmp next to its copy (named after the copy). (path, status)."""
+    side = find_sidecar(raw_src)
+    if side is None:
+        return None, "none"
+    target = raw_dest.with_suffix(".xmp")
+    return target, copy_companion(side, target, verify)
 
 
 def copy_from_card(
@@ -292,6 +353,8 @@ def ingest_card(
     verbose: bool = False,
     jobs: int = DEFAULT_JOBS,
     reconvert: bool = False,
+    spec=None,
+    sidecars: bool = True,
 ) -> dict:
     """
     Copy every raw off a card, convert it, and apply learned adjustments.
@@ -317,6 +380,10 @@ def ingest_card(
         }
 
     library.mkdir(parents=True, exist_ok=True)
+    if spec is not None and spec.backup is not None:
+        import importkit
+        spec.backup = importkit.check_backup_dir(spec.backup, library, card)
+        spec.backup.mkdir(parents=True, exist_ok=True)
     model = style.load_model()
     if verbose and model.is_trained:
         print(f"  Using learned style ({model.n_samples} edits, "
@@ -329,10 +396,34 @@ def ingest_card(
     renamed: list[dict] = []
     failed: list[dict] = []
     lock = threading.Lock()
+    warnings: list[str] = []
+    last_dest: dict = {}
+    seq_box = [max(1, int(getattr(spec, "seq_start", 1)))]
 
     def handle(raw: Path) -> None:
         nonlocal skipped
-        dest, status = copy_from_card_ex(raw, library, date_folders, verify)
+        if spec is not None:
+            import importkit
+            with lock:
+                n = seq_box[0]
+            import dataclasses
+            # Metadata goes in after conversion: a sidecar made first would look "already developed".
+            one = importkit.import_one(raw, library, dataclasses.replace(
+                spec, rating=None, keywords=[], copyright=""), n)
+            dest, status = one.dest, one.status
+            with lock:
+                if status != "identical":
+                    last_dest[raw] = dest
+                    seq_box[0] += 1
+                warnings.extend(one.warnings)
+        else:
+            dest, status = copy_from_card_ex(raw, library, date_folders, verify)
+            if sidecars:
+                try:
+                    copy_sidecar(raw, dest, verify)
+                except (OSError, RuntimeError) as exc:
+                    with lock:
+                        warnings.append(f"sidecar for {raw.name} not carried over: {exc}")
         with lock:
             if status == "identical":
                 skipped += 1
@@ -355,7 +446,23 @@ def ingest_card(
                     else:
                         converted.append(dng)
 
+    if spec is not None and getattr(spec, "writes_metadata", False):
+        _inner = handle
+
+        def handle(raw: Path) -> None:       # noqa: F811 - wrap: write metadata after convert
+            _inner(raw)
+            last = last_dest.pop(raw, None)
+            if last is not None:
+                import importkit
+                try:
+                    importkit.write_metadata(last, spec)
+                except Exception as exc:
+                    with lock:
+                        warnings.append(f"rating/keywords/copyright not applied to {last.name}: {exc}")
+
     workers = max(1, min(int(jobs), len(raws)))
+    if spec is not None and "{seq" in (getattr(spec, "rename", "") or ""):
+        workers = 1                          # numbers follow the card's order
     with tqdm(total=len(raws), unit="file", desc=f"Ingesting x{workers}") as bar:
         if workers == 1:
             for raw in raws:
@@ -398,6 +505,7 @@ def ingest_card(
         # model exists. Re-running an ingest that converts nothing had been
         # reporting "[learned style applied]" while applying it to nothing.
         "styled": bool(model.is_trained and converted),
+        "warnings": warnings,
         "finished_at": datetime.now(timezone.utc).isoformat(),
     }
     _write_manifest(library, summary)
@@ -457,6 +565,19 @@ def _write_manifest(library: Path, summary: dict) -> None:
 # Commands
 # ---------------------------------------------------------------------------
 
+def _spec_from(args: argparse.Namespace):
+    """An ImportSpec when a layout, rename or backup was asked for, else None (the classic path)."""
+    if not (args.layout or args.rename or args.backup):
+        return None
+    import importkit
+    layout = args.layout or ("flat" if args.no_date_folders else "date")
+    try:
+        return importkit.ImportSpec(layout=layout, rename=args.rename or "", sidecars=not args.no_sidecars,
+                                    backup=args.backup).validate()
+    except importkit.TemplateError as exc:
+        sys.exit(f"Error: {exc}")
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     card = Path(args.card)
     if not card.is_dir():
@@ -472,6 +593,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         verbose=args.verbose,
         jobs=args.jobs,
         reconvert=args.reconvert,
+        spec=_spec_from(args), sidecars=not args.no_sidecars,
     )
     _report(summary)
 
@@ -512,6 +634,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
                         verbose=args.verbose,
                         jobs=args.jobs,
                         reconvert=args.reconvert,
+                        spec=_spec_from(args), sidecars=not args.no_sidecars,
                     )
                     _report(summary)
                 except Exception as exc:
@@ -552,6 +675,8 @@ def _report(summary: dict) -> None:
            if summary.get("already_converted") else "")
         + ("  [learned style applied]" if summary.get("styled") else "")
     )
+    for w in (summary.get("warnings") or [])[:10]:
+        print(f"  note: {w}")
     for r in (summary.get("renamed") or [])[:20]:
         print(f"  renamed: {r['file']} -> {r['saved_as']}")
     if summary["failed"]:
@@ -580,6 +705,10 @@ def main():
         p.add_argument("--no-convert", action="store_true", help="Copy only, do not convert")
         p.add_argument("--no-date-folders", action="store_true", help="Do not sort into YYYY/MM/DD")
         p.add_argument("--no-verify", action="store_true", help="Skip the copy checksum")
+        p.add_argument("--layout", help="Folder layout: date, month, flat or a template such as '{yyyy}/{date}'")
+        p.add_argument("--rename", help="Rename template, e.g. '{date}_{seq:4}' ({date} {time} {seq} {camera} {original})")
+        p.add_argument("--backup", type=Path, help="Also write a verified second copy of each file here")
+        p.add_argument("--no-sidecars", action="store_true", help="Do not carry the card's .xmp sidecars")
         p.add_argument("-v", "--verbose", action="store_true")
         p.add_argument("-j", "--jobs", type=int, default=DEFAULT_JOBS,
                        help=f"Files to handle at once (default: {DEFAULT_JOBS})")

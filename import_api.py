@@ -281,3 +281,315 @@ def card_status():
         _scanned_card_ids.add(data["id"])
         ed._idx(fresh=False).scan()
     return jsonify(data)
+
+
+# ---- Import dialog: choose a source, pick frames, destination, options ------------------
+# GET  /api/import/sources  cards found now, library path, presets
+# GET  /api/import/browse   sub-folders of a folder, for the folder picker
+# POST /api/import/scan     the frames in a source, flagged when already in the library
+# GET  /api/import/thumb    one frame's embedded preview
+# POST /api/import/run      start a background import job; GET /api/import/job polls it
+# The copy itself is cardwatch.import_card (the code `watch-cards` runs): verified, never
+# overwriting, content-deduped, then a second SHA-256 pass before any eject.
+import hashlib
+import os
+import time
+
+import cardwatch
+import importkit
+import presetlib
+
+MAX_FRAMES = 20000
+_ALL_SUFFIXES = cardwatch.PHOTO_SUFFIXES | cardwatch.VIDEO_SUFFIXES
+
+
+class BadSource(ValueError):
+    pass
+
+
+def _library() -> Path:
+    return _ed().LIBRARY_ROOT.resolve()
+
+
+def source_dir(raw) -> Path:
+    """A folder or card mount the user named. Absolute, existing, and not the library or inside it."""
+    text = str(raw or "").strip()
+    if not text or "\x00" in text:
+        raise BadSource("Choose a card or a folder to import from.")
+    p = Path(text).expanduser()
+    if not p.is_absolute():
+        raise BadSource("The source must be a full path, such as /media/card or /home/you/Pictures.")
+    try:
+        p = p.resolve()
+    except (OSError, RuntimeError):
+        raise BadSource(f"Cannot read {text}.")
+    if not p.is_dir():
+        raise BadSource(f"{p} is not a folder.")
+    lib = _library()
+    if p == lib or lib in p.parents:
+        raise BadSource("That folder is already inside the library. Pick the card or folder to copy from.")
+    return p
+
+
+def frame_path(source: Path, rel) -> Path:
+    """A file inside ``source`` named by a client-supplied relative path; refuses anything that escapes it."""
+    text = str(rel or "")
+    if not text or "\x00" in text or Path(text).is_absolute():
+        raise BadSource("Bad file name.")
+    cand = (source / text).resolve()
+    if source not in cand.parents:
+        raise BadSource("That file is outside the source folder.")
+    if not cand.is_file() or cand.suffix.lower() not in _ALL_SUFFIXES:
+        raise BadSource(f"No such importable file: {text}")
+    return cand
+
+
+def dest_subfolder(raw) -> str:
+    """The folder under the library the photos go to ('' for the library root); never outside it."""
+    text = str(raw or "").strip().replace("\\", "/").strip("/")
+    if not text:
+        return ""
+    if "{" in text or "}" in text or "\x00" in text or ".." in text.split("/"):
+        raise BadSource("The destination must be a folder inside the library (no .. and no {fields}).")
+    return "/".join(importkit._clean(p) for p in text.split("/") if p and p != ".")
+
+
+@bp.route("/api/import/sources")
+def sources():
+    cards = [{"path": str(c.mount), "label": c.label or c.mount.name} for c in cardwatch.find_cards()]
+    try:
+        presets = [{"id": p["id"], "name": p["name"], "category": p.get("category", "")}
+                   for p in presetlib.list_all()]
+    except Exception:
+        presets = []
+    return jsonify({"cards": cards, "library": str(_library()), "presets": presets,
+                    "home": str(Path.home()), "layouts": list(importkit.LAYOUTS)})
+
+
+@bp.route("/api/import/browse")
+def browse():
+    try:
+        p = Path(request.args.get("path") or Path.home()).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return _error("Cannot read that folder.")
+    if not p.is_dir():
+        return _error(f"{p} is not a folder.")
+    dirs = []
+    try:
+        for e in sorted(os.scandir(p), key=lambda e: e.name.lower()):
+            if e.name.startswith(".") or not e.is_dir(follow_symlinks=False):
+                continue
+            dirs.append(e.name)
+    except OSError as exc:
+        return _error(f"Cannot read {p}: {exc.strerror or exc}")
+    return jsonify({"path": str(p), "parent": str(p.parent) if p.parent != p else None, "dirs": dirs[:2000]})
+
+
+@bp.route("/api/import/scan", methods=["POST"])
+def scan():
+    try:
+        source = source_dir(_ed()._json_body().get("source"))
+    except ValueError as exc:
+        return _error(str(exc))
+    lib = _library()
+    skip = [lib] if source in lib.parents else []
+    files, errors = cardwatch.list_card_files(source, _ALL_SUFFIXES, skip)
+    truncated = len(files) > MAX_FRAMES
+    files = files[:MAX_FRAMES]
+    index = cardwatch.LibraryIndex(lib, _ALL_SUFFIXES)
+    frames = []
+    for f in files:
+        try:
+            dup = index.find(f.path, f.size)
+        except OSError:
+            dup = None
+        suffix = f.path.suffix.lower()
+        frames.append({
+            "rel": str(f.path.relative_to(source)), "name": f.path.name, "size": f.size,
+            "mtime": int(f.mtime_ns // 1_000_000_000), "photo": f.photo,
+            "raw": suffix in cardwatch.RAW_ONLY, "video": suffix in cardwatch.VIDEO_SUFFIXES,
+            "sidecar": ingest.find_sidecar(f.path) is not None,
+            "duplicate": str(dup.relative_to(lib)) if dup and lib in dup.parents else (dup and dup.name),
+        })
+    is_card = any(c.mount.resolve() == source for c in cardwatch.find_cards())
+    return jsonify({"source": str(source), "card": is_card, "frames": frames, "errors": errors[:20],
+                    "truncated": truncated})
+
+
+_thumb_gate = threading.Semaphore(2)
+
+
+@bp.route("/api/import/thumb")
+def thumb():
+    import io
+
+    import thumbs
+    try:
+        source = source_dir(request.args.get("source"))
+        path = frame_path(source, request.args.get("rel"))
+    except ValueError as exc:
+        return _error(str(exc), 404)
+    if path.suffix.lower() in cardwatch.VIDEO_SUFFIXES:
+        return Response(status=204)             # no preview: quiet for the browser, the page shows a placeholder
+    with _thumb_gate:
+        try:
+            data = thumbs.build(path, None, 256)
+        except Exception:
+            try:
+                from PIL import Image
+                img = Image.open(path)
+                img.thumbnail((256, 256))
+                buf = io.BytesIO()
+                img.convert("RGB").save(buf, "JPEG", quality=80)
+                data = buf.getvalue()
+            except Exception:
+                return Response(status=204)
+    return Response(data, mimetype="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+def _preset_hook(preset_id: str, amount: float):
+    """post_copy callable: merge a preset into the new photo's own settings."""
+    ed = _ed()
+    import history
+    preset = presetlib.get(str(preset_id))
+    label = f"Preset on import: {preset['name']}" + (f" ({round(amount * 100)}%)" if amount < 1 else "")
+
+    def apply(dest: Path) -> None:
+        who = ed.detect_foreign_edits(dest)
+        if who:
+            raise RuntimeError(f"it already has edits from {who}, which are kept")
+        baseline = ed._baseline_temp_of(dest)
+        current = ed.complete_adjustments(ed.read_saved_adjustments(dest) or {}, baseline)
+        if "_baseline_temp" not in current:
+            current["_baseline_temp"] = baseline
+        merged = presetlib.apply_preset(current, preset, amount, baseline)
+        merged.pop("_baseline_temp", None)
+        if amount > 0:
+            merged["preset_name"] = preset["name"][:60]
+            merged["preset_amount"] = round(amount * 100)
+        if history.load(dest)["original"] is None:
+            history.set_original(dest, current)
+        frame_size, source_size = ed._save_frames(dest, merged)
+        ed.save_adjustments(dest, merged, frame_size=frame_size, source_size=source_size)
+        history.record(dest, label, merged)
+
+    return apply
+
+
+def build_spec(body: dict) -> importkit.ImportSpec:
+    """Validate the dialog's choices into an ImportSpec. Raises ValueError with a user-readable message."""
+    sub = dest_subfolder(body.get("dest"))
+    base = importkit.LAYOUTS.get(str(body.get("layout") or "date"), str(body.get("layout") or "date"))
+    rating = body.get("rating")
+    try:
+        rating = None if rating in (None, "") else int(rating)
+        seq = max(1, int(body.get("seq_start") or 1))
+    except (TypeError, ValueError):
+        raise BadSource("The rating and the starting number must be whole numbers.")
+    keywords = body.get("keywords") or []
+    spec = importkit.ImportSpec(
+        layout="/".join(p for p in (sub, base) if p), rename=str(body.get("rename") or ""), seq_start=seq,
+        sidecars=body.get("sidecars", True) is not False,
+        backup=Path(str(body["backup"])) if str(body.get("backup") or "").strip() else None,
+        rating=rating, keywords=keywords, copyright=str(body.get("copyright") or ""),
+        date_fn=lambda p: cardwatch._shoot_date(p))
+    spec.validate()
+    preset = body.get("preset")
+    if isinstance(preset, dict) and preset.get("id"):
+        amount = max(0.0, min(1.0, float(preset.get("amount", 100)) / 100.0))
+        spec.post_copy = _preset_hook(preset["id"], amount)
+    return spec
+
+
+# One job at a time; the dialog polls it.
+_job_lock = threading.Lock()
+_job: dict = {"state": "idle"}
+_job_stop = threading.Event()
+_RUNNING = ("scanning", "importing", "verifying", "ejecting")
+
+
+def _set_job(**kw):
+    with _job_lock:
+        _job.update(kw, updated=time.time())
+
+
+@bp.route("/api/import/run", methods=["POST"])
+def run():
+    ed = _ed()
+    try:
+        body = ed._json_body()
+        source = source_dir(body.get("source"))
+        rels = body.get("files")
+        if not isinstance(rels, list) or not rels:
+            raise BadSource("Tick at least one frame to import.")
+        only = {str(frame_path(source, r)) for r in rels[:MAX_FRAMES]}
+        spec = build_spec(body)
+        if spec.backup is not None:
+            spec.backup = importkit.check_backup_dir(spec.backup, _library(), source)
+    except Exception as exc:                          # bad path, template, rating, unknown preset
+        return _error(str(exc))
+    with _job_lock:
+        if _job.get("state") in _RUNNING:
+            return _error("An import is already running. Wait for it to finish.", 409)
+        _job.clear()
+        _job.update(state="scanning", id=hashlib.sha1(os.urandom(8)).hexdigest()[:12],
+                    total=len(only), done=0, started=time.time(), updated=time.time())
+        _job_stop.clear()
+        job_id = _job["id"]
+    threading.Thread(target=_run_job, args=(source, only, spec, bool(body.get("eject"))),
+                     daemon=True, name="import-job").start()
+    return jsonify({"started": True, "id": job_id, "total": len(only)})
+
+
+def _run_job(source: Path, only: set[str], spec, eject: bool) -> None:
+    ed = _ed()
+    lib = ed.LIBRARY_ROOT
+    try:
+        def prog(s: dict) -> None:
+            _set_job(**{k: v for k, v in s.items() if k in
+                        ("state", "total", "done", "name", "copied", "duplicates", "failed")})
+        res = cardwatch.import_card(source, lib, spec.layout, _ALL_SUFFIXES, prog, _job_stop.is_set,
+                                    spec=spec, only=only)
+        if not res.problem and not res.interrupted:
+            cardwatch.verify_import(res, prog, _job_stop.is_set)
+        card = next((c for c in cardwatch.find_cards() if c.mount.resolve() == source), None)
+        ejected, blocker = False, ""
+        if eject:
+            if card is None:
+                blocker = "the source is a folder, not a card"
+            else:
+                blocker = cardwatch.eject_blockers(res, True)
+            if not blocker:
+                _set_job(state="ejecting")
+                res.eject = cardwatch.eject_card(card)
+                ejected = bool(res.eject.get("ok"))
+                if not ejected:
+                    blocker = res.eject.get("message", "")
+        idx = ed._idx(fresh=False)
+        idx.scan()
+        queue_smart_previews([p for p in res.new_paths if p.suffix.lower() in ingest.RAW_SUFFIXES])
+        text = cardwatch.summary_text(res)
+        if ejected:
+            msg = f"{text}. Safe to remove the card."
+        elif eject:
+            msg = f"{text}. Card NOT ejected: {blocker.rstrip('.') or 'import incomplete'}."
+        else:
+            msg = text + ("" if res.clean else f". {cardwatch.eject_blockers(res, True)}")
+        state = "done" if res.clean else ("error" if (res.problem or res.interrupted) else "done_with_errors")
+        _set_job(state=state, message=msg, ejected=ejected, summary=res.as_dict(),
+                 failed_files=(res.failed + res.verify_failed)[:20], seq=idx.seq,
+                 new=[str(p.relative_to(lib)) for p in res.new_paths[:2000] if lib in p.parents])
+    except Exception as exc:
+        _set_job(state="error", message=f"The import stopped: {exc}")
+
+
+@bp.route("/api/import/job")
+def job():
+    with _job_lock:
+        return jsonify(dict(_job))
+
+
+@bp.route("/api/import/cancel", methods=["POST"])
+def cancel():
+    _job_stop.set()
+    return jsonify({"ok": True})

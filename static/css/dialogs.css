@@ -16,3 +16,43 @@
 #export-dialog .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
 #ex-progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 #ex-bar { height: 100%; width: 0; background: var(--accent); }
+
+/* ---- Import dialog ---- */
+#import-dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 0; width: min(980px, 96vw); }
+#import-dialog[open] { display: flex; flex-direction: column; max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); }
+#import-dialog::backdrop { background: rgba(0,0,0,.6); }
+#import-dialog h2 { margin: 0; padding: 12px 18px; font-size: 14px; border-bottom: 1px solid var(--line); flex: none; }
+#import-dialog [hidden] { display: none !important; }
+#import-dialog .imd-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr); gap: 10px 16px; padding: 12px 18px; flex: 1 1 auto; min-height: 0; overflow: auto; }
+#import-dialog .imd-src { grid-column: 1 / -1; }
+#import-dialog .imd-frames { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+#import-dialog .imd-opts { display: grid; gap: 8px; align-content: start; font-size: 12px; overflow: auto; }
+#import-dialog .imd-row { display: grid; grid-template-columns: 92px 1fr; gap: 8px; align-items: center; font-size: 12px; }
+#import-dialog .imd-in { display: flex; gap: 6px; min-width: 0; flex-wrap: wrap; }
+#import-dialog .imd-in > input[type=text], #import-dialog .imd-in > select { flex: 1 1 120px; }
+#import-dialog input[type=text], #import-dialog input[type=number], #import-dialog select { font: inherit; font-size: 12px; padding: 4px 6px; border-radius: 4px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); min-width: 0; }
+#import-dialog .imd-seq input { width: 60px; }
+#import-dialog #imd-preset-amt { width: 56px; flex: none; }
+#import-dialog .imd-check { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+#import-dialog .imd-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-bottom: 8px; }
+#import-dialog .imd-count { color: var(--muted); font-size: 11px; margin-left: auto; }
+#import-dialog .imd-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(116px, 1fr)); gap: 8px; overflow: auto; min-height: 160px; max-height: 46vh; align-content: start; padding: 2px; }
+#import-dialog .imd-frame { position: relative; display: grid; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px; font-size: 11px; cursor: pointer; }
+#import-dialog .imd-frame.dup { opacity: .6; }
+#import-dialog .imd-frame img, #import-dialog .imd-novid { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 3px; background: #000; }
+#import-dialog .imd-novid { display: grid; place-items: center; color: var(--muted); font-size: 10px; }
+#import-dialog .imd-frame input { position: absolute; top: 8px; left: 8px; }
+#import-dialog .imd-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#import-dialog .imd-tags { display: flex; gap: 4px; color: var(--muted); }
+#import-dialog .imd-tags i { font-style: normal; border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; font-size: 9px; }
+#import-dialog .imd-tags em { margin-left: auto; font-style: normal; }
+#import-dialog .imd-browse { border: 1px solid var(--line); border-radius: 5px; padding: 6px; margin-top: 6px; max-height: 190px; overflow: auto; font-size: 12px; }
+#import-dialog .imd-here { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+#import-dialog .imd-dirs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; }
+#import-dialog .imd-dirs button { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#import-dialog .hint { font-size: 11px; color: var(--muted); line-height: 1.5; word-break: break-word; }
+#import-dialog .hint.err { color: var(--danger); }
+#import-dialog .imd-foot { display: flex; gap: 8px; align-items: center; padding: 10px 18px; border-top: 1px solid var(--line); flex: none; }
+#import-dialog .imd-foot .hint { flex: 1; }
+#import-dialog #imd-bar { width: 160px; }
+@media (max-width: 760px) { #import-dialog .imd-body { grid-template-columns: 1fr; } }

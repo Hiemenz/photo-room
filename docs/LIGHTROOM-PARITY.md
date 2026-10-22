@@ -54,11 +54,10 @@ macOS and nothing was opened in Lightroom; see [KNOWN-LIMITS.md](KNOWN-LIMITS.md
    quick-start list under "Then in the browser" started at step 4, and the
    Known issues paragraph saying nothing flags blown-out frames is stale
    because `process.py cull` and Smart cull both do.
-7. **ROADMAP "Not wired yet" is still true:** navigator mini-view, XMP
-   sidecars travelling with imported raws, importing a card from inside the
-   editor, an Import dialog with destination and rename options, and smart
-   previews feeding the Develop render (they are 8-bit 2048 px decodes; Develop
-   decodes linear 16-bit). None of the five already-queued items (timelapse,
+7. **ROADMAP "Not wired yet":** navigator mini-view and smart previews feeding
+   the Develop render (they are 8-bit 2048 px decodes; Develop decodes linear
+   16-bit). Sidecars, the Import dialog and importing a card from the editor
+   are now done. None of the five already-queued items (timelapse,
    Lightroom .xmp/.lrcat migration, semantic search, HDR/panorama, LAN
    culling) has any code or doc mention yet (`grep -i timelapse|semantic|
    panorama|lrcat` finds nothing).
@@ -79,13 +78,13 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Import from card (copy, verify, no overwrite) | Done | `cardwatch.import_card`, `ingest.copy_from_card`, `import_api.py`; SHA-256 verify, temp name then no-overwrite rename, content dedupe. `tests/test_ingest.py`, `tests/test_cardwatch.py`, `tests/test_import_api.py`. Fake cards only | - | - |
 | Auto-detect card, safe eject, optional delete-after-verify | Done (unproven on hardware) | `photo-room watch-cards` (`cardwatch.py`: `/proc/mounts`, udisksctl/umount/diskutil). Fake cards and fake eject commands only | - | - |
 | Card detection in `ingest cards/watch` | Partial | macOS only, `ingest.list_volumes` (finding 2) | S | H |
-| Import dialog (choose frames, destination, options) | Missing | Import is a button + drag-drop of files/folders (`#lib-import`), no choose-before-import grid. ROADMAP "Not wired yet" | M | H |
-| Import: rename templates | Missing | Name kept from source; collisions get `-1` (`ingest.copy_from_card`) | S | H |
-| Import: destination organisation | Partial | `YYYY/MM/DD` default; `--layout date\|month\|flat\|template` on `watch-cards` only | S | M |
-| Import: apply preset, keywords, copyright on import | Partial | Auto tone/WB + learned style on `ingest run` only (`ingest._convert_with_style`); `watch-cards` and the editor import apply nothing | M | H |
-| Import: second backup copy | Missing | no code | S | M |
+| Import dialog (choose frames, destination, options) | Done | `import_api.py` (`/api/import/*`), `static/js/import-dialog.js`: card or folder source, thumbnail grid with checkboxes, select all/none, hide already-imported, one background verified job. `tests/test_import_dialog.py` | - | - |
+| Import: rename templates | Done | `importkit.render_name`: `{date} {yyyy} {mm} {dd} {time} {seq[:N]} {camera} {original}`; dialog, `watch-cards --rename`, `ingest --rename` | - | - |
+| Import: destination organisation | Done | folder under the library + `date`/`month`/`flat`/template (`{yyyy} {mm} {dd} {date} {camera}`) in the dialog, `watch-cards`, `ingest` | - | - |
+| Import: apply preset, keywords, copyright on import | Done | Rating, keywords, copyright to the sidecar (`importkit.write_metadata`) and a preset (dialog only, `import_api._preset_hook`); `watch-cards --rating --keywords --copyright`. Learned-style auto edit remains `ingest run` only | - | - |
+| Import: second backup copy | Done | `--backup` / dialog: verified at copy and in the verify pass, mirrors sub-folders, blocks eject on failure. Not tried on a real second disk | - | - |
 | Import: skip duplicates | Done | content hash across the whole library (`cardwatch.LibraryIndex`, `import_api`) | - | - |
-| Import: XMP sidecars come along with the raw | Missing | ROADMAP "Not wired yet"; `ingest` writes new sidecars, never copies the source's | S | M |
+| Import: XMP sidecars come along with the raw | Done | `ingest.copy_sidecar`: renamed with the raw, never overwrites; to the backup as well | - | - |
 | Import: JPEG, TIFF, PNG, video in the Library | Missing | Card import copies JPEG/video, Library lists raws only (finding 3) | M | H |
 | Tethered capture | Won't do | ROADMAP "Not planned" (gphoto2 would be the route) | L | L |
 | Watched-folder auto import | Partial | `process.py watch` converts as files arrive; `watch-cards` for cards | - | - |
