@@ -117,7 +117,7 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Metadata editing (title, caption, creator, copyright, location) | Missing | only rating, label, keywords are written; no `Copyright`/`Caption` write path | M | H |
 | Metadata presets | Missing | no code | S | H (for copyright) |
 | Library filter bar | Partial | rating, flag, label, keyword, camera, date range, free text, sort by 8 keys (`library.filter_items`); lens/ISO exist in the API only (finding 4); no focal length, file type, edit status, GPS | S | M |
-| Folders panel (tree, move, rename, delete) | Missing | `/api/files` is a flat list; nothing in the app moves or renames raws (safe by design) | M | M |
+| Folders panel (tree, move, rename, delete) | Partial | Library sidebar: tree with counts, click to filter (+ subfolders toggle), new folder, drag photos onto a folder to move, rename folders. A photo moves with its `.xmp`, same-stem raw/JPEG, `*.photoroom.json`, `*.masks.json` and virtual-copy files; catalog (copies, collections), picks and cull DB follow; never overwrites; one-step undo log `.photo-room-moves.json`. `folders.py`, `folders_api.py`, `tests/test_folders.py`. No delete (by design), no move-folder UI (API only), no reveal | S | M |
 | Quick Develop | Partial | Apply current or copied settings to a selection (`/api/batch_apply`, `/api/looks/preset/apply_batch`); no relative-step panel | S | L |
 | Sync / copy-paste settings | Done | `Mod+C/V`, WB re-anchored per camera; spots and crop never copied. `tests/test_batch.py` | - | - |
 | Auto Sync (edit many at once) | Missing | no code | S | M |

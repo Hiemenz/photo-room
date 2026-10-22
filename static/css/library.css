@@ -134,3 +134,7 @@ body { padding-top: 30px; }
 #smart-dlg select, #smart-dlg input { font: inherit; font-size: 11px; padding: 3px 5px; border-radius: 4px;
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
 #smart-dlg .rule input { flex: 1; min-width: 0; }
+.fo .tw { width: 10px; opacity: .6; }
+.fo:hover .act { display: inline; }
+.fo-sub { font-size: 10px; font-weight: normal; margin-right: 4px; }
+#fo-undo { font-size: 10px; }
