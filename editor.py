@@ -1953,9 +1953,7 @@ def api_library():
     try:
         offset = max(0, int(args.get("offset", 0)))
         limit = max(1, min(LIBRARY_MAX_PAGE, int(args.get("limit", LIBRARY_PAGE_SIZE))))
-        keys = ("rating_min", "rating_op", "flag", "label", "keyword",
-                "camera", "date_from", "date_to", "q")
-        criteria = {k: args.get(k, "") for k in keys}
+        criteria = {k: args.get(k, "") for k in library.FILTER_KEYS}
         idx = _idx()
         virtuals = catalog.virtual_items(LIBRARY_ROOT, idx.items()) if catalog.has_virtuals(LIBRARY_ROOT) else []
         folder = args.get("folder")

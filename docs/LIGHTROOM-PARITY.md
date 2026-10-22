@@ -43,7 +43,7 @@ macOS and nothing was opened in Lightroom; see [KNOWN-LIMITS.md](KNOWN-LIMITS.md
    `VIDEO_SUFFIXES`); `libindex.RAW_SUFFIXES` lists raws and DNGs only. A
    RAW+JPEG card therefore leaves JPEGs and MP4s in the date folders that no
    grid, filter or export will ever list.
-4. **The Library filter backend is ahead of its UI.** `library.filter_items`
+4. **(Resolved) The Library filter backend was ahead of its UI.** `library.filter_items`
    and `SORT_KEYS` support lens and ISO filters and sorting; `#lib-bar` in
    `templates/editor.html` has no lens or ISO control. Smart-collection rules
    (`catalog.RULE_OPS`) cover rating, flag, label, keyword, camera and date only.
@@ -97,14 +97,14 @@ with Make, Model, LensModel, ISO and ExposureTime intact.
 | Stacks | Missing | no code (Smart cull already groups bursts, so the data exists) | M | M |
 | Virtual copies | Done | `catalog.py`, `/api/virtual/*`; own edits/rating/keywords, exported as `<stem>-copyN`. Catalog-only: Lightroom cannot see them | - | - |
 | Collections | Done | `catalog.py`, `/api/collections/*` | - | - |
-| Smart collections | Partial | rating, flag, label, keyword, camera, date (`catalog.RULE_OPS`); no lens, ISO, focal length, edit state, file type | S | M |
+| Smart collections | Partial | rating, flag, label, keyword, camera, date, lens, ISO, focal length, edit state, file type (`catalog.RULE_OPS`; rule builder in the smart-collection dialog); no GPS or exposure-program rules | S | M |
 | Collection sets, Quick/Target collection | Missing | flat list of collections | S | L |
 | Keywording (add/remove, autocomplete) | Partial | comma list on the selection, `XMP-dc:Subject`, datalist (`/api/keywords`); no keyword list panel with counts | S | M |
 | Keyword hierarchy, synonyms, export flags | Missing | no `HierarchicalSubject` anywhere | M | M |
 | Metadata panel (read EXIF/IPTC) | Done | read-only readout of camera, lens, ISO, shutter, aperture, focal length, capture time, GPS (text, no map) and dimensions via `exiftool -j -n`; Develop side panel and right of the Library grid. `metadata.py`, `metadata_api.py`, `static/js/metadata.js`; `tests/test_metadata.py`, `tests/test_real_exiftool_metadata.py`, `tests/ui/test_metadata_ui.py`. IPTC location fields are not shown | - | - |
 | Metadata editing (title, caption, creator, copyright, location) | Partial | title, caption, creator, copyright, copyright status and usage terms for the selection, written to the `.xmp` sidecar (`XMP-dc:Title/Description/Creator/Rights`, `XMP-xmpRights:Marked/UsageTerms`), raw never opened, undo via the previous sidecar values, all-or-nothing batches; copyright-only export carries them. Not written: IPTC location, contact, rights URL, and nothing goes into IPTC/EXIF blocks. Same tests as above | M | M |
 | Metadata presets | Done | named sets of the fields above, saved, applied (only the filled fields are written) and deleted from the panel; `.photo-room-metadata-presets.json` in the library root. Not applied automatically on import or export | - | - |
-| Library filter bar | Partial | rating, flag, label, keyword, camera, date range, free text, sort by 8 keys (`library.filter_items`); lens/ISO exist in the API only (finding 4); no focal length, file type, edit status, GPS | S | M |
+| Library filter bar | Partial | rating, flag, label, keyword, camera, lens, ISO range, focal length range, file type, edited/unedited, GPS present, date range, free text, sort by 8 keys (`library.filter_items`, `#lib-bar`); "edited" means the photo or its sidecar carries Camera Raw develop settings | S | M |
 | Folders panel (tree, move, rename, delete) | Partial | Library sidebar: tree with counts, click to filter (+ subfolders toggle), new folder, drag photos onto a folder to move, rename folders. A photo moves with its `.xmp`, same-stem raw/JPEG, `*.photoroom.json`, `*.masks.json` and virtual-copy files; catalog (copies, collections), picks and cull DB follow; never overwrites; one-step undo log `.photo-room-moves.json`. `folders.py`, `folders_api.py`, `tests/test_folders.py`. No delete (by design), no move-folder UI (API only), no reveal | S | M |
 | Quick Develop | Done | Library strip with relative step buttons (small and large steps for exposure, contrast, highlights, shadows, whites, blacks, temp, tint, vibrance, saturation, clarity, texture, dehaze) and Undo: `static/js/quick-develop.js`, `/api/sync_settings` and `/api/sync_undo` (`quick_api.py`). One History step per photo; framing, spots and masks untouched; absolute copy still via `/api/batch_apply`. `tests/test_quick_sync.py`. Not browser-verified | - | - |
 | Sync / copy-paste settings | Done | `Mod+C/V`, WB re-anchored per camera; spots and crop never copied. `tests/test_batch.py` | - | - |
@@ -264,7 +264,7 @@ Lightroom features is in the matrix above.
 | 8 | **Library shows JPEG/HEIC (and hides RAW+JPEG twins)**, no longer orphans what `watch-cards` imports; videos listed but not editable | Finding 3 | M | `libindex.py`, `process.py`, `thumbs.py`, `cardwatch.py` |
 | 9 | **Post-crop vignette and grain** | Standard look tools, tiny maths, seeded so preview equals export | S | `render_kernels.py`, `editor.py`, XMP map |
 | 10 | **Crop completeness**: flip orientation, 90-degree rotate, original/custom ratio, ratio lock, more overlays | Common daily operations; portrait crops are awkward now | S | `static/js/develop-crop.js`, `geometry.py` |
-| 11 | **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
+| 11 | (Done) **Filters in the UI for lens, ISO, focal length, edit status**, plus matching smart-collection rules | Backend already filters lens/ISO (finding 4) | S | `templates/editor.html`, `static/js/ratings-filter.js`, `catalog.py` |
 | 12 | **Import dialog**: choose frames, destination, rename template, keywords/copyright/preset on import, Move vs Copy | The Lightroom Import experience; ROADMAP "Not wired yet" | M | `import_api.py`, `cardwatch.py`, `static/js/import.js` |
 | 13 | **Carry XMP sidecars with imported raws** (copy `IMG.xmp` beside the raw when present) | Prerequisite for any Lightroom round trip | S | `ingest.py`, `cardwatch.py`, `import_api.py` |
 | 14 | **Export sizing and destination**: short edge, megapixels, percent, subfolder, same-as-original, Export with Previous | Daily export ergonomics | S | `exporter.py`, `export_api.py`, export dialog |

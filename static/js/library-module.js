@@ -14,6 +14,13 @@ let libMulti = new Set();    // extra selected paths
 let libThumbObs = null, libPageObs = null;
 const LIB_PAGE = 200;
 
+// [element id, query key] of every filter control in #lib-bar (also used to decide "is a filter active").
+const LIB_FILTERS = [["lf-flag","flag"],["lf-label","label"],["lf-keyword","keyword"],["lf-camera","camera"],
+  ["lf-lens","lens"],["lf-iso-min","iso_min"],["lf-iso-max","iso_max"],["lf-focal-min","focal_min"],
+  ["lf-focal-max","focal_max"],["lf-filetype","filetype"],["lf-edit","edit"],["lf-gps","gps"],
+  ["lf-from","date_from"],["lf-to","date_to"],["lf-q","q"]];
+const LIB_FILTER_IDS = ["lf-rating", ...LIB_FILTERS.map(f => f[0])];
+
 function libQuery(offset) {
   const q = new URLSearchParams({ offset, limit: LIB_PAGE,
     sort: $("lf-sort").value, dir: $("lf-dir").value });
@@ -21,8 +28,7 @@ function libQuery(offset) {
   if (libFolder !== null) { q.set("folder", libFolder); if (libFolderSub) q.set("subfolders", "1"); }
   const [rmin, rop] = $("lf-rating").value.split("|");
   if (rmin) { q.set("rating_min", rmin); if (rop) q.set("rating_op", rop); }
-  for (const [id, key] of [["lf-flag","flag"],["lf-label","label"],["lf-keyword","keyword"],
-       ["lf-camera","camera"],["lf-from","date_from"],["lf-to","date_to"],["lf-q","q"]]) {
+  for (const [id, key] of LIB_FILTERS) {
     if ($(id).value) q.set(key, $(id).value);
   }
   return q;
@@ -57,6 +63,8 @@ async function libLoad(reset) {
   if (data.facets) {
     fillSelect("lf-keyword", data.facets.keywords.map(k => k.keyword), "Any keyword");
     fillSelect("lf-camera", data.facets.cameras, "Any camera");
+    fillSelect("lf-lens", data.facets.lenses || [], "Any lens");
+    fillSelect("lf-filetype", data.facets.filetypes || [], "Any file type");
     $("kw-list").innerHTML = data.facets.keywords.map(k => `<option value="${k.keyword.replace(/"/g, "&quot;")}">`).join("");
   }
   libAppend(data.items);
@@ -251,7 +259,7 @@ async function libKeywords(remove) {
 // the current filter, re-query (debounced so rapid culling does not thrash).
 let libRefilterTimer = null;
 function libRefilterSoon() {
-  const filtering = libCollection || ["lf-rating","lf-flag","lf-label","lf-keyword","lf-camera","lf-q"].some(id => $(id).value)
+  const filtering = libCollection || LIB_FILTER_IDS.some(id => $(id).value)
     || $("lf-sort").value !== "name";
   if (!filtering) return;
   clearTimeout(libRefilterTimer);
@@ -292,12 +300,12 @@ libPageObs = new IntersectionObserver((entries) => {
   if (entries.some(e => e.isIntersecting)) libLoad(false);
 }, { root: $("lib-grid"), rootMargin: "600px" });
 
-["lf-rating","lf-flag","lf-label","lf-keyword","lf-camera","lf-from","lf-to","lf-sort","lf-dir"].forEach(id =>
+[...LIB_FILTER_IDS.filter(id => id !== "lf-q"), "lf-sort", "lf-dir"].forEach(id =>
   $(id).addEventListener("change", (e) => { e.target.blur(); libLoad(true); }));
 let libSearchTimer = null;
 $("lf-q").addEventListener("input", () => { clearTimeout(libSearchTimer); libSearchTimer = setTimeout(() => libLoad(true), 250); });
 $("lf-clear").addEventListener("click", () => {
-  ["lf-rating","lf-flag","lf-label","lf-keyword","lf-camera","lf-from","lf-to","lf-q"].forEach(id => $(id).value = "");
+  LIB_FILTER_IDS.forEach(id => $(id).value = "");
   libLoad(true);
 });
 document.querySelectorAll("#lib-foot .swatch").forEach(b =>
