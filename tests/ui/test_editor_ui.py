@@ -64,7 +64,7 @@ def test_every_slider_moves_and_triggers_a_preview(opened):
     # The spot tool's size/feather/opacity act on the selected spot, not on
     # the adjustments dict; test_m8_ui.py covers them.
     ids = [i for i in js(page, "[...document.querySelectorAll('input[type=range]:not(#export-dialog input):not(#mask-panel input):not(#looks-panel input)')].map(i => i.id)")
-           if not i.startswith("spot-")]
+           if not i.startswith(("spot-", "eye-", "lib-"))]   # eye-*: red-eye tool size, like spot-*; lib-*: Library grid options
     # 15 main + strength, 24 HSL, 8 B&W, 14 grading, 4 parametric
     assert len(ids) >= 60, ids
     seen = set()
