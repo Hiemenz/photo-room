@@ -41,6 +41,8 @@ import library
 STORE_NAME = ".photo-room-catalog.json"
 MAX_NAME = 80
 MAX_RULES = 20
+QUICK_NAME = "Quick Collection"
+MAX_DEPTH = 8                        # sets inside sets
 VC_MARK = "#vc-"
 
 RULE_OPS = {
@@ -88,6 +90,8 @@ def load(root: Path) -> dict:
         if isinstance(data.get("stacks"), dict):
             out["stacks"] = {k: v for k, v in data["stacks"].items()
                              if isinstance(v, dict) and isinstance(v.get("photos"), list)}
+        if isinstance(data.get("target"), str):
+            out["target"] = data["target"]
     return out
 
 
@@ -208,9 +212,11 @@ def _clean_name(name) -> str:
     return name[:MAX_NAME]
 
 
-def _check_unique(store: dict, name: str, ignore: str | None = None) -> None:
+def _check_unique(store: dict, name: str, ignore: str | None = None, parent: str | None = None) -> None:
+    """Names are unique among siblings (the same level of the same set)."""
     for c in store["collections"]:
-        if c["id"] != ignore and c["name"].lower() == name.lower():
+        if c["id"] != ignore and (c.get("parent") or None) == (parent or None) \
+                and c["name"].lower() == name.lower():
             raise ValueError(f"A collection named {name!r} already exists")
 
 
@@ -226,10 +232,15 @@ def get_collection(root: Path, cid: str) -> dict:
 
 
 def create_collection(root: Path, name, smart: bool = False, rules=None,
-                      match: str = "all", photos=None) -> dict:
+                      match: str = "all", photos=None, parent: str | None = None,
+                      is_set: bool = False) -> dict:
+    """A manual collection, a smart one, or (``is_set``) a collection set that only holds others."""
     name = _clean_name(name)
-    col: dict = {"id": _new_id(), "name": name, "smart": bool(smart), "created": time.time()}
-    if smart:
+    parent = parent or None
+    col: dict = {"id": _new_id(), "name": name, "smart": bool(smart) and not is_set, "created": time.time()}
+    if is_set:
+        col["set"] = True
+    elif smart:
         if match not in MATCH_MODES:
             raise ValueError("match must be 'all' or 'any'")
         col["rules"] = normalize_rules(rules)
@@ -238,7 +249,12 @@ def create_collection(root: Path, name, smart: bool = False, rules=None,
         col["photos"] = _dedupe(photos or [])
     with _lock:
         store = load(root)
-        _check_unique(store, name)
+        _check_parent(store, parent, col["id"])
+        if parent:
+            col["parent"] = parent
+        _check_unique(store, name, parent=parent)
+        if name.lower() == QUICK_NAME.lower() and not parent:
+            raise ValueError(f"{QUICK_NAME} is reserved")
         store["collections"].append(col)
         _save(root, store)
     return col
@@ -256,7 +272,9 @@ def rename_collection(root: Path, cid: str, name) -> dict:
     with _lock:
         store = load(root)
         col = _find(store, cid)
-        _check_unique(store, name, ignore=cid)
+        if col.get("quick"):
+            raise ValueError(f"{QUICK_NAME} cannot be renamed")
+        _check_unique(store, name, ignore=cid, parent=col.get("parent"))
         col["name"] = name
         _save(root, store)
         return col
@@ -278,11 +296,23 @@ def update_rules(root: Path, cid: str, rules, match: str | None = None) -> dict:
 
 
 def delete_collection(root: Path, cid: str) -> None:
-    """Remove the collection only; the photos in it are untouched."""
+    """Remove the collection only; the photos in it are untouched. A set's children move up a level."""
     with _lock:
         store = load(root)
-        _find(store, cid)
+        gone = _find(store, cid)
+        if gone.get("quick"):
+            raise ValueError(f"{QUICK_NAME} cannot be deleted (use Clear)")
+        up = gone.get("parent") or None
+        for c in store["collections"]:
+            if (c.get("parent") or None) == cid:
+                _check_unique(store, c["name"], ignore=c["id"], parent=up)
+                if up:
+                    c["parent"] = up
+                else:
+                    c.pop("parent", None)
         store["collections"] = [c for c in store["collections"] if c["id"] != cid]
+        if store.get("target") == cid:
+            store["target"] = None
         _save(root, store)
 
 
@@ -295,12 +325,18 @@ def _dedupe(ids) -> list[str]:
     return out
 
 
+def _manual(col: dict) -> None:
+    if col.get("set"):
+        raise ValueError("A collection set holds collections, not photos")
+    if col.get("smart"):
+        raise ValueError("Smart collections fill themselves from their rules")
+
+
 def add_photos(root: Path, cid: str, ids) -> dict:
     with _lock:
         store = load(root)
         col = _find(store, cid)
-        if col.get("smart"):
-            raise ValueError("Smart collections fill themselves from their rules")
+        _manual(col)
         col["photos"] = _dedupe(list(col.get("photos", [])) + list(ids))
         _save(root, store)
         return col
@@ -311,8 +347,7 @@ def remove_photos(root: Path, cid: str, ids) -> dict:
     with _lock:
         store = load(root)
         col = _find(store, cid)
-        if col.get("smart"):
-            raise ValueError("Smart collections fill themselves from their rules")
+        _manual(col)
         col["photos"] = [p for p in col.get("photos", []) if p not in drop]
         _save(root, store)
         return col
@@ -320,6 +355,8 @@ def remove_photos(root: Path, cid: str, ids) -> dict:
 
 def collection_items(col: dict, items: list[dict]) -> list[dict]:
     """The members of ``col`` among ``items`` (all library items, copies included)."""
+    if col.get("set"):
+        return []
     if col.get("smart"):
         return smart_matches(items, col["rules"], col.get("match", "all"))
     members = set(col.get("photos", []))
@@ -328,6 +365,149 @@ def collection_items(col: dict, items: list[dict]) -> list[dict]:
 
 def collection_counts(root: Path, items: list[dict]) -> dict[str, int]:
     return {c["id"]: len(collection_items(c, items)) for c in load(root)["collections"]}
+
+
+# ---------------------------------------------------------------------------
+# Collection sets (nesting)
+# ---------------------------------------------------------------------------
+
+def _depth(store: dict, cid: str | None) -> int:
+    by_id = {c["id"]: c for c in store["collections"]}
+    n, seen = 0, set()
+    while cid and cid in by_id and cid not in seen:
+        seen.add(cid)
+        cid = by_id[cid].get("parent")
+        n += 1
+    return n
+
+
+def _check_parent(store: dict, parent: str | None, cid: str) -> None:
+    """``parent`` must be a set that is not ``cid`` or one of its descendants, and not too deep."""
+    if not parent:
+        return
+    if parent == cid:
+        raise ValueError("A set cannot be placed inside itself")
+    p = _find(store, parent)
+    if not p.get("set"):
+        raise ValueError("Collections can only be placed inside a collection set")
+    by_id = {c["id"]: c for c in store["collections"]}
+    at, seen = parent, set()
+    while at and at not in seen:               # walking up from the new parent must not meet cid
+        if at == cid:
+            raise ValueError("A set cannot be placed inside one of its own sets")
+        seen.add(at)
+        at = (by_id.get(at) or {}).get("parent")
+    if _depth(store, parent) >= MAX_DEPTH:
+        raise ValueError("Sets are nested too deeply")
+
+
+def move_collection(root: Path, cid: str, parent: str | None) -> dict:
+    """Put a collection or set inside the set ``parent`` (``None``: back to the top level)."""
+    parent = parent or None
+    with _lock:
+        store = load(root)
+        col = _find(store, cid)
+        if col.get("quick") and parent:
+            raise ValueError(f"{QUICK_NAME} stays at the top level")
+        _check_parent(store, parent, cid)
+        _check_unique(store, col["name"], ignore=cid, parent=parent)
+        if parent:
+            col["parent"] = parent
+        else:
+            col.pop("parent", None)
+        _save(root, store)
+        return col
+
+
+def tree_order(cols: list[dict]) -> list[dict]:
+    """Depth-first order (siblings keep their creation order), each with its ``depth``. Orphans go top level."""
+    ids = {c["id"] for c in cols}
+    kids: dict = {}
+    for c in cols:
+        p = c.get("parent")
+        kids.setdefault(p if p in ids else None, []).append(c)
+    out, seen = [], set()
+
+    def walk(parent, depth):
+        for c in kids.get(parent, []):
+            if c["id"] in seen:
+                continue
+            seen.add(c["id"])
+            out.append({**c, "depth": depth})
+            walk(c["id"], depth + 1)
+    walk(None, 0)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Quick Collection and Target Collection
+# ---------------------------------------------------------------------------
+
+def quick_collection(root: Path, create: bool = False) -> dict | None:
+    """The Quick Collection (a manual collection flagged ``quick``), made on first use."""
+    with _lock:
+        store = load(root)
+        for c in store["collections"]:
+            if c.get("quick"):
+                return c
+        if not create:
+            return None
+        col = {"id": _new_id(), "name": QUICK_NAME, "smart": False, "quick": True,
+               "created": time.time(), "photos": []}
+        store["collections"].append(col)
+        _save(root, store)
+        return col
+
+
+def target_id(root: Path) -> str | None:
+    """The collection the B key adds to: the chosen target, else the Quick Collection (None if none yet)."""
+    store = load(root)
+    t = store.get("target")
+    if t and any(c["id"] == t and not c.get("smart") and not c.get("set") for c in store["collections"]):
+        return t
+    q = next((c for c in store["collections"] if c.get("quick")), None)
+    return q["id"] if q else None
+
+
+def set_target(root: Path, cid: str | None) -> str | None:
+    """Choose the target collection (``None``: back to the Quick Collection)."""
+    with _lock:
+        store = load(root)
+        if cid:
+            _manual(_find(store, cid))
+        store["target"] = cid or None
+        _save(root, store)
+    return target_id(root)
+
+
+def clear_collection(root: Path, cid: str) -> dict:
+    with _lock:
+        store = load(root)
+        col = _find(store, cid)
+        _manual(col)
+        col["photos"] = []
+        _save(root, store)
+        return col
+
+
+def toggle_in_target(root: Path, ids) -> dict:
+    """B: add the photos to the target collection, or remove them when they are all in it already."""
+    ids = _dedupe(ids)
+    if not ids:
+        raise ValueError("No photos given")
+    tid = target_id(root) or quick_collection(root, create=True)["id"]
+    with _lock:
+        store = load(root)
+        col = _find(store, tid)
+        have = set(col.get("photos", []))
+        if all(i in have for i in ids):
+            col["photos"] = [p for p in col["photos"] if p not in set(ids)]
+            action = "removed"
+        else:
+            col["photos"] = _dedupe(list(col.get("photos", [])) + ids)
+            action = "added"
+        _save(root, store)
+    return {"action": action, "collection": col}
 
 
 # ---------------------------------------------------------------------------

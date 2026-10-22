@@ -31,6 +31,7 @@ function libQuery(offset) {
   for (const [id, key] of LIB_FILTERS) {
     if ($(id).value) q.set(key, $(id).value);
   }
+  if (window.mapBox) q.set("gps_box", window.mapBox);       // map-view.js: photos of one place
   if (window.semanticParams) window.semanticParams(q);   // semantic-search.js: sem= / similar=
   return q;
 }
@@ -124,13 +125,14 @@ function libCell(it) {
   if (kind === "video") { img.removeAttribute("src"); noThumb(); }
   else img.dataset.src = `/api/thumb?path=${encodeURIComponent(it.path)}`;
   img.addEventListener("error", noThumb);
+  const pins = document.createElement("div"); pins.className = "pins";
   const tag = document.createElement("div"); tag.className = "kindtag";
   tag.textContent = kind === "raw" ? "" : (kind === "video" ? "VIDEO" : it.editable === false ? ext + " \u00B7 view only" : ext);
   const badge = document.createElement("div"); badge.className = "badge";
   const meta = document.createElement("div"); meta.className = "meta";
   meta.innerHTML = `<span class="dot"></span><span class="nm"></span><span class="st"></span>`;
   meta.querySelector(".nm").textContent = it.name;
-  cell.append(img, ph, tag, badge, meta);
+  cell.append(img, ph, tag, badge, pins, meta);
   cell.addEventListener("click", (e) => libClick(e, it.path));
   cell.addEventListener("dblclick", () => {
     if (it.editable === false) {
@@ -177,6 +179,8 @@ function libPaintCell(path) {
   cell.querySelector(".dot").className = "dot" + (it.label ? " lbl-" + it.label : "");
   cell.querySelector(".dot").style.visibility = it.label ? "visible" : "hidden";
   cell.querySelector(".st").textContent = it.rating > 0 ? "★".repeat(it.rating) : "";
+  cell.querySelector(".pins").innerHTML = (it.gps ? `<span class="pg" title="Geotagged">\u2316</span>` : "")
+    + (it.edited ? `<span class="pe" title="Edited">\u270E</span>` : "");
   if (typeof libPaintStack === "function") libPaintStack(cell, it);
   cell.title = [it.name, it.camera, it.date, it.keywords.join(", ")].filter(Boolean).join("\n");
 }
@@ -264,7 +268,7 @@ async function libKeywords(remove) {
 // the current filter, re-query (debounced so rapid culling does not thrash).
 let libRefilterTimer = null;
 function libRefilterSoon() {
-  const filtering = libCollection || LIB_FILTER_IDS.some(id => $(id).value)
+  const filtering = libCollection || window.mapBox || LIB_FILTER_IDS.some(id => $(id).value)
     || $("lf-sort").value !== "name";
   if (!filtering) return;
   clearTimeout(libRefilterTimer);
@@ -311,6 +315,8 @@ let libSearchTimer = null;
 $("lf-q").addEventListener("input", () => { clearTimeout(libSearchTimer); libSearchTimer = setTimeout(() => libLoad(true), 250); });
 $("lf-clear").addEventListener("click", () => {
   LIB_FILTER_IDS.forEach(id => $(id).value = "");
+  window.mapBox = "";
+  if (typeof mapChip === "function") mapChip();
   libLoad(true);
 });
 document.querySelectorAll("#lib-foot .swatch").forEach(b =>
@@ -331,6 +337,7 @@ function libraryKey(e) {
     if (k === "e" || k === "d" || k === "enter") { e.preventDefault(); openInDevelop(libActive); return true; }
     if (k === "g") return true;
     if (k === "s") { e.preventDefault(); libToggleStack(); return true; }
+    if (k === "b") { e.preventDefault(); colToggleTarget(); return true; }
     if (k === "p") { libFlag("pick"); return true; }
     if (k === "u") { libFlag("none"); return true; }
     if (k === "x") { libFlag("reject"); return true; }

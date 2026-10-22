@@ -48,7 +48,7 @@ SQLITE_SYNCHRONOUS = "NORMAL"   # WAL + NORMAL survives a process crash; FULL al
 
 RAW_SUFFIXES = library.RAW_SUFFIXES
 READ_TAGS = ["-XMP-xmp:Rating", "-XMP-xmp:Label", "-XMP-dc:Subject", "-XMP-lr:HierarchicalSubject", "-Model", "-LensModel",
-             "-ISO", "-DateTimeOriginal", "-CreateDate", "-FocalLength#", "-GPSLatitude#",
+             "-ISO", "-DateTimeOriginal", "-CreateDate", "-FocalLength#", "-GPSLatitude#", "-GPSLongitude#",
              "-XMP-crs:ProcessVersion", "-XMP-crs:Exposure2012", "-XMP-crs:Contrast2012",
              "-XMP-crs:Highlights2012", "-XMP-crs:Shadows2012", "-XMP-crs:ColorTemperature",
              "-XMP-crs:Vibrance", "-XMP-crs:Saturation", "-XMP-crs:Temperature"]
@@ -66,8 +66,17 @@ def _record(rel: str, meta: dict, pick: bool) -> dict:
     return {"path": rel, "name": rel.rsplit("/", 1)[-1], "rating": meta["rating"], "label": meta["label"],
             "keywords": meta["keywords"], "hier": meta.get("hier", []), "camera": meta["camera"], "lens": meta.get("lens", ""),
             "iso": meta.get("iso", 0), "focal": meta.get("focal", 0), "edited": bool(meta.get("edited")),
-            "gps": bool(meta.get("gps")), "date": meta["date"], "flag": _flag(meta["rating"], pick),
+            "gps": bool(meta.get("gps")), "lat": meta.get("lat"), "lon": meta.get("lon"), "date": meta["date"], "flag": _flag(meta["rating"], pick),
             "kind": library.kind_of(rel) or "raw", "editable": library.is_editable(rel)}
+
+
+def _coord(value, limit: float):
+    """A signed decimal degree (``-n`` style) or None."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(v, 6) if abs(v) <= limit else None
 
 
 def parse_meta(entry: dict, side: dict | None = None, dng: bool = False) -> dict:
@@ -95,6 +104,12 @@ def parse_meta(entry: dict, side: dict | None = None, dng: bool = False) -> dict
         meta["focal"] = 0
     both = [entry] + ([side] if side is not None else [])
     meta["gps"] = any(e.get("GPSLatitude") not in (None, "") for e in both)
+    meta["lat"] = meta["lon"] = None
+    for e in both:
+        lat, lon = _coord(e.get("GPSLatitude"), 90), _coord(e.get("GPSLongitude"), 180)
+        if lat is not None and lon is not None:
+            meta["lat"], meta["lon"] = lat, lon
+            break
     meta["edited"] = any(t in e for e in both for t in EDIT_TAGS)
     return meta
 
@@ -163,7 +178,7 @@ class Index:
         for rel, sig, data, pick in db.execute("SELECT rel, sig, data, pick FROM photos"):
             try:
                 meta = json.loads(data)
-                if "gps" in meta:       # rows from before focal/edit/GPS were indexed get re-read
+                if "lon" in meta:       # rows from before focal/edit/GPS/coordinates were indexed get re-read
                     self._sigs[rel] = tuple(json.loads(sig))
             except ValueError:
                 continue
@@ -230,7 +245,7 @@ class Index:
     def _meta_of(self, rec: dict) -> dict:
         out = {k: rec[k] for k in ("rating", "label", "keywords", "camera", "lens", "iso", "date")}
         out["hier"] = rec.get("hier", [])
-        out.update(focal=rec.get("focal", 0), edited=bool(rec.get("edited")), gps=bool(rec.get("gps")))
+        out.update(focal=rec.get("focal", 0), edited=bool(rec.get("edited")), gps=bool(rec.get("gps")), lat=rec.get("lat"), lon=rec.get("lon"))
         return out
 
     # ------------------------------------------------------------- reading
