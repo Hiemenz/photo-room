@@ -134,7 +134,7 @@ _FIT_STEPS = {"exposure": (0.3, 0.1, 0.03), "contrast": (16, 6, 2), "shadows": (
               "highlights": (16, 6, 2), "whites": (16, 6, 2), "blacks": (16, 6, 2)}
 _FIT_RANGE = {"exposure": (-5.0, 5.0)}
 _DROP_FOR_FIT = ("crop", "straighten", "spots", "lens_profile", "ca_remove", "masks", "strength",
-                 "clarity", "texture", "dehaze", "sharpness", "luminance_nr", "_raw_frame")
+                 "clarity", "texture", "dehaze", "sharpness", "luminance_nr", "color_nr", "_raw_frame")
 
 
 def _fit_view(adj: dict, version: int) -> dict:

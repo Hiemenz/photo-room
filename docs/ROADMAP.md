@@ -63,7 +63,7 @@ Develop panel helpers from the UX review (proposals 3, 4 and 7). The backend is 
 - [x] Live Library grid on the change feed (SSE), Quick look (Space) on smart previews, in-app import (button, files, folders, drag and drop) with checksum-verified no-overwrite copy and content-hash dedupe. See README "Library module"
 - [x] Card watcher: `photo-room watch-cards` detects an inserted card, imports it with the checksum-verified no-overwrite copy and library-wide dedupe, re-verifies every file, then safely ejects (udisksctl / umount / diskutil); optional verified delete-from-card; desktop notifications, lock file, editor progress panel. See [CARD-IMPORT.md](CARD-IMPORT.md). Tested with fake cards and fake eject commands only, not real hardware
 - [x] Import dialog in the Library (card or folder, frame grid with select all/none and hide-imported, destination and layout, rename templates, optional rating/keywords/copyright/preset, optional verified backup copy, eject), `.xmp` sidecars travelling with raws; `watch-cards` and `ingest` share the same rename/layout/sidecar code (`importkit.py`). See [CARD-IMPORT.md](CARD-IMPORT.md)
-- [ ] Not wired yet: navigator mini-view while zoomed, convert/auto-edit on card import from the editor (still `ingest`), smart previews feeding the Develop render itself (they are 8-bit 2048 px decodes; Develop still decodes linear 16-bit)
+- [ ] Not wired yet: convert/auto-edit on card import from the editor (still `ingest`), smart previews feeding the Develop render itself (they are 8-bit 2048 px decodes; Develop still decodes linear 16-bit)
 
 ## Not planned
 AI masking, AI denoise, generative remove, Print/Book/Slideshow/Web modules, tethered capture, cloud sync, mobile apps.

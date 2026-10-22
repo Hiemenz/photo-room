@@ -190,3 +190,16 @@ Targets (JPEG < 6 s, PNG < 12 s) still hold. The exporter passes the 16-bit line
 1400 px 52 -> 142 ms, full resolution 581 -> 1179 ms when run stand-alone on an encoded image (it pays a decode
 and an encode; the preview caches the decode and the export skips it). Decode cache entries are now 16-bit linear
 (`FORMAT_VERSION` v2), so old entries are never hit.
+
+## Noise reduction
+
+`render_kernels.denoise_stage` runs at the start of the detail stage (before sharpening). Luminance is an
+OpenCV bilateral filter on the Y plane (one or two passes); colour is a Gaussian blur of the two chroma planes,
+guarded so chroma is kept near luminance edges. Its radii scale with the long edge (reference 3000 px), so the
+preview, the 100% tiles and the export look alike. It is part of the DETAIL stage cache key, so dragging
+Noise reduction re-runs only the detail stage. Measured on the Pi 5 standalone: luminance bilateral 13 ms at
+1400 px and about 150 ms at 10 MP; chroma blur about 25 ms and 225 ms. Check the drag cost with
+`scripts/bench_preview.py` (rows `noise reduction` and `colour noise reduction`).
+
+`bench_preview.py` slider drag with the new rows (median ms): noise reduction 260 sharp / 82 drag, colour noise
+reduction 278 / 86, against 144 / 53 for sharpness in the same run; both under the 150 ms drag target.

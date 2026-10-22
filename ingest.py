@@ -64,11 +64,46 @@ DCIM = "DCIM"
 # Card detection
 # ---------------------------------------------------------------------------
 
-def list_volumes() -> list[Path]:
-    root = Path("/Volumes")
-    if not root.is_dir():
-        return []
-    return [v for v in root.iterdir() if v.name not in IGNORED_VOLUMES]
+def volume_roots(platform: str | None = None, user: str | None = None) -> list[Path]:
+    """Directories whose children are mounted volumes on this platform."""
+    platform = platform or sys.platform
+    if platform == "darwin":
+        return [Path("/Volumes")]
+    if user is None:
+        user = os.environ.get("USER") or os.environ.get("LOGNAME")
+        if not user:
+            try:
+                import getpass
+                user = getpass.getuser()
+            except Exception:
+                user = ""
+    roots = []
+    if user:
+        roots += [Path("/media") / user, Path("/run/media") / user]
+    roots.append(Path("/mnt"))
+    return roots
+
+
+def list_volumes(roots: list[Path] | None = None) -> list[Path]:
+    """Mounted volumes: /Volumes on macOS; /media/$USER, /run/media/$USER and /mnt on Linux."""
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for root in (roots if roots is not None else volume_roots()):
+        try:
+            children = sorted(root.iterdir())
+        except OSError:
+            continue
+        for v in children:
+            if v.name in IGNORED_VOLUMES or v.name.startswith(".") or v in seen:
+                continue
+            try:
+                if not v.is_dir():
+                    continue
+            except OSError:
+                continue
+            seen.add(v)
+            found.append(v)
+    return found
 
 
 def is_camera_card(volume: Path) -> bool:
@@ -78,8 +113,8 @@ def is_camera_card(volume: Path) -> bool:
         return False
 
 
-def find_cards() -> list[Path]:
-    return [v for v in list_volumes() if is_camera_card(v)]
+def find_cards(roots: list[Path] | None = None) -> list[Path]:
+    return [v for v in list_volumes(roots) if is_camera_card(v)]
 
 
 def find_raws(card: Path) -> list[Path]:

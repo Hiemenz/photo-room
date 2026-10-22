@@ -134,3 +134,16 @@ body { padding-top: 30px; }
 #smart-dlg select, #smart-dlg input { font: inherit; font-size: 11px; padding: 3px 5px; border-radius: 4px;
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line); }
 #smart-dlg .rule input { flex: 1; min-width: 0; }
+
+/* JPEG/HEIC (view-only) and video (placeholder) cells */
+.lcell .ph { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  color: var(--muted, #888); font-size: 13px; letter-spacing: 1px; }
+.lcell.nothumb .ph { display: flex; }
+.lcell .kindtag { position: absolute; top: 4px; left: 4px; font-size: 10px; padding: 1px 5px;
+  border-radius: 3px; background: rgba(0,0,0,.6); color: #ddd; }
+.lcell .kindtag:empty { display: none; }
+.lcell.video { cursor: default; }
+.fo .tw { width: 10px; opacity: .6; }
+.fo:hover .act { display: inline; }
+.fo-sub { font-size: 10px; font-weight: normal; margin-right: 4px; }
+#fo-undo { font-size: 10px; }
