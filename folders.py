@@ -167,7 +167,7 @@ def group_files(photo: Path) -> list[Path]:
         raise MoveError(f"No such photo: {photo.name}")
     found = set(members)
     for m in members:
-  ``<name>.masks.json``, ``<name>.develop.json``, ``<name>.extras.json`` and the virtual copies' ``<name>.vc-xxxxxxxx.*`` files.
+        pat = re.compile(re.escape(m) + r"(?:\.photoroom\.json|\.masks\.json|\.develop\.json|\.extras\.json|" + _VC_FILE + ")$")
         found.update(n for n in names if pat.fullmatch(n))
     out = [d / n for n in sorted(found)]
     for p in out:
